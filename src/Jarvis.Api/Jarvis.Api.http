@@ -1,0 +1,30 @@
+# Open in VS Code with the "REST Client" extension, or in Visual Studio / Rider.
+# Replace the key with the one you set via user-secrets (never commit it).
+@base = http://localhost:5185
+@key = PASTE-YOUR-KEY-HERE
+
+### Health (public)
+GET {{base}}/health
+
+### List sessions
+GET {{base}}/api/sessions
+X-Jarvis-Key: {{key}}
+
+### Create a session
+# @name create
+POST {{base}}/api/sessions
+X-Jarvis-Key: {{key}}
+Content-Type: application/json
+
+{ "activity": "LeetCode", "deviceId": "dell-laptop" }
+
+### Read it back
+GET {{base}}/api/sessions/{{create.response.body.$.id}}
+X-Jarvis-Key: {{key}}
+
+### Add a checkpoint
+POST {{base}}/api/sessions/{{create.response.body.$.id}}/checkpoints
+X-Jarvis-Key: {{key}}
+Content-Type: application/json
+
+{ "summary": "Solved Two Sum with a hash map", "currentTask": "Three Sum" }
