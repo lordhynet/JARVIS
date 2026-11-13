@@ -1,4 +1,5 @@
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Orchestrator.Sessions;
 
@@ -10,7 +11,7 @@ public interface ISessionNotifier
 
 public sealed class SessionValidationException(string message) : Exception(message);
 
-/// <summary>Creates, reads and checkpoints sessions. Owns the business rules; the API stays thin.</summary>
+/// <summary>Write-side business rules for session creation and checkpointing.</summary>
 public sealed class SessionService(ISessionStore store, ISessionNotifier notifier, TimeProvider clock)
 {
     public const int MaxTitleLength = 120;
@@ -36,14 +37,10 @@ public sealed class SessionService(ISessionStore store, ISessionNotifier notifie
             UpdatedAt: now,
             Checkpoints: []);
 
-        await store.AddAsync(session, ct);
+        session = await store.AddAsync(session, ct);
         await notifier.PublishAsync(ToEvent(SessionEventTypes.Created, session), ct);
         return session;
     }
-
-    public Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default) => store.GetAsync(id, ct);
-
-    public Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default) => store.ListAsync(ct);
 
     public async Task<ConversationSession?> CheckpointAsync(Guid sessionId, AddCheckpointRequest request, CancellationToken ct = default)
     {
@@ -55,7 +52,9 @@ public sealed class SessionService(ISessionStore store, ISessionNotifier notifie
         var now = clock.GetUtcNow();
         var updated = await store.AppendCheckpointAsync(
             sessionId,
-            current => new SessionCheckpoint(
+            current => current.Status == SessionStatus.Ended
+                ? throw new DomainException(409, "An ended session cannot be checkpointed.")
+                : new SessionCheckpoint(
                 Id: Guid.NewGuid(),
                 SessionId: sessionId,
                 Sequence: current.Checkpoints.Count + 1,

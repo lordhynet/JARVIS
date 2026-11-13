@@ -14,7 +14,9 @@ public enum ToolInvocationStatus
     AwaitingConfirmation,
     Succeeded,
     Failed,
-    Rejected
+    Rejected,
+    Running,
+    Uncertain
 }
 
 /// <summary>

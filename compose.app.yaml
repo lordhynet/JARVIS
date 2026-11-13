@@ -1,0 +1,23 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5185:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Jarvis__ApiKey: ${JARVIS_API_KEY:?Set JARVIS_API_KEY in .env}
+      Jarvis__StorageProvider: Postgres
+      ConnectionStrings__Jarvis: Host=postgres;Database=jarvis;Username=jarvis;Password=${JARVIS_POSTGRES_PASSWORD}
+      OpenAI__ApiKey: ${OPENAI_API_KEY:-}
+      OpenAI__Model: ${OPENAI_MODEL:-}
+      OpenAI__TranscriptionModel: ${OPENAI_TRANSCRIPTION_MODEL:-}
+      HomeAssistant__BaseUrl: ${HOME_ASSISTANT_URL:-}
+      HomeAssistant__Token: ${HOME_ASSISTANT_TOKEN:-}
+      HomeAssistant__AllowedEntities__0: ${HOME_ASSISTANT_ENTITY:-}
+      Calendar__Google__AccessToken: ${GOOGLE_CALENDAR_TOKEN:-}
+      Calendar__Microsoft__AccessToken: ${MICROSOFT_CALENDAR_TOKEN:-}
+      TfL__AppKey: ${TFL_APP_KEY:-}

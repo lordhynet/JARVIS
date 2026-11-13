@@ -12,6 +12,19 @@ public sealed class InMemorySessionStore : ISessionStore
     private readonly ConcurrentDictionary<Guid, ConversationSession> _sessions = new();
     private readonly object _writeLock = new();
 
+    public Task<ConversationSession?> UpdateAsync(Guid id,
+        Func<ConversationSession, ConversationSession> update, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        lock (_writeLock)
+        {
+            if (!_sessions.TryGetValue(id, out var current)) return Task.FromResult<ConversationSession?>(null);
+            var result = update(current);
+            _sessions[id] = result;
+            return Task.FromResult<ConversationSession?>(result);
+        }
+    }
+
     public Task<ConversationSession> AddAsync(ConversationSession session, CancellationToken ct = default)
     {
         if (!_sessions.TryAdd(session.Id, session))

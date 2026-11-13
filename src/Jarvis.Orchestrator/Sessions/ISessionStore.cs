@@ -6,11 +6,11 @@ namespace Jarvis.Orchestrator.Sessions;
 /// Persistence boundary for sessions. Milestone 1 uses <see cref="InMemorySessionStore"/>;
 /// Milestone 2 swaps in PostgreSQL behind the same interface.
 /// </summary>
-public interface ISessionStore
+public interface ISessionStore : ISessionReader
 {
     Task<ConversationSession> AddAsync(ConversationSession session, CancellationToken ct = default);
-    Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default);
-    Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default);
+    Task<ConversationSession?> UpdateAsync(Guid id,
+        Func<ConversationSession, ConversationSession> update, CancellationToken ct = default);
 
     /// <summary>Appends a checkpoint and returns the updated session, or null if the session does not exist.</summary>
     Task<ConversationSession?> AppendCheckpointAsync(

@@ -35,7 +35,8 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
 
         var supplied = context.Request.Headers[HeaderName].FirstOrDefault()
                        ?? BearerToken(context.Request)
-                       ?? context.Request.Query[QueryName].FirstOrDefault();
+                       ?? (context.Request.Path.StartsWithSegments("/hubs")
+                           ? context.Request.Query[QueryName].FirstOrDefault() : null);
 
         if (supplied is null || !FixedTimeEquals(supplied, expected))
         {

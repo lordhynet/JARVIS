@@ -12,6 +12,7 @@ public sealed class JarvisApiFactory : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Testing");
         builder.UseSetting("Jarvis:ApiKey", TestKey);
+        builder.UseSetting("Jarvis:StorageProvider", "InMemory");
     }
 
     public HttpClient CreateAuthorisedClient()

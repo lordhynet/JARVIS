@@ -33,7 +33,9 @@ public sealed record ConversationSession(
     string? CurrentTask,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<SessionCheckpoint> Checkpoints);
+    IReadOnlyList<SessionCheckpoint> Checkpoints,
+    SessionHandoff? Handoff = null,
+    IReadOnlyList<ChatMessage>? Messages = null);
 
 /// <summary>
 /// A resumable snapshot of where a session is. Written before any handoff

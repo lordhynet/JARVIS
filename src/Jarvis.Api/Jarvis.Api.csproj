@@ -7,6 +7,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Jarvis.Orchestrator\Jarvis.Orchestrator.csproj" />
     <ProjectReference Include="..\Jarvis.Contracts\Jarvis.Contracts.csproj" />
+    <ProjectReference Include="..\Jarvis.Persistence\Jarvis.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>

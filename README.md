@@ -1,99 +1,97 @@
-# JARVIS — Milestone 1: session core
+# JARVIS — personal companion
 
-The first runnable piece of JARVIS Core: an ASP.NET Core (.NET 10) service that creates,
-reads and checkpoints conversation sessions, pushes live events to devices over SignalR,
-and is protected by an API key.
+JARVIS now includes the seven implementation areas in [the milestone scope](docs/MILESTONES.md): sessions, PostgreSQL persistence, devices and handoff, learning, integrations and tool auditing, conversation and voice, and a browser companion with deployment tooling.
 
-## What is built (and what is not)
+This is a single-user application with a shared API key. The browser runs on desktop and mobile. Native Android/Quest apps and satellite firmware are not included. Real cloud accounts and physical hardware still need to be connected and verified.
 
-| Built and tested | Not yet (next milestones) |
-|---|---|
-| Shared contracts: devices, sessions, checkpoints, handoff, tools, learning items | PostgreSQL persistence (sessions are in memory and reset on restart) |
-| `POST/GET /api/sessions`, `GET /api/sessions/{id}`, `POST /api/sessions/{id}/checkpoints` | Cloud voice, wake word, microphone |
-| Live status hub at `/hubs/status` (SignalR) | Home Assistant, calendar, TfL |
-| Public `/health` endpoint for the watchdog | Learning engine logic (contracts only) |
-| API-key protection on `/api` and `/hubs` (fails closed) | Device registration endpoints |
+## Run
 
-## Layout
+Requires .NET 10 and Docker Desktop for PostgreSQL. Start Docker Desktop, then:
 
-```
-JARVIS/
-├─ Jarvis.sln
-├─ global.json               .NET 10 SDK
-├─ Directory.Build.props     shared settings (nullable, warnings as errors)
-├─ src/
-│  ├─ Jarvis.Contracts/      records and enums shared by every client
-│  ├─ Jarvis.Orchestrator/   SessionService + ISessionStore (in-memory for now)
-│  └─ Jarvis.Api/            minimal API, SignalR hub, API-key middleware
-├─ tests/
-│  └─ Jarvis.Tests/          xUnit integration tests (REST + SignalR)
-└─ scripts/
-   └─ smoke-test.ps1         end-to-end check against the running API
-```
-
-## Run it on the Dell
-
-Open **PowerShell** in this folder (in File Explorer, click the address bar, type `powershell`, press Enter).
-
-**1. Check the SDK**
-```powershell
-dotnet --version        # expect 10.0.x
-```
-
-**2. Restore and build**
 ```powershell
 dotnet build
-```
-Expect: `Build succeeded. 0 Warning(s) 0 Error(s)`.
-
-**3. Set your API key (once).** Pick any long random string. It is stored in your Windows
-user profile, not in this folder, so it never ends up in Git or OneDrive.
-```powershell
-cd src\Jarvis.Api
-dotnet user-secrets set "Jarvis:ApiKey" "$(New-Guid)$(New-Guid)"
-dotnet user-secrets list     # shows the key so you can copy it
-cd ..\..
+# Only if you have not already configured a JARVIS API key:
+dotnet user-secrets set --project src/Jarvis.Api "Jarvis:ApiKey" "<your long random key>"
+.\scripts\run-milestone2.ps1
 ```
 
-**4. Start JARVIS Core**
-```powershell
-dotnet run --project src\Jarvis.Api
-```
-Expect: `Now listening on: http://localhost:5185`. Leave this window open.
+Open [the companion](http://localhost:5185), enter your JARVIS API key, and create a conversation. The script creates a database password in Git-ignored `.env`, starts PostgreSQL, and enables persistent storage. Keep `.env` private; don't change its password after initializing the volume.
 
-**5. Health check** — open http://localhost:5185/health in a browser.
-Expect: `{"status":"ok","service":"jarvis-core",...}`.
+For a quick in-memory session, use `dotnet run --project src/Jarvis.Api`. It warns that data will be lost on restart. Cloud integrations remain unavailable until configured; they never return mock successes in the application.
 
-**6. Smoke test** — in a second PowerShell window in this folder:
-```powershell
-.\scripts\smoke-test.ps1 -Key "<paste your key>"
-```
-Expect: `7 passed, 0 failed`. If PowerShell blocks the script, run
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+Open the HTTP address above, not `index.html` directly from File Explorer: the stylesheet,
+JavaScript and API are served together. PostgreSQL uses local port 15432 to avoid other
+projects on port 5432; override with `run-milestone2.ps1 -DatabasePort <port>` if needed.
 
-**7. Automated tests** (stop the API first with Ctrl+C, or leave it — tests use their own in-memory server)
+## What works
+
+| Area | Implementation |
+|---|---|
+| Sessions | Create/list/read, checkpoints, pause/resume/end, SignalR status events |
+| Persistence | EF Core migrations, PostgreSQL stores, atomic updates and upgrade support |
+| Devices | Registration, heartbeat, capability verification, online status |
+| Handoff | Checkpoint → target ready → source audio release → target ownership; timeout recovery |
+| Learning | Five domains, due queue, four review ratings, persistent history, retry-safe reviews |
+| Conversation | OpenAI Responses API, activity coaching, saved transcript and duplicate-message protection |
+| Voice | Browser microphone recording → cloud transcription → reviewed message; browser speech output; opt-in foreground wake word |
+| Home | Allowlisted Home Assistant lights/switches, explicit confirmations, persistent audit and uncertain-outcome recovery |
+| Briefing | Google/Microsoft calendar reads, live TfL status and due learning; source-specific outage reporting |
+| Operations | Readiness endpoint, non-root Docker image, persistent Compose stack, backup and non-overwriting restore |
+
+Follow [configuration and device setup](docs/CONFIGURATION.md) to connect the external services. Calendar adapters currently accept current OAuth access tokens; automatic account linking and token refresh are not implemented. Wake-word support depends on the browser and is not an always-on background service. Speech output uses the browser's voice rather than a cloud TTS model.
+
+## Tests
+
+Latest [verification results](docs/VERIFICATION.md): 53 backend tests and 14 browser tests passed after the CQRS refactor. Earlier deployment checks also verified real container restart, backup/restore and live TfL. The verification scripts use PowerShell 7 (`pwsh`).
+
 ```powershell
+# Fast API, orchestration and simulated provider tests; database tests show as skipped:
 dotnet test
+
+# All backend tests using the Docker PostgreSQL instance:
+.\scripts\run-milestone2.ps1 -Test
+
+# Or use an isolated native PostgreSQL installation on Windows:
+.\scripts\test-local.ps1 -PostgresBin 'C:/Program Files/PostgreSQL/18/bin'
+
+# Real browser interactions against a running test API (desktop and mobile viewport):
+npm ci
+npx playwright install chromium
+npm run test:browser
+
+# Isolated full container deployment, restart, backup/restore and optional public live TfL:
+.\scripts\test-deployment.ps1 -LiveTransit
 ```
-Expect: `Passed! - Failed: 0, Passed: 11`.
 
-## Pass criteria for Milestone 1
+[Verification and live scenarios](docs/TESTING.md) distinguish automated, simulated-provider, live-service and physical-device checks. Database tests create randomly named test databases and drop only those databases. The deployment script creates a random Compose project, then removes only its own containers and test volume. Native test clusters are stopped and their logs retained in the temporary directory.
 
-- [ ] `dotnet build` — 0 warnings, 0 errors
-- [ ] `/health` returns ok without a key
-- [ ] `/api/sessions` returns 401 without a key and 503 if no key is configured
-- [ ] Smoke test: 7 passed
-- [ ] `dotnet test`: 11 passed, including a device receiving a live `session.created` event
+## Deploy and back up
 
-## Notes
+Add `JARVIS_API_KEY` to your private `.env` alongside `JARVIS_POSTGRES_PASSWORD`, then:
 
-- **OneDrive:** this folder is inside OneDrive, so `bin/` and `obj/` will sync on every
-  build. That is harmless but noisy. When convenient, move the folder to
-  `C:\Users\surak\source\JARVIS` or exclude it from OneDrive sync. Database data
-  (Milestone 2) will live in a Docker volume, not in this folder.
-- **Never** put the API key in `appsettings.json` or commit it.
+```powershell
+docker compose -f compose.yaml -f compose.app.yaml up -d --build
+.\scripts\backup-database.ps1
+.\scripts\restore-database.ps1 -BackupPath '<backup.dump>' -NewDatabaseName jarvis_restore_check
+```
 
-## Next: Milestone 2
+The API and database ports bind to loopback. For other devices, use a trusted HTTPS reverse proxy/VPN and keep the API key private. The restore script always creates a separate database and fails if that name exists. Inspect restored data before switching the connection string. `docker compose down` preserves data; `docker compose down -v` deletes the volume.
 
-PostgreSQL in Docker (`docker compose up -d`), an EF Core `PostgresSessionStore` behind
-`ISessionStore`, and a test that proves a session survives an API restart.
+`/health` checks the process; `/health/ready` checks database connectivity. Migrations run during startup. Database commits precede SignalR notifications; there is no durable notification replay. The runtime document serializes updates and is suitable for a personal assistant, not a high-throughput multi-tenant service.
+
+Custom clients can use the [API protocol reference](docs/API.md).
+
+## Structure
+
+The application uses [CQRS with separate command/query handlers](docs/ARCHITECTURE.md),
+read-only query ports and transactional write services. Both sides share the database.
+
+- `src/Jarvis.Contracts`: shared API and state records.
+- `src/Jarvis.Orchestrator`: sessions, devices, handoff, learning, chat and tool policy.
+- `src/Jarvis.Persistence`: EF Core model, migrations and PostgreSQL stores.
+- `src/Jarvis.Api`: HTTP/SignalR endpoints, provider adapters and the browser companion.
+- `tests/Jarvis.Tests`: API, scenario, provider-contract and PostgreSQL tests.
+- `tests/browser`: Playwright desktop/mobile workflows.
+- `scripts`: launch, live checks, deployment verification and backup/restore.
+
+Generate schema changes with `dotnet tool restore`, then `dotnet ef migrations add <Name> --project src/Jarvis.Persistence`. Check drift with `dotnet ef migrations has-pending-model-changes --project src/Jarvis.Persistence`.
