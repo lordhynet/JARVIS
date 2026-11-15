@@ -10,8 +10,8 @@ internal class VoiceReconnectPolicy {
     @Synchronized fun connected() { attempts = 0 }
 }
 
-/** Three seconds of mono 24 kHz PCM16, irrespective of provider packet size. */
-internal class VoicePlaybackBudget(private val limit: Int = 144000) {
+/** Twenty seconds of mono 24 kHz PCM16, irrespective of provider packet size. */
+internal class VoicePlaybackBudget(private val limit: Int = 960000) {
     private var bytes = 0
     @Synchronized fun reserve(count: Int): Boolean {
         if (count <= 0 || count % 2 != 0 || count > limit - bytes) return false

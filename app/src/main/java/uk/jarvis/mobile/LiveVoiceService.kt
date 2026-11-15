@@ -201,9 +201,9 @@ class LiveVoiceService : Service() {
                         }
                         "interrupt" -> interrupt()
                         "audio" -> if (ready && SystemClock.elapsedRealtime() < leaseDeadline.get()) {
-                            val delta = message.get("delta").asString; check(delta.length <= 192000)
+                            val delta = message.get("delta").asString; check(delta.length <= 1280000)
                             val bytes = Base64.decode(delta, Base64.DEFAULT)
-                            if (!queueBudget.reserve(bytes.size)) stopVoice("Playback exceeded the three-second audio buffer. Use shorter turns.")
+                            if (!queueBudget.reserve(bytes.size)) stopVoice("Playback exceeded the twenty-second audio buffer. Use shorter turns.")
                             else if (!queue.trySend(Pair(message.get("itemId").asString, bytes)).isSuccess) { queueBudget.release(bytes.size); stopVoice("Playback queue is full.") }
                         }
                         "transcript" -> Unit // Canonical transcripts stay on Core, not in a phone feature cache.
