@@ -583,3 +583,7 @@ After the latest Core source changes, forced a fresh Android release validation 
 ## Round 3 Item 0 backend verification — pause-test race correction
 
 The first full PostgreSQL-backed run of `.\scripts\test-backend.ps1` found one failure: 324 passed, 1 failed, 0 skipped, total 325. `Paid_pause_ends_realtime_window_and_settles_usage_but_does_not_revoke_local_audio` observed the paid realtime lease between the gateway's `ended` message and its `finally` cleanup. Updated the test to wait (bounded to three seconds) for lease release, then start and validate local audio while paid AI remains paused. Focused rerun passed: 1 passed, zero failures/skips, using `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~Paid_pause_ends_realtime_window_and_settles_usage_but_does_not_revoke_local_audio"`. Full suite rerun is required before Round 3 Item 1.
+
+## Round 3 Item 0 full verification — 15 November 2026
+
+On source HEAD `aaf4740` (before this verification-only commit), the full backend suite with PostgreSQL passed: `.\scripts\test-backend.ps1` — 325 passed, zero failures/skips. Full desktop and mobile Playwright passed: `npm run test:browser -- --reporter=list` — 50 passed (25 desktop Chrome, 25 Pixel 7) in 4.1 minutes. Android validation passed: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-workers=1` — 23 debug unit tests passed, zero failures/errors/skips; release lint passed. Item 0 is complete. No Round 3 Item 1 implementation has started.
