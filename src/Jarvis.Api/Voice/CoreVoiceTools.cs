@@ -9,7 +9,7 @@ using Jarvis.Orchestrator.Intelligence;
 namespace Jarvis.Api.Voice;
 
 /// <summary>Fixed Core capabilities, never a provider-selected URL or arbitrary command.</summary>
-public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService practice, TimeProvider clock, VoiceRecallService recall, VoiceCoachingService coaching)
+public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService practice, TimeProvider clock, VoiceRecallService recall, VoiceCoachingService coaching, Jarvis.Orchestrator.Domains.IDomainFactory? domains = null)
 {
     public static IReadOnlyList<Jarvis.Orchestrator.Domains.CapabilityDescriptor> Capabilities => Definitions.Select(tool => {
         var json = JsonSerializer.SerializeToElement(tool); var name = json.GetProperty("name").GetString()!;
@@ -26,6 +26,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         new { type = "function", name, description, parameters = Schema(properties) };
     private static readonly object Utterance = new { type = "string", description = "Core utterance_id supplied after the latest captured user speech. Never invent an ID." };
     public static readonly object[] Definitions = [
+        Tool("core_domain_propose", "Propose a domain only after the user explicitly asks to create one. Uses the captured request verbatim. Returns a draft, missing capabilities and owner review instructions. Never activates or grants tools. Ask for owner approval in the dashboard after preview.", new() { ["utterance_id"] = Utterance }),
         Tool("core_coaching_correction", "Correct a saved voice coaching answer only on explicit user request. First prepare using the attempt_id and revision from Core current feedback. Ask for a separate full replacement answer, then answer with its captured utterance_id and the same expected_revision. Never save the correction instruction itself or generated text. Stop with core_coaching stop to keep the prior answer.", new() {
             ["action"] = new { type = "string", @enum = new[] { "prepare", "answer" } },
             ["utterance_id"] = Utterance,
@@ -75,6 +76,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             var args = parsed.RootElement;
             Guard.Require(args.ValueKind == JsonValueKind.Object, 400, "Tool arguments must be an object.");
             string[] fields = name switch {
+                "core_domain_propose" => ["utterance_id"],
                 "core_coaching_correction" => ["action", "utterance_id", "attempt_id", "expected_revision"],
                 "core_coaching" => ["action", "utterance_id", "exercise_id", "story_id", "story_version", "claim_index"],
                 "core_coaching_catalog" => [],
@@ -96,6 +98,13 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             object? result;
             switch (name)
             {
+                case "core_domain_propose":
+                    Guard.Require(domains is not null, 503, "Domain proposal service is unavailable.");
+                    var proposal = await domains.ProposeCapturedAsync(sessionId, source, ct);
+                    result = new { proposal.Preview.Definition.Key, proposal.Preview.Definition.Status, proposal.ExistingDomain,
+                        proposal.Preview.Version.Id, proposal.Preview.Version.ManifestHash, proposal.Preview.Version.Manifest.Description,
+                        proposal.Preview.UnmetDependencies, proposal.Preview.MemoryScope, proposal.Preview.SharesPersonalContext,
+                        nextStep = "Review the exact draft in the Core dashboard. Separate manual owner approval is required; this tool cannot activate it." }; break;
                 case "core_coaching_correction":
                 case "core_coaching":
                     var coachingView = name == "core_coaching_correction"

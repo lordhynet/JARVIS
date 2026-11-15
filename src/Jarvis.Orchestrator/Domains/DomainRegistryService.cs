@@ -55,7 +55,7 @@ public sealed class DomainRegistryService(IDomainRegistryStore store, ICapabilit
     {
         Guard.Require(request.RequestId != Guid.Empty && !string.IsNullOrWhiteSpace(actor) && actor.Length <= 120, 400, "A draft request ID and actor are required.");
         var manifest = DomainPolicy.Parse(request.Manifest); var hash = DomainPolicy.Hash(manifest);
-        var fingerprint = PrivacyData.Hash(JsonSerializer.Serialize(new { request.ExpectedRevision, hash, actor }));
+        var fingerprint = PrivacyData.Hash(JsonSerializer.Serialize(new { request.ExpectedRevision, hash, actor, request.Provenance }));
         await Seed(ct);
         return await store.UpdateAsync((state, _) => {
             if (state.AuditEvents.TryGetValue(request.RequestId, out var previous)) {
@@ -79,8 +79,18 @@ public sealed class DomainRegistryService(IDomainRegistryStore store, ICapabilit
                 definition with { LatestVersionId = version.Id, Revision = checked(definition.Revision + 1), UpdatedAt = now,
                     Status = definition.CurrentVersionId is null ? status : definition.Status };
             state.Definitions[id] = definition;
-            state.AuditEvents.Add(request.RequestId, new(request.RequestId, id, version.Id, "draft", actor, request.RequestId, now, JsonSerializer.Serialize(new { fingerprint })));
+            state.AuditEvents.Add(request.RequestId, new(request.RequestId, id, version.Id, "draft", actor, request.RequestId, now, JsonSerializer.Serialize(new { fingerprint, provenance = request.Provenance })));
             return Preview(state, definition, version);
+        }, ct);
+    }
+    public async Task<DomainProposal?> FindProposalAsync(Guid requestId, string fingerprint, CancellationToken ct)
+    {
+        await Seed(ct); return await store.ReadAsync((state, _) => {
+            if (!state.AuditEvents.TryGetValue(requestId, out var audit)) return null;
+            using var details = JsonDocument.Parse(audit.DetailsJson);
+            var provenance = details.RootElement.TryGetProperty("provenance", out var value) ? value.Deserialize<DomainDraftProvenance>() : null;
+            Guard.Require(audit.Action == "draft" && provenance?.RequestFingerprint == fingerprint, 409, "Proposal request ID was reused.");
+            return new DomainProposal(Preview(state, state.Definitions[audit.DomainId], state.Versions[audit.VersionId!.Value]), false, provenance);
         }, ct);
     }
     public async Task<IReadOnlyList<DomainPreview>> ListAsync(CancellationToken ct)

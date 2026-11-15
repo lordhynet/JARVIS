@@ -23,6 +23,7 @@ public interface IDomainRegistryStore
 }
 public interface IDomainRegistry
 {
+    Task<DomainProposal?> FindProposalAsync(Guid requestId, string fingerprint, CancellationToken ct);
     Task<DomainPreview> SaveDraftAsync(SaveDomainDraftRequest request, string actor, CancellationToken ct);
     Task<IReadOnlyList<DomainPreview>> ListAsync(CancellationToken ct);
     Task<DomainPreview> PreviewAsync(string key, Guid? versionId, CancellationToken ct);

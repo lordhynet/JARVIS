@@ -165,6 +165,7 @@ builder.Services.AddSingleton<DeviceCredentials>();
 builder.Services.AddSingleton<OwnerAuthorization>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IWorkflowCatalog, Jarvis.Orchestrator.Domains.WorkflowCatalog>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(_ => new Jarvis.Orchestrator.Domains.CapabilityCatalog(Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat([new("core_template_practice", "Deliver an authored domain practice template without AI or tools.", Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly)])));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainFactory, Jarvis.Orchestrator.Domains.DomainFactory>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistry, Jarvis.Orchestrator.Domains.DomainRegistryService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis.Orchestrator.Domains.DomainCatalog>();
 builder.Services.AddSingleton<HubTickets>();

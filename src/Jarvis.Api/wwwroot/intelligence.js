@@ -27,8 +27,40 @@ export function initIntelligence({ api, node, button, notice }) {
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/London', localTime: time.value, enabled: true, allowCloudProcessing: consent.checked }); await load();
   });
   card.append(form, scheduleButton, controls, schedules, inbox, runs);
+  const domainsCard = node('div', '', 'card'); panel.append(domainsCard);
+  domainsCard.append(node('h2', 'Domains'), node('p', 'Describe a domain to propose it. Review its access and missing features before approving an exact version with your owner key.'));
+  const domainForm = document.createElement('form'); const requestText = document.createElement('textarea'); requestText.maxLength = 3000; requestText.rows = 3; requestText.required = true; requestText.setAttribute('aria-label', 'Describe a new domain');
+  const cloudLabel = node('label', 'Allow cloud processing to generate this proposal'); const domainConsent = document.createElement('input'); domainConsent.type = 'checkbox'; domainConsent.required = true; cloudLabel.append(domainConsent);
+  const proposeButton = node('button', 'Generate domain proposal'); domainForm.append(requestText, cloudLabel, proposeButton); domainsCard.append(domainForm);
+  const domainList = node('div', '', 'list'); domainsCard.append(domainList); let domainPending = null;
+  domainForm.addEventListener('submit', async event => { event.preventDefault(); proposeButton.disabled = true;
+    try { const description = requestText.value.trim(); if (!domainPending || domainPending.description !== description) domainPending = { requestId: crypto.randomUUID(), description };
+      const proposal = await api('/domains/proposals', { ...domainPending, allowCloudProcessing: domainConsent.checked });
+      domainPending = null; notice(proposal.existingDomain ? 'An equivalent domain already exists. Review it below.' : 'Draft saved. Review its access and missing capabilities before owner approval.'); await load();
+    } catch (error) { notice(error.message, true); } finally { proposeButton.disabled = false; }
+  });
+  function renderDomains(previews) {
+    domainList.replaceChildren();
+    for (const preview of previews) {
+      const { definition, version } = preview; const row = node('div', '', 'list-item');
+      row.append(node('h3', version.manifest.displayName + ' · ' + definition.status), node('p', version.manifest.description),
+        node('p', 'Version ' + version.version + ' · ' + version.manifest.executionMode + ' · ' + preview.risk),
+        node('p', 'Data access: ' + preview.memoryScope + (preview.sharesPersonalContext ? '; shared personal coaching context' : '; no shared personal coaching context')),
+        node('p', preview.estimatedAiGbp === 0 ? 'Authored practice template: no AI cost.' : 'Assisted work requires separate cloud consent and the configured AI budget.'),
+        node('p', 'Capabilities: ' + version.manifest.capabilities.map(c => c.id + ' (' + c.versionConstraint + ')').join(', ')));
+      if (preview.unmetDependencies.length) row.append(node('p', 'Missing: ' + preview.unmetDependencies.join(' '), 'error'));
+      const details = document.createElement('details'); details.append(node('summary', 'Exact manifest to approve'), node('pre', JSON.stringify(version.manifest, null, 2)), node('small', 'Manifest hash: ' + version.manifestHash)); row.append(details);
+      if (!preview.unmetDependencies.length && (definition.currentVersionId !== version.id || definition.status !== 'Active')) row.append(button('Approve and activate this version', async () => {
+        if (!confirm('Activate ' + version.manifest.displayName + ' version ' + version.version + ' with the access shown above?')) return;
+        await api('/domains/' + encodeURIComponent(definition.key) + '/activate', { requestId: crypto.randomUUID(), expectedRevision: definition.revision, versionId: version.id, manifestHash: version.manifestHash, reason: 'Owner reviewed manifest and access preview' }); await load();
+      }));
+      if (definition.status === 'Active') row.append(button('Disable domain', async () => { await api('/domains/' + encodeURIComponent(definition.key) + '/disable', { requestId: crypto.randomUUID(), expectedRevision: definition.revision }); await load(); }));
+      domainList.append(row);
+    }
+  }
   async function load() {
-    const [settings, saved, jobs, messages, catalog] = await Promise.all([api('/agents/controls'), api('/agents/schedules'), api('/agents/runs'), api('/agents/notifications'), api('/agents/catalog')]);
+    const [settings, saved, jobs, messages, catalog, domains] = await Promise.all([api('/agents/controls'), api('/agents/schedules'), api('/agents/runs'), api('/agents/notifications'), api('/agents/catalog'), api('/domains')]);
+    renderDomains(domains);
     const selected = workflow.value; workflows = catalog.map(entry => entry.key); workflow.replaceChildren();
     for (const kind of workflows) { const option = node('option', kind); option.value = kind; workflow.append(option); }
     if (workflows.includes(selected)) workflow.value = selected;
@@ -61,5 +93,5 @@ export function initIntelligence({ api, node, button, notice }) {
     }
   }
   card.append(button('Refresh agent status', load));
-  return { load, clear() { pending = null; form.reset(); workflows = []; workflow.replaceChildren(); submit.disabled = true; controls.replaceChildren(); schedules.replaceChildren(); inbox.replaceChildren(); runs.replaceChildren(); } };
+  return { load, clear() { domainPending = null; domainForm.reset(); domainList.replaceChildren(); pending = null; form.reset(); workflows = []; workflow.replaceChildren(); submit.disabled = true; controls.replaceChildren(); schedules.replaceChildren(); inbox.replaceChildren(); runs.replaceChildren(); } };
 }

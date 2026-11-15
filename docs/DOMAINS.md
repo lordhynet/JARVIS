@@ -13,3 +13,11 @@ Template execution delivers the authored practice prompts, with no AI score or t
 PostgreSQL uses six relational tables with an additive migration. Administrative catalogue mutations use a separate advisory transaction lock, optimistic revisions and unique key/version constraints; they do not write the runtime JSONB row. Runtime reads query active pointers and current approvals. Export includes the registry; erasure clears definitions, versions, bindings, approvals, preferences and audit content. Privacy epochs fence stale requests and invalidate installed seeding. In-memory mode shares the existing privacy boundary.
 
 The application targets .NET 11 and currently uses EF Core 10.0.13. Generate migrations with the matching local EF 10 tool, not the installed global EF 9 tool. Do not apply a migration to the running owner database as a test.
+
+## Natural-language proposals
+
+The dashboard accepts a description plus explicit cloud consent at `/api/domains/proposals`. Generation uses the existing provider-neutral Agent route and durable budget admission, with a 1200-token output bound. There are no live-provider smoke tests. Configure/review provider rates through the existing owner process before use.
+
+Core validates the returned strict manifest, rejects generated personal-context opt-in and permission/code fields, resolves existing aliases, and saves an inactive draft plus generation ID, request fingerprint and provider/model provenance in the relational audit. A repeated successful proposal reuses its persisted version without another model request. The preview displays exact manifest/hash, data scope, cost mode and unmet dependencies. Activation is a separate manual owner action.
+
+`core_domain_propose` reads an explicit domain-creation request from the current captured user utterance. It cannot accept generated replacement speech, activate domains, or grant permissions. Its response directs the owner to the dashboard preview. Android remains an audio transport. Uninstalled features stay gaps; authored templates do not provide quizzes, retrieval, professional advice or calibrated scores.

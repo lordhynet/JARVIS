@@ -8,9 +8,10 @@ public static class DomainEndpoints
 {
     public static void MapDomainEndpoints(this WebApplication app)
     {
+        app.MapPost("/api/domains/proposals", (ProposeDomainRequest request, IDomainFactory factory, CancellationToken ct) => factory.ProposeAsync(request, ct));
         app.MapGet("/api/domains", (IDomainRegistry registry, CancellationToken ct) => registry.ListAsync(ct));
         app.MapGet("/api/domains/{key}/preview", (string key, Guid? versionId, IDomainRegistry registry, CancellationToken ct) => registry.PreviewAsync(key, versionId, ct));
-        app.MapPost("/api/domains/drafts", (SaveDomainDraftRequest request, IDomainRegistry registry, CancellationToken ct) => registry.SaveDraftAsync(request, "manual-client", ct));
+        app.MapPost("/api/domains/drafts", (SaveDomainDraftRequest request, IDomainRegistry registry, CancellationToken ct) => registry.SaveDraftAsync(request with { Provenance = null }, "manual-client", ct));
         foreach (var action in new[] { "activate", "rollback" })
             app.MapPost("/api/domains/{key}/" + action, (string key, ActivateDomainRequest request, HttpContext context, OwnerAuthorization owner, IDomainRegistry registry, CancellationToken ct) =>
                 registry.ActivateAsync(key, request, owner.Require(context, "domain.manage"), ct));

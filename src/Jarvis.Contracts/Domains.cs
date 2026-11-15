@@ -27,7 +27,11 @@ public sealed record DomainPreview(DomainDefinition Definition, DomainVersion Ve
 public sealed record DomainResolved(DomainDefinition Definition, DomainVersion Version, long Epoch, bool HasCurrentApproval = false);
 public sealed record DomainOperationReceipt(Guid RequestId, Guid DomainId, string Key, Guid VersionId,
     int Revision, string ManifestHash, DateTimeOffset At, string Action);
-public sealed record SaveDomainDraftRequest(Guid RequestId, int? ExpectedRevision, JsonElement Manifest);
+public sealed record DomainDraftProvenance(Guid GenerationId, string RequestFingerprint, string Source,
+    Guid? SessionId = null, Guid? UtteranceId = null, string? Provider = null, string? Model = null);
+public sealed record SaveDomainDraftRequest(Guid RequestId, int? ExpectedRevision, JsonElement Manifest, DomainDraftProvenance? Provenance = null);
+public sealed record ProposeDomainRequest(Guid RequestId, string Description, bool AllowCloudProcessing, string? Key = null, int? ExpectedRevision = null);
+public sealed record DomainProposal(DomainPreview Preview, bool ExistingDomain, DomainDraftProvenance? Provenance);
 public sealed record ActivateDomainRequest(Guid RequestId, int ExpectedRevision, Guid VersionId, string ManifestHash, string Reason = "");
 public sealed record DisableDomainRequest(Guid RequestId, int ExpectedRevision, string Reason = "");
 public sealed record SaveDomainStateRequest(int ExpectedRevision, bool Enabled, DomainPreferences Preferences, Guid? ProgressRef = null);
