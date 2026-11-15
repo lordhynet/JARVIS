@@ -2,21 +2,24 @@ using System.Security.Cryptography;
 using System.Text;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
+using Jarvis.Orchestrator.Domains;
 
 namespace Jarvis.Orchestrator.Workflows;
 
-public sealed class WorkflowService(IWorkflowStore store, TimeProvider clock)
+public sealed class WorkflowService(IWorkflowStore store, TimeProvider clock, IWorkflowCatalog? catalog = null)
 {
+    private readonly IWorkflowCatalog workflows = catalog ?? new WorkflowCatalog();
     public const int MaximumAttempts = 3;
     public static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(30);
 
     public async Task<WorkflowRun> CreateBriefAsync(CreateInterviewBriefRequest request, CancellationToken ct = default)
     {
         Guard.Require(request.RequestId != Guid.Empty, 400, "RequestId is required.");
+        var descriptor = workflows.GetLegacy("interview-brief");
         Guard.Require(request.AllowCloudProcessing, 400, "Explicit cloud processing consent is required for an AI brief.");
         const string fingerprint = "interview-brief:1:cloud-approved";
         var now = clock.GetUtcNow();
-        var candidate = new WorkflowRun(request.RequestId, "interview-brief", 1, fingerprint,
+        var candidate = new WorkflowRun(request.RequestId, descriptor.Key, descriptor.Version, fingerprint,
             WorkflowStatus.Queued, 0, 1, now, now, now.AddMinutes(5), now, AllowCloudProcessing: true);
         return SameRequest(await store.AddAsync(candidate, ct), fingerprint);
     }
@@ -31,6 +34,7 @@ public sealed class WorkflowService(IWorkflowStore store, TimeProvider clock)
 
     public async Task<WorkflowRun> CreateAsync(CreatePracticePlanRequest request, CancellationToken ct = default)
     {
+        var descriptor = workflows.GetLegacy("practice-plan");
         Guard.Require(request.RequestId != Guid.Empty, 400, "RequestId is required.");
         var now = clock.GetUtcNow();
         var due = request.NotBefore?.ToUniversalTime() ?? now;
@@ -41,7 +45,7 @@ public sealed class WorkflowService(IWorkflowStore store, TimeProvider clock)
         if (existing is not null) return SameRequest(existing, fingerprint);
         Guard.Require(due >= now.AddMinutes(-1) && due <= now.AddDays(7), 400,
             "NotBefore must be within the next seven days.");
-        var candidate = new WorkflowRun(request.RequestId, "practice-plan", 1, fingerprint,
+        var candidate = new WorkflowRun(request.RequestId, descriptor.Key, descriptor.Version, fingerprint,
             WorkflowStatus.Queued, 0, 1, now, now, due.AddMinutes(5), due);
         return SameRequest(await store.AddAsync(candidate, ct), fingerprint);
     }

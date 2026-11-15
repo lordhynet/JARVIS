@@ -5,9 +5,10 @@ using Jarvis.Api.Integrations;
 
 namespace Jarvis.Api;
 
-public sealed class WorkflowWorker(WorkflowService service, PracticePlanProcessor processor, PaidAiProvider paid,
+public sealed class WorkflowWorker(WorkflowService service, IEnumerable<IWorkflowStepExecutor> registeredExecutors,
     IRuntimeReader runtime, IPrivacyReader privacy, IConfiguration configuration, ILogger<WorkflowWorker> logger) : BackgroundService
 {
+    private readonly IReadOnlyDictionary<string, IWorkflowStepExecutor> executors = registeredExecutors.ToDictionary(x => x.Descriptor.Key, StringComparer.Ordinal);
     private readonly string _workerId = "worker-" + Guid.NewGuid().ToString("N");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -17,7 +18,7 @@ public sealed class WorkflowWorker(WorkflowService service, PracticePlanProcesso
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            WorkflowRun? claimed = null;
+            WorkflowRun? claimed = null; IWorkflowStepExecutor? executor = null;
             try
             {
                 var status = await privacy.StatusAsync(stoppingToken); if (status.Erased) continue;
@@ -25,34 +26,21 @@ public sealed class WorkflowWorker(WorkflowService service, PracticePlanProcesso
                 claimed = await service.ClaimAsync(_workerId, stoppingToken);
                 if (claimed is null || claimed.Status != WorkflowStatus.Running) continue;
                 // Unknown persisted versions are terminal failures, never silently reinterpreted.
-                if (claimed.Kind is not ("practice-plan" or "interview-brief") || claimed.WorkflowVersion != 1)
+                if (!executors.TryGetValue(claimed.Kind, out executor) || claimed.WorkflowVersion != executor.Descriptor.Version)
                 {
                     await service.FailAsync(claimed.Id, claimed.ClaimToken!.Value, false, stoppingToken);
                     continue;
                 }
-                if (claimed.Kind == "practice-plan")
-                {
-                    var result = await processor.BuildAsync(stoppingToken);
-                    await service.CompleteAsync(claimed.Id, claimed.ClaimToken!.Value, result, stoppingToken);
-                }
-                else
-                {
-                    using var turn = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                    var renewal = RenewAsync(claimed, turn);
-                    try
-                    {
-                        var brief = await paid.GenerateAsync(claimed, turn.Token);
-                        await service.CompleteBriefAsync(claimed.Id, claimed.ClaimToken!.Value, brief, turn.Token);
-                    }
-                    finally
-                    {
-                        await turn.CancelAsync();
-                        try { await renewal; } catch (OperationCanceledException) { }
-                    }
+                using var turn = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                var renewal = RenewAsync(claimed, turn);
+                try { await executor.ExecuteAsync(claimed, turn.Token); }
+                finally {
+                    await turn.CancelAsync();
+                    try { await renewal; } catch (OperationCanceledException) { }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (Exception) when (claimed?.Kind == "interview-brief" && !stoppingToken.IsCancellationRequested)
+            catch (Exception) when (claimed is not null && executor?.Descriptor.RequiresCloud == true && !stoppingToken.IsCancellationRequested)
             {
                 // Never automatically replay a paid request whose billing outcome may be unknown.
                 try

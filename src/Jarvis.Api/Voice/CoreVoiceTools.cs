@@ -11,6 +11,12 @@ namespace Jarvis.Api.Voice;
 /// <summary>Fixed Core capabilities, never a provider-selected URL or arbitrary command.</summary>
 public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService practice, TimeProvider clock, VoiceRecallService recall, VoiceCoachingService coaching)
 {
+    public static IReadOnlyList<Jarvis.Orchestrator.Domains.CapabilityDescriptor> Capabilities => Definitions.Select(tool => {
+        var json = JsonSerializer.SerializeToElement(tool); var name = json.GetProperty("name").GetString()!;
+        var readOnly = name is "core_context" or "core_story_search" or "core_coaching_catalog" or "core_coaching_prompt" or "core_practice_current";
+        return new Jarvis.Orchestrator.Domains.CapabilityDescriptor(name, json.GetProperty("description").GetString()!,
+            readOnly ? Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly : Jarvis.Orchestrator.Domains.CapabilityRisk.CoreWrite);
+    }).ToArray();
     public const int MaxCalls = 4, MaxOutputBytes = 6000;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static object Schema(Dictionary<string, object> properties) => new {

@@ -424,4 +424,12 @@ RR-05/RR-06 Android validation completed: **21 JVM tests passed, zero failures**
 
 Core RR commits: RR-02 `f6bbdbb`, RR-03 `9c2d00a`, RR-04 `fbb09c3`, RR-05 `1350f2e`, RR-07 `1435ea9`. The source is ready for the requested independent re-review. The owner rollout checklist is prepared in `docs/CONFIGURATION.md`; private configuration remains owner-assisted.
 
+## R6 catalogue completion — 15 November 2026
+
+Installed code now registers domain descriptors, immutable activity aliases, workflow references and capability metadata. Voice capability risk comes from the installed code; domain definitions cannot install capabilities or change their risk. Conversation instructions resolve through the domain catalogue with the previous text preserved. Legacy `practice-plan` and `interview-brief` retain their stored identifiers/version1 and use registered executors; the worker no longer branches on their names. Legacy jobs remain separate from generic agent task start routes.
+
+Fresh validation:35 affected backend tests passed after the executor refactor (`TestResults/r6-catalog.log`, 24s); seven catalogue tests passed after final legacy domain binding (`TestResults/r6-catalog-final.log`, 3s). Covers existing paid/unpaid workflow behavior with fake HTTP, persisted enum compatibility, prompt compatibility, two synthetic extension domains, defensive copying, unknown-capability rejection and duplicate activity-alias rejection. An initial compile found a nullable claimed-run access in the paid failure filter; the filter was corrected before these passing runs.
+
+No dependencies, projects, migrations, private configuration, paid calls or deployment were added. Database registry/factory and provider-neutral routing remain subsequent slices.
+
 Final Android follow-up: `:app:testReleaseUnitTest :app:lintRelease --offline --no-daemon --max-workers=1` completed successfully (3m23s), using the existing JDK/Gradle/cache with a 1GB build heap and in-process Kotlin compilation for this memory-constrained machine. Compilation, test execution and lint analysis ran on the final Android source. The JUnit XML totals are **18 tests, zero failures/errors**; the new case verifies that ordinary 401, offline and malformed-epoch failures preserve drafts, while confirmed erasure/valid generation changes request cleanup. No APK was assembled/installed and no hardware acceptance is inferred. The earlier pre-follow-up Android build also passed; it is superseded by this final result.
