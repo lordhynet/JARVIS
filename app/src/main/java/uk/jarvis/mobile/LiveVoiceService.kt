@@ -47,6 +47,7 @@ class LiveVoiceService : Service() {
     private lateinit var audio: AudioManager
     private var mediaSession: MediaSession? = null
     private var focus: AudioFocusRequest? = null
+    private var audioPhase = CompanionAudioPhase.Idle
     private var wake: PowerManager.WakeLock? = null
     @Volatile private var active = false
     @Volatile private var wakeEnabled = false
@@ -154,11 +155,7 @@ class LiveVoiceService : Service() {
     private fun startWakeDetector() {
         if (!wakeEnabled || active) return
         wakeDetector?.stop()
-        if (Build.VERSION.SDK_INT >= 31) {
-            audio.mode = AudioManager.MODE_IN_COMMUNICATION
-            val headset = audio.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
-            headset?.let { audio.setCommunicationDevice(it) }
-        }
+        transitionAudioPhase(CompanionAudioPhase.WakeListening)
         wakeDetector = LocalWakeDetector(this, { onWakeDetected() }, { message -> stopVoice(message, disableWake = true) }).also { it.start() }
         mutable.value = LiveVoiceState(message = "LOCAL WAKE LISTENING · on-device recognition", wakeListening = true)
     }
@@ -203,7 +200,7 @@ class LiveVoiceService : Service() {
         focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT).setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             .setOnAudioFocusChangeListener { change -> if (change < 0) stopVoice("Audio focus was lost; live voice stopped.") }.build()
         check(audio.requestAudioFocus(focus!!) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { "Another app currently owns audio focus." }
-        audio.mode = AudioManager.MODE_IN_COMMUNICATION
+        transitionAudioPhase(CompanionAudioPhase.LiveVoice)
         if (Build.VERSION.SDK_INT >= 31) {
             val headset = audio.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
             headset?.let { check(audio.setCommunicationDevice(it)) { "Android could not select the communication headset." } }
@@ -386,7 +383,8 @@ class LiveVoiceService : Service() {
             wakeDetector?.stop(); wakeDetector = null
         }
         val keepWake = wakeEnabled && !disableWake
-        if (!active && !keepWake && mutable.value.message == message) return
+        val nextAudioPhase = if (keepWake) CompanionAudioPhase.WakeListening else CompanionAudioPhase.Idle
+        if (!active && !keepWake && mutable.value.message == message && audioPhase == nextAudioPhase) return
         val stoppedLease = currentLease; currentLease = null; pendingWakeTicket = null; val stoppedClient = client; val stoppedCapture = captureJob
         active = false; ready = false; generation++; socket?.send("{\"type\":\"stop\"}"); socket?.close(1000, "Stopped"); socket = null
         reconnectJob?.cancel(); reconnectJob = null
@@ -403,9 +401,7 @@ class LiveVoiceService : Service() {
             }
         }
         soundQueue.close(); focus?.let { audio.abandonAudioFocusRequest(it) }; focus = null
-        if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
-        else { @Suppress("DEPRECATION") runCatching { audio.isBluetoothScoOn = false; audio.stopBluetoothSco() } }
-        audio.mode = AudioManager.MODE_NORMAL
+        transitionAudioPhase(nextAudioPhase)
         mediaSession?.release(); mediaSession = null; transport?.dispatcher?.executorService?.shutdown(); transport?.connectionPool?.evictAll(); transport = null
         wake?.let { if (it.isHeld) it.release() }; wake = null
         mutable.value = LiveVoiceState(message = message, wakeListening = keepWake)
@@ -422,7 +418,19 @@ class LiveVoiceService : Service() {
     override fun onDestroy() {
         if (active) stopVoice("Android stopped the live session. Reconnect to resume.", disableWake = true)
         wakeEnabled = false; wakeDetector?.stop(); wakeDetector = null
+        transitionAudioPhase(CompanionAudioPhase.Idle)
         scope.cancel(); unregisterReceiver(routeChanged); super.onDestroy()
+    }
+    private fun transitionAudioPhase(next: CompanionAudioPhase) {
+        for (action in AudioRoutePolicy.transition(audioPhase, next)) when (action) {
+            AudioRouteAction.EnterCommunicationRoute -> audio.mode = AudioManager.MODE_IN_COMMUNICATION
+            AudioRouteAction.RestoreDefaultRoute -> {
+                if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
+                else { @Suppress("DEPRECATION") runCatching { audio.isBluetoothScoOn = false; audio.stopBluetoothSco() } }
+                audio.mode = AudioManager.MODE_NORMAL
+            }
+        }
+        audioPhase = next
     }
     @Suppress("DEPRECATION")
     private suspend fun selectLegacyHeadset() {
