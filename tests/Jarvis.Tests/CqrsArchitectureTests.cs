@@ -5,6 +5,7 @@ using Jarvis.Orchestrator.Cqrs;
 using Jarvis.Orchestrator.Cqrs.Agents;
 using Jarvis.Orchestrator.Cqrs.Imports;
 using Jarvis.Orchestrator.Cqrs.Coaching;
+using Jarvis.Orchestrator.Cqrs.Domains;
 using Jarvis.Orchestrator.Cqrs.Devices;
 using Jarvis.Orchestrator.Cqrs.Learning;
 using Jarvis.Orchestrator.Cqrs.Sessions;
@@ -144,6 +145,26 @@ public sealed class CqrsArchitectureTests
         Assert.Equal(expected.Id, (await response.Content.ReadFromJsonAsync<AiCoachAssessment>(LifeScenarioTests.Json))!.Id);
     }
 
+    [Fact]
+    public async Task Domain_draft_endpoint_dispatches_the_command_handler()
+    {
+        var now = DateTimeOffset.UtcNow; var domainId = Guid.NewGuid(); var versionId = Guid.NewGuid();
+        var manifest = new DomainManifest(1, "fixture", "Fixture", "Fixture domain", [], [AgentRole.TechnicalTrainer], [],
+            ["Explain one concept"], DomainExecutionMode.Template);
+        var definition = new DomainDefinition(domainId, "fixture", "domain-fixture", "Fixture", DomainStatus.Draft, null, versionId, 1, false, now, now);
+        var version = new DomainVersion(versionId, domainId, 1, 1, manifest, "hash", "fixture", now);
+        var expected = new DomainPreview(definition, version, DomainRiskClass.General, [], "domain:fixture", false);
+        using var original = new ScenarioFactory();
+        using var factory = original.WithWebHostBuilder(b => b.ConfigureServices(s =>
+            s.AddSingleton<ICommandHandler<SaveDomainDraft, DomainPreview>>(new StubSaveDomainDraft(expected))));
+        using var client = factory.CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey);
+        var request = new SaveDomainDraftRequest(Guid.NewGuid(), null, JsonSerializer.SerializeToElement(manifest),
+            new(Guid.NewGuid(), "fingerprint", "test"));
+        using var response = await client.PostAsJsonAsync("/api/domains/drafts", request, LifeScenarioTests.Json);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(expected.Definition.Id, (await response.Content.ReadFromJsonAsync<DomainPreview>(LifeScenarioTests.Json))!.Definition.Id);
+    }
+
     private sealed class StubSessionQuery(ConversationSession session) : IQueryHandler<ListSessions, IReadOnlyList<ConversationSession>>
     {
         public Task<IReadOnlyList<ConversationSession>> HandleAsync(ListSessions query, CancellationToken ct = default) =>
@@ -163,5 +184,10 @@ public sealed class CqrsArchitectureTests
     private sealed class StubImportAssessment(AiCoachAssessment assessment) : ICommandHandler<RequestImportAiAssessment, AiCoachAssessment>
     {
         public Task<AiCoachAssessment> HandleAsync(RequestImportAiAssessment command, CancellationToken ct = default) => Task.FromResult(assessment);
+    }
+
+    private sealed class StubSaveDomainDraft(DomainPreview preview) : ICommandHandler<SaveDomainDraft, DomainPreview>
+    {
+        public Task<DomainPreview> HandleAsync(SaveDomainDraft command, CancellationToken ct = default) => Task.FromResult(preview);
     }
 }

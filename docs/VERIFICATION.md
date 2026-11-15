@@ -549,3 +549,9 @@ Fresh validation: the API/test build succeeded and eight focused tests passed (z
 Coaching, technical-training and imported-document AI assessment routes now dispatch through Orchestrator command handlers. `IAiAssessmentService` is the application-owned port implemented by the existing budgeted `AiCoach` API adapter. Rate-limit policies, endpoint routes and result contracts are unchanged; provider reservation, consent and evidence validation remain in the adapter.
 
 Fresh validation: the API/test build succeeded and 13 focused tests passed (zero failures/skips), covering CQRS handler registration and route delegation plus AI-coach consent, concurrency admission, provider-cache behavior, evidence validation and deletion/source-change races. Two initial build attempts exposed missing namespace imports in the moved port references; imports were corrected before the passing run. Tests use only fake provider HTTP.
+
+## Domain endpoints through CQRS — 15 November 2026
+
+Domain proposal/draft, activation/rollback, disable and user-state writes now use application command handlers; list/preview/state reads use separate query handlers. Owner step-up remains at the HTTP boundary and the resulting `BudgetActor` is passed into the application command. Routes, confirmation payloads and domain-registry behavior are unchanged.
+
+Fresh validation: API/test build succeeded and 14 focused tests passed (zero failures/skips), covering complete handler registration, draft endpoint delegation, registry approval/risk behavior and PostgreSQL persistence. The architecture test caught and prevented a combined read/write handler; query and command handlers are separate in the final implementation.
