@@ -593,3 +593,9 @@ On source HEAD `aaf4740` (before this verification-only commit), the full backen
 Added `POST /api/voice/wake-candidates` to the scoped companion route allowlist. A device credential can reach wake arbitration only with its bound device ID; a request naming another device receives 403. The integration test issues and uses a real `jdv1_` credential and uses a fake provider transport (wake arbitration does not call it).
 
 Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~DeviceAuthorizationTests"` passed 25/25, zero failures/skips.
+
+## Round 3 RR3-02 — local wake audio routing
+
+The Android wake-listening phase no longer sets `MODE_IN_COMMUNICATION` or selects a communication/SCO device. The routing state machine enters communication routing only for live voice after Core has granted its lease, then restores the default route when returning to local wake listening or stopping. JVM policy tests cover idle, wake, live and return transitions.
+
+Fresh validation: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-workers=1` succeeded. All 25 Android debug unit tests passed, zero failures/errors/skips; release lint passed. Mobile commit: `2f6389d`.
