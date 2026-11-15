@@ -1,4 +1,23 @@
 const { test, expect } = require('@playwright/test');
+test('owner credential is attached only to administrative requests', async ({ page }) => {
+  const ordinary = []; const ownerCalls = [];
+  page.on('request', request => {
+    if (request.url().includes('/api/')) {
+      const owner = request.headers()['x-jarvis-owner-key'];
+      if (request.url().endsWith('/api/privacy/export')) ownerCalls.push(owner);
+      else if (request.method() === 'GET') ordinary.push(owner);
+    }
+  });
+  await page.goto('/'); await page.getByLabel('API key', { exact: true }).fill('browser-test-only-key');
+  await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByRole('button', { name: 'Privacy & data', exact: true }).click();
+  await expect(page.locator('[data-panel=privacy]')).toContainText('Core active');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download Core data export', exact: true }).click(); await download;
+  expect(ordinary.length).toBeGreaterThan(0); expect(ordinary.every(value => value === undefined)).toBeTruthy();
+  expect(ownerCalls).toEqual(['browser-test-only-owner-management-123456789']);
+});
 test('privacy preview and export are available without destructive confirmation', async ({ page }) => {
   await page.goto('/'); await page.getByLabel('API key', { exact: true }).fill('browser-test-only-key'); await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();

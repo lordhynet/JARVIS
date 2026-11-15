@@ -17,7 +17,15 @@ function notice(text, error = false) { $('notice').textContent = text; $('notice
 async function api(path, body, method) {
   const generation = connectionGeneration;
   const multipart = body instanceof FormData;
-  const response = await fetch(`/api${path}`, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'X-Jarvis-Key': state.key, ...($('owner-key').value ? { 'X-Jarvis-Owner-Key': $('owner-key').value } : {}), ...(!multipart && body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body) });
+  const verb = method || (body === undefined ? 'GET' : 'POST');
+  const ownerCall = verb === 'GET' && path === '/privacy/export' ||
+    verb === 'POST' && ['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply'].includes(path) ||
+    ['POST', 'DELETE'].includes(verb) && /^\/devices\/[^/]+\/(verify|credential)$/.test(path) ||
+    verb === 'POST' && /^\/tools\/[^/]+\/confirm$/.test(path) ||
+    verb === 'POST' && /^\/budget\/(approvals(?:\/[^/]+\/revoke)?|legacy\/[^/]+\/classify)$/.test(path) ||
+    verb === 'GET' && /^\/budget\/legacy\/[^/]+\/preview$/.test(path) ||
+    verb === 'POST' && /^\/usage\/charges\/[^/]+\/reconcile$/.test(path);
+  const response = await fetch(`/api${path}`, { method: verb, headers: { 'X-Jarvis-Key': state.key, ...(ownerCall && $('owner-key').value ? { 'X-Jarvis-Owner-Key': $('owner-key').value } : {}), ...(!multipart && body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body) });
   const data = await response.json().catch(() => ({}));
   if (generation !== connectionGeneration) throw new Error('This response belongs to a previous Core connection.');
   if (!response.ok) throw new Error(data.error || data.detail || Object.values(data.errors || {}).flat().join(' ') || `Request failed (${response.status}).`);
