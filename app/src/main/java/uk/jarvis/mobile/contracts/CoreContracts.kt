@@ -81,3 +81,14 @@ data class VoiceTicket(
     val sampleRate: Int = 0,
 )
 
+data class WakeCandidateRequest(
+    val requestId: String = "",
+    val deviceId: String = "",
+    val allowCloudProcessing: Boolean = false,
+)
+
+data class WakeCandidateResponse(
+    val sessionId: String = "",
+    val voice: VoiceTicket = VoiceTicket(),
+)
+

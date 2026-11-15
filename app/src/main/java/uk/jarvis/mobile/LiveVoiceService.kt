@@ -26,13 +26,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.io.IOException
 
-data class LiveVoiceState(val active: Boolean = false, val ready: Boolean = false, val message: String = "")
+data class LiveVoiceState(val active: Boolean = false, val ready: Boolean = false, val message: String = "", val wakeListening: Boolean = false)
 
 class LiveVoiceService : Service() {
     companion object {
         const val START = "uk.jarvis.mobile.LIVE_START"
         const val STOP = "uk.jarvis.mobile.LIVE_STOP"
         const val INTERRUPT = "uk.jarvis.mobile.LIVE_INTERRUPT"
+        const val WAKE_START = "uk.jarvis.mobile.LOCAL_WAKE_START"
         private val mutable = MutableStateFlow(LiveVoiceState())
         val state = mutable.asStateFlow()
     }
@@ -48,7 +49,10 @@ class LiveVoiceService : Service() {
     private var focus: AudioFocusRequest? = null
     private var wake: PowerManager.WakeLock? = null
     @Volatile private var active = false
+    @Volatile private var wakeEnabled = false
     @Volatile private var ready = false
+    private var wakeDetector: LocalWakeDetector? = null
+    private var pendingWakeTicket: VoiceTicket? = null
     private var generation = 0L
     private var sessionId = ""
     private var deviceId = ""
@@ -80,19 +84,24 @@ class LiveVoiceService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("live-voice", "Active live voice", NotificationManager.IMPORTANCE_LOW))
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null && getSharedPreferences("installation", 0).getBoolean("local-wake-enabled", false)) startWakeListening()
         when (intent?.action) {
-            STOP -> stopVoice("Live voice stopped. Completed turns are saved in Core.")
+            STOP -> stopVoice("Live voice and local wake detection stopped.", disableWake = true)
             INTERRUPT -> interrupt()
+            WAKE_START -> startWakeListening()
             START -> if (!active) {
                 sessionId = intent.getStringExtra("sessionId").orEmpty()
+                wakeDetector?.stop(); wakeDetector = null
+                mutable.value = mutable.value.copy(wakeListening = false)
+                intent.getStringExtra("voiceTicket")?.let { pendingWakeTicket = runCatching { gson.fromJson(it, VoiceTicket::class.java) }.getOrNull() }
                 if (sessionId.isBlank() || checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { stopVoice("Microphone permission and an active session are required."); return START_NOT_STICKY }
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) { stopVoice("Allow notifications for visible live-voice Stop controls."); return START_NOT_STICKY }
                 val stop = PendingIntent.getService(this, 201, Intent(this, LiveVoiceService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
                 val interruptIntent = PendingIntent.getService(this, 202, Intent(this, LiveVoiceService::class.java).setAction(INTERRUPT), PendingIntent.FLAG_IMMUTABLE)
                 mediaSession = MediaSession(this, "JARVIS live voice").apply {
                     setCallback(object : MediaSession.Callback() {
-                        override fun onPause() { stopVoice("Paused with headset controls.") }
-                        override fun onStop() { stopVoice("Stopped with headset controls.") }
+                        override fun onPause() { stopVoice("Paused with headset controls.", disableWake = true) }
+                        override fun onStop() { stopVoice("Stopped with headset controls.", disableWake = true) }
                         override fun onSkipToNext() { interrupt() }
                         override fun onMediaButtonEvent(intent: Intent): Boolean {
                             val event = intent.mediaKey() ?: return super.onMediaButtonEvent(intent)
@@ -121,7 +130,64 @@ class LiveVoiceService : Service() {
                 initializationJob = scope.launch { try { initialize(current) } catch (e: Exception) { if (active && current == generation) stopVoice(e.message ?: "Live voice failed.") } }
             }
         }
-        return START_NOT_STICKY
+        return if (wakeEnabled) START_STICKY else START_NOT_STICKY
+    }
+    private fun startWakeListening() {
+        if (active || wakeEnabled) return
+        if (Build.VERSION.SDK_INT < 31 || !android.speech.SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+            mutable.value = LiveVoiceState(message = "This device has no supported local wake recognizer. No cloud fallback is available."); stopSelf(); return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
+            Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            mutable.value = LiveVoiceState(message = "Microphone and notification permissions are required for local wake listening."); stopSelf(); return
+        }
+        wakeEnabled = true; getSharedPreferences("installation", 0).edit().putBoolean("local-wake-enabled", true).apply()
+        val stop = PendingIntent.getService(this, 201, Intent(this, LiveVoiceService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
+        val notification = Notification.Builder(this, "live-voice").setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle("JARVIS local wake detection is active")
+            .setContentText("On-device listening only. Saying Hey JARVIS connects to Core and starts live voice.").setOngoing(true)
+            .addAction(Notification.Action.Builder(null, "Stop listening", stop).build()).build()
+        try { startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) }
+        catch (_: RuntimeException) { stopVoice("Android could not start the microphone foreground service.", disableWake = true); return }
+        startWakeDetector()
+    }
+    private fun startWakeDetector() {
+        if (!wakeEnabled || active) return
+        wakeDetector?.stop()
+        if (Build.VERSION.SDK_INT >= 31) {
+            audio.mode = AudioManager.MODE_IN_COMMUNICATION
+            val headset = audio.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
+            headset?.let { audio.setCommunicationDevice(it) }
+        }
+        wakeDetector = LocalWakeDetector(this, { onWakeDetected() }, { message -> stopVoice(message, disableWake = true) }).also { it.start() }
+        mutable.value = LiveVoiceState(message = "LOCAL WAKE LISTENING · on-device recognition", wakeListening = true)
+    }
+    private fun onWakeDetected() {
+        if (!wakeEnabled || active) return
+        wakeDetector = null; mutable.value = LiveVoiceState(message = "Hey JARVIS detected locally. Asking Core to arbitrate this device…")
+        scope.launch {
+            try {
+                val saved = CredentialVault(this@LiveVoiceService).read() ?: error("Reconnect this phone to Core before using local wake.")
+                val candidateClient = CoreApi(saved.url, saved.token, saved.certificateSha256)
+                val privacy = candidateClient.get("/api/privacy/status", PrivacyStatus::class.java); candidateClient.bindEpoch(privacy.epoch)
+                deviceId = getSharedPreferences("installation", 0).getString("id", "").orEmpty()
+                candidateClient.send("/api/devices/$deviceId/heartbeat", emptyMap<String, String>(), JsonObject::class.java)
+                val candidate = candidateClient.send("/api/voice/wake-candidates", WakeCandidateRequest(java.util.UUID.randomUUID().toString(), deviceId, true), WakeCandidateResponse::class.java)
+                candidateClient.invalidate()
+                sessionId = candidate.sessionId.toString(); pendingWakeTicket = candidate.voice
+                startService(Intent(this@LiveVoiceService, LiveVoiceService::class.java).setAction(START)
+                    .putExtra("sessionId", sessionId).putExtra("voiceTicket", gson.toJson(candidate.voice)))
+            } catch (error: Exception) {
+                if (!wakeEnabled) return@launch
+                val message = when (error) {
+                    is CoreHttpException -> if (error.status == 409) "Another device won wake arbitration. Still listening locally." else "Core rejected the wake request: ${error.message}"
+                    is java.io.IOException -> "Core is unreachable. Local wake remains on; reconnect before trying again."
+                    else -> error.message ?: "Wake arbitration failed. Local wake remains on."
+                }
+                mutable.value = LiveVoiceState(message = message, wakeListening = true)
+                delay(1500); if (wakeEnabled && !active) startWakeDetector()
+            }
+        }
     }
     private suspend fun initialize(current: Long) {
         val connection = CredentialVault(this).read() ?: error("Connect this phone to Core first.")
@@ -182,7 +248,8 @@ class LiveVoiceService : Service() {
     private suspend fun connectWindow(connection: SavedConnection, current: Long) {
         stopCapture()
         val at = SystemClock.elapsedRealtime()
-        val ticket = client!!.send("/api/voice/tickets", VoiceStartRequest(sessionId, deviceId, true), VoiceTicket::class.java)
+        val ticket = pendingWakeTicket?.also { pendingWakeTicket = null }
+            ?: client!!.send("/api/voice/tickets", VoiceStartRequest(sessionId, deviceId, true), VoiceTicket::class.java)
         if (!active || generation != current) return
         currentLease = ticket.lease
         leaseDeadline.set(at + 15000); pings.clear(); ready = false
@@ -313,9 +380,14 @@ class LiveVoiceService : Service() {
         while (true) { val queued = soundQueue.tryReceive().getOrNull() ?: break; playbackBudget.release(queued.second.size) }
         if (track != null) runCatching { track.pause(); track.flush(); writtenSamples = 0; itemStartSamples = 0; itemSamples = 0; playbackItem = null; track.play() }
     }
-    private fun stopVoice(message: String) {
-        if (!active && mutable.value.message == message) return
-        val stoppedLease = currentLease; currentLease = null; val stoppedClient = client; val stoppedCapture = captureJob
+    private fun stopVoice(message: String, disableWake: Boolean = false) {
+        if (disableWake) {
+            wakeEnabled = false; getSharedPreferences("installation", 0).edit().putBoolean("local-wake-enabled", false).apply()
+            wakeDetector?.stop(); wakeDetector = null
+        }
+        val keepWake = wakeEnabled && !disableWake
+        if (!active && !keepWake && mutable.value.message == message) return
+        val stoppedLease = currentLease; currentLease = null; pendingWakeTicket = null; val stoppedClient = client; val stoppedCapture = captureJob
         active = false; ready = false; generation++; socket?.send("{\"type\":\"stop\"}"); socket?.close(1000, "Stopped"); socket = null
         reconnectJob?.cancel(); reconnectJob = null
         initializationJob?.cancel(); initializationJob = null
@@ -336,11 +408,20 @@ class LiveVoiceService : Service() {
         audio.mode = AudioManager.MODE_NORMAL
         mediaSession?.release(); mediaSession = null; transport?.dispatcher?.executorService?.shutdown(); transport?.connectionPool?.evictAll(); transport = null
         wake?.let { if (it.isHeld) it.release() }; wake = null
-        mutable.value = mutable.value.copy(active = false, ready = false, message = message)
-        stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+        mutable.value = LiveVoiceState(message = message, wakeListening = keepWake)
+        if (keepWake) {
+            val stop = PendingIntent.getService(this, 201, Intent(this, LiveVoiceService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
+            val notification = Notification.Builder(this, "live-voice").setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setContentTitle("JARVIS local wake detection is active")
+                .setContentText("On-device listening only. Saying Hey JARVIS connects to Core and starts live voice.").setOngoing(true)
+                .addAction(Notification.Action.Builder(null, "Stop listening", stop).build()).build()
+            startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            startWakeDetector()
+        } else { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
     }
     override fun onDestroy() {
-        if (active) stopVoice("Android stopped the live session. Reconnect to resume.")
+        if (active) stopVoice("Android stopped the live session. Reconnect to resume.", disableWake = true)
+        wakeEnabled = false; wakeDetector?.stop(); wakeDetector = null
         scope.cancel(); unregisterReceiver(routeChanged); super.onDestroy()
     }
     @Suppress("DEPRECATION")

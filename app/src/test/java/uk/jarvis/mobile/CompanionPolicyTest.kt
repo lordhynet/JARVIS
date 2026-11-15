@@ -6,7 +6,7 @@ import org.junit.Test
 class CompanionPolicyTest {
     @Test fun only_voice_device_and_privacy_transport_routes_are_available() {
         for (path in listOf("/api/privacy/status", "/api/voice/status", "/api/devices")) assertTrue(CompanionRoutes.allowed(path, "GET"))
-        for (path in listOf("/api/devices", "/api/voice/prepare", "/api/voice/tickets", "/api/voice/local/release", "/api/devices/android-123/heartbeat")) assertTrue(CompanionRoutes.allowed(path, "POST"))
+        for (path in listOf("/api/devices", "/api/voice/prepare", "/api/voice/wake-candidates", "/api/voice/tickets", "/api/voice/local/release", "/api/devices/android-123/heartbeat")) assertTrue(CompanionRoutes.allowed(path, "POST"))
         assertFalse(CompanionRoutes.allowed("/api/devices/android-123/verify", "POST"))
     }
     @Test fun feature_pages_and_business_commands_cannot_creep_into_the_phone_client() {
