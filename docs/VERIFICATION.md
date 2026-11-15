@@ -567,3 +567,9 @@ Fresh validation: API/test build succeeded and 32 focused CQRS/device-authorizat
 Budget status and legacy-charge preview now dispatch through query handlers; approval, revocation and legacy-charge classification dispatch through command handlers. Existing routes, result contracts, budget service behavior and HTTP owner step-up authorization are preserved.
 
 Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~BudgetApprovalTests|FullyQualifiedName~BudgetPolicyTests|FullyQualifiedName~CqrsArchitectureTests"` succeeded: 27 passed, zero failures or skips. This builds the API/test projects and validates budget authorization and policy behavior plus registered, read/write-separated CQRS handlers.
+
+## Import read endpoints through CQRS — 15 November 2026
+
+Import list/detail, assessment history, source-claim list and interview-review reads now dispatch through Orchestrator query handlers. The list response uses an explicit summary contract with the same fields and JSON shape as the prior projection. Existing missing/deleted-document behavior is preserved.
+
+Fresh validation: workspace-pinned `dotnet build Jarvis.sln --no-restore --verbosity minimal` succeeded with zero warnings and zero errors. Tests were not run for this slice.

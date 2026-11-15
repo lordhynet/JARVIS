@@ -43,6 +43,7 @@ public static class CqrsRegistration
         services.AddSingleton<AgentCommandHandlers>();
         services.AddSingleton<ImportService>();
         services.AddSingleton<ImportCommandHandlers>();
+        services.AddSingleton<ImportQueryHandlers>();
         services.AddSingleton<DomainCommandHandlers>();
         services.AddSingleton<DomainQueryHandlers>();
         services.AddSingleton<BudgetCommandHandlers>();
@@ -137,6 +138,11 @@ public static class CqrsRegistration
         Command<ImportDocument, ImportedDocument, ImportCommandHandlers>(services);
         Command<DeleteImport, bool, ImportCommandHandlers>(services);
         Command<AttachImportClaim, SourceClaim, ImportCommandHandlers>(services);
+        Query<ListImports, IReadOnlyList<ImportedDocumentSummary>, ImportQueryHandlers>(services);
+        Query<GetImport, ImportedDocument, ImportQueryHandlers>(services);
+        Query<ListImportClaims, IReadOnlyList<SourceClaim>, ImportQueryHandlers>(services);
+        Query<ListImportAssessments, IReadOnlyList<AiCoachAssessment>, ImportQueryHandlers>(services);
+        Query<GetImportReview, InterviewArchiveReview, ImportQueryHandlers>(services);
         Command<ProposeDomain, DomainProposal, DomainCommandHandlers>(services);
         Command<SaveDomainDraft, DomainPreview, DomainCommandHandlers>(services);
         Command<ActivateDomain, DomainOperationReceipt, DomainCommandHandlers>(services);
