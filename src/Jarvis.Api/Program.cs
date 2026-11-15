@@ -162,6 +162,7 @@ builder.Services.AddHostedService<AgentWorker>();
 builder.Services.AddSingleton<IAudioDurationProbe, AudioDurationProbe>();
 builder.Services.AddSingleton<AudioOwnership>();
 builder.Services.AddSingleton<CompanionVoiceService>();
+builder.Services.AddSingleton<WakeCandidateArbiter>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Training.VoicePracticeService>();
 builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();

@@ -80,6 +80,20 @@ public sealed class CompanionVoiceTests
         Assert.Single(await services.GetRequiredService<ISessionStore>().ListAsync());
     }
     [Fact]
+    public async Task Wake_candidates_are_arbitrated_by_core_audio_fence_with_only_one_winner() {
+        using var factory = new ProviderFactory(_ => throw new InvalidOperationException("Wake arbitration must not make a provider request."));
+        using var client = factory.Client(); var services = factory.Services;
+        await Register(services, "wake-phone-a"); await Register(services, "wake-phone-b");
+        var winner = await DomainRegistryTests.Post<WakeCandidateResponse>(client, "/api/voice/wake-candidates",
+            new WakeCandidateRequest(Guid.NewGuid(), "wake-phone-a", true));
+        Assert.NotEqual(Guid.Empty, winner.SessionId); Assert.Equal(winner.SessionId, winner.Voice.Lease.SessionId);
+        Assert.Equal("wake-phone-a", winner.Voice.Lease.DeviceId); Assert.NotEmpty(winner.Voice.Ticket);
+        using var loser = await client.PostAsJsonAsync("/api/voice/wake-candidates", new WakeCandidateRequest(Guid.NewGuid(), "wake-phone-b", true));
+        Assert.Equal(HttpStatusCode.Conflict, loser.StatusCode);
+        Assert.Single(await services.GetRequiredService<ISessionReader>().ListPreparationAsync(default));
+        Assert.Equal(winner.Voice.Lease.Fence, (await services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AudioLease))!.Fence);
+    }
+    [Fact]
     public async Task Parallel_retries_do_not_create_duplicate_preparation_checkpoints() {
         using var factory = new JarvisApiFactory(); await Register(factory.Services, "phone");
         var service = factory.Services.GetRequiredService<CompanionVoiceService>(); var request = new CompanionVoiceRequest(Guid.NewGuid(), "phone", true);

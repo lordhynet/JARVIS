@@ -25,6 +25,9 @@ public static class VoiceEndpoints
         app.MapGet("/api/voice/status", (ManagedAi ai) => ai.Status("Voice"));
         app.MapPost("/api/voice/prepare", (CompanionVoiceRequest request, HttpContext context, ManagedAi ai, CompanionVoiceService voice, CancellationToken ct) =>
         { ApiKeyMiddleware.RequireDevice(context, request.DeviceId); ai.RequireReady("Voice"); return voice.PrepareAsync(request, ct); }).RequireRateLimiting("voice");
+        app.MapPost("/api/voice/wake-candidates", async (WakeCandidateRequest request, HttpContext context, ManagedAi ai, WakeCandidateArbiter arbiter, CancellationToken ct) => {
+            ApiKeyMiddleware.RequireDevice(context, request.DeviceId); ai.RequireReady("Voice"); return await arbiter.ClaimAsync(request, ct);
+        }).RequireRateLimiting("voice");
         app.MapPost("/api/voice/tickets", (VoiceStartRequest request, HttpContext context, ManagedAi ai, AudioOwnership ownership, CancellationToken ct) =>
         { ApiKeyMiddleware.RequireDevice(context, request.DeviceId); ai.RequireReady("Voice"); return ownership.StartAsync(request, ct); }).RequireRateLimiting("voice");
         // No reusable key in a URL. Authentication is a single-use 15-second ticket in the first frame.

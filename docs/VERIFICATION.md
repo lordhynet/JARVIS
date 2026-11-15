@@ -495,3 +495,11 @@ Fresh validation: six DomainRegistry/PostgresDomainRegistry tests passed, zero f
 ## RR2-01 historical RR-03 commit build boundary — 15 November 2026
 
 Built commit `9c2d00a` independently in a temporary detached worktree with the repository-pinned .NET 11 SDK. `dotnet build Jarvis.sln --verbosity minimal` failed with six C# syntax errors at `src/Jarvis.Api/Notifications/PushNotifications.cs:109`, caused by an invocation-origin statement left after the file's closing brace. The later RR-07 commit `1435ea9` removes that stray statement; the current tree builds. This is recorded as historical evidence only; no commit was amended or rewritten.
+
+## R12 local wake and Core arbitration — 15 November 2026
+
+Core exposes `POST /api/voice/wake-candidates` to authenticated audio devices. It requires explicit cloud processing consent, prepares the canonical companion session, and obtains the existing global audio lease and single-use voice ticket. The lease is the cross-device response arbitration fence; this endpoint does not itself invoke an AI provider.
+
+Android adds an opt-in foreground microphone service using only Android's on-device speech recognizer for the wake phrase. A detected phrase submits a candidate to Core; only a winning candidate proceeds into the existing live voice path. The UI explains that live audio after wake is sent to the configured provider. Local detection requires Android 12+ and an installed/available English local recognizer; there is no cloud speech fallback. The owner must enable it in the app while visible and can stop it from the persistent notification.
+
+Fresh validation: the Core API/test build and the focused HTTP arbitration test passed (one test; first eligible device receives a ticket and a competing device receives conflict). Android `:app:testReleaseUnitTest :app:lintRelease --no-daemon --max-workers=1` passed; JUnit XML reports 23 tests with zero failures/errors/skips, and release lint passed. No APK was installed. No physical-device acceptance was performed, so screen-off reliability, Bluetooth earbud routing and Android background survival remain unverified; always-on support is not claimed.
