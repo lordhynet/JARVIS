@@ -4,6 +4,7 @@ using Jarvis.Contracts;
 using Jarvis.Orchestrator.Cqrs;
 using Jarvis.Orchestrator.Cqrs.Agents;
 using Jarvis.Orchestrator.Cqrs.Imports;
+using Jarvis.Orchestrator.Cqrs.Coaching;
 using Jarvis.Orchestrator.Cqrs.Devices;
 using Jarvis.Orchestrator.Cqrs.Learning;
 using Jarvis.Orchestrator.Cqrs.Sessions;
@@ -129,6 +130,20 @@ public sealed class CqrsArchitectureTests
         Assert.Empty(await factory.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.ImportedDocuments));
     }
 
+    [Fact]
+    public async Task Paid_assessment_endpoint_dispatches_the_application_command_handler()
+    {
+        var expected = new AiCoachAssessment(Guid.NewGuid(), Guid.NewGuid(), 1, [], "Fixture", ["Follow up"], "fixture", DateTimeOffset.UtcNow);
+        using var original = new ScenarioFactory();
+        using var factory = original.WithWebHostBuilder(b => b.ConfigureServices(s =>
+            s.AddSingleton<ICommandHandler<RequestImportAiAssessment, AiCoachAssessment>>(new StubImportAssessment(expected))));
+        using var client = factory.CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey);
+        using var response = await client.PostAsJsonAsync($"/api/imports/{expected.AttemptId}/assess",
+            new AiAssessmentRequest(Guid.NewGuid(), 1, 1, true), LifeScenarioTests.Json);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(expected.Id, (await response.Content.ReadFromJsonAsync<AiCoachAssessment>(LifeScenarioTests.Json))!.Id);
+    }
+
     private sealed class StubSessionQuery(ConversationSession session) : IQueryHandler<ListSessions, IReadOnlyList<ConversationSession>>
     {
         public Task<IReadOnlyList<ConversationSession>> HandleAsync(ListSessions query, CancellationToken ct = default) =>
@@ -143,5 +158,10 @@ public sealed class CqrsArchitectureTests
     private sealed class StubImportDocument(ImportedDocument document) : ICommandHandler<ImportDocument, ImportedDocument>
     {
         public Task<ImportedDocument> HandleAsync(ImportDocument command, CancellationToken ct = default) => Task.FromResult(document);
+    }
+
+    private sealed class StubImportAssessment(AiCoachAssessment assessment) : ICommandHandler<RequestImportAiAssessment, AiCoachAssessment>
+    {
+        public Task<AiCoachAssessment> HandleAsync(RequestImportAiAssessment command, CancellationToken ct = default) => Task.FromResult(assessment);
     }
 }

@@ -3,6 +3,7 @@ using Jarvis.Api.Integrations;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Cqrs;
 using Jarvis.Orchestrator.Cqrs.Imports;
+using Jarvis.Orchestrator.Cqrs.Coaching;
 
 namespace Jarvis.Api.Endpoints;
 
@@ -10,7 +11,7 @@ public static class ImportEndpoints
 {
     public static void MapImportEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/imports/{id:guid}/assess", (Guid id, AiAssessmentRequest request, AiCoach coach, CancellationToken ct) => coach.ImportedAsync(id, request, ct)).RequireRateLimiting("cloud");
+        app.MapPost("/api/imports/{id:guid}/assess", (Guid id, AiAssessmentRequest request, ICommandHandler<RequestImportAiAssessment, AiCoachAssessment> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct)).RequireRateLimiting("cloud");
         app.MapGet("/api/imports/{id:guid}/assessments", (Guid id, IRuntimeReader reader, CancellationToken ct) => reader.ReadAsync(s => s.AiCoachAssessments.Values.Where(x => x.AttemptId == id).ToList(), ct));
         app.MapGet("/api/imports", (IRuntimeReader reader, CancellationToken ct) => reader.ReadAsync(s => s.ImportedDocuments.Values
             .Where(x => x.DeletedAt is null).OrderByDescending(x => x.ImportedAt).Select(x => new { x.Id, x.Kind, x.Title, x.Revision, x.ImportedAt, Characters = x.Text.Length }).ToList(), ct));

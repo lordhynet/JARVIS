@@ -52,6 +52,7 @@ public static class CqrsRegistration
         services.AddSingleton<CoachingService>();
         services.AddSingleton<ProgrammeService>();
         services.AddSingleton<CoachingCommandHandlers>();
+        services.AddSingleton<AiAssessmentCommandHandlers>();
         services.AddSingleton<CoachingQueryHandlers>();
         Command<SaveCoaching, CoachingAttemptView, CoachingCommandHandlers>(services);
         Command<CorrectCoaching, CoachingAttemptView, CoachingCommandHandlers>(services);
@@ -59,6 +60,9 @@ public static class CqrsRegistration
         Command<StartProgramme, ImprovementProgramme, CoachingCommandHandlers>(services);
         Command<Jarvis.Orchestrator.Cqrs.Coaching.ProgrammeCheckIn, ImprovementProgramme, CoachingCommandHandlers>(services);
         Command<DeleteProgramme, bool, CoachingCommandHandlers>(services);
+        Command<RequestCoachingAiAssessment, CoachingAttemptView, AiAssessmentCommandHandlers>(services);
+        Command<RequestTechnicalAiAssessment, TrainingAttempt, AiAssessmentCommandHandlers>(services);
+        Command<RequestImportAiAssessment, AiCoachAssessment, AiAssessmentCommandHandlers>(services);
         Query<GetCoachingPrompt, CoachingPrompt, CoachingQueryHandlers>(services);
         Query<GetCoaching, CoachingAttemptView, CoachingQueryHandlers>(services);
         Query<ListCoaching, IReadOnlyList<CoachingAttemptSummary>, CoachingQueryHandlers>(services);

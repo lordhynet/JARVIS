@@ -13,8 +13,8 @@ public static class CoachingEndpoints
         var group = app.MapGroup("/api/coaching").WithTags("Coaching");
         group.MapGet("/exercises", () => CoachingCatalog.Exercises);
         group.MapGet("/ai-status", (Jarvis.Api.Integrations.ManagedAi ai) => ai.Status("Coach"));
-        group.MapPost("/attempts/{id:guid}/ai-assessments", (Guid id, AiAssessmentRequest request, Jarvis.Api.Integrations.AiCoach ai, CancellationToken ct) => ai.CoachingAsync(id, request, ct)).RequireRateLimiting("cloud");
-        app.MapPost("/api/training/attempts/{id:guid}/ai-assessments", (Guid id, AiAssessmentRequest request, Jarvis.Api.Integrations.AiCoach ai, CancellationToken ct) => ai.TechnicalAsync(id, request, ct)).RequireRateLimiting("cloud");
+        group.MapPost("/attempts/{id:guid}/ai-assessments", (Guid id, AiAssessmentRequest request, ICommandHandler<RequestCoachingAiAssessment, CoachingAttemptView> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct)).RequireRateLimiting("cloud");
+        app.MapPost("/api/training/attempts/{id:guid}/ai-assessments", (Guid id, AiAssessmentRequest request, ICommandHandler<RequestTechnicalAiAssessment, TrainingAttempt> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct)).RequireRateLimiting("cloud");
         group.MapGet("/prompt", (string exerciseId, Guid? storyId, int? storyVersion, int? claimIndex, IQueryHandler<GetCoachingPrompt, CoachingPrompt> h, CancellationToken ct) => h.HandleAsync(new(exerciseId, storyId, storyVersion, claimIndex), ct));
         group.MapPost("/attempts", (SaveCoachingAnswerRequest request, ICommandHandler<SaveCoaching, CoachingAttemptView> h, CancellationToken ct) => h.HandleAsync(new(request), ct));
         group.MapGet("/attempts/{id:guid}", (Guid id, IQueryHandler<GetCoaching, CoachingAttemptView> h, CancellationToken ct) => h.HandleAsync(new(id), ct));

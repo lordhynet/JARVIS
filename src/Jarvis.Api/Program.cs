@@ -148,6 +148,7 @@ builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.ITextReasoningPro
 builder.Services.AddSingleton<ITextReasoningAdapter, OpenAiResponsesAdapter>();
 builder.Services.AddSingleton<ITextReasoningAdapter, AnthropicMessagesAdapter>();
 builder.Services.AddSingleton<AiCoach>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Cqrs.Coaching.IAiAssessmentService>(s => s.GetRequiredService<AiCoach>());
 builder.Services.AddSingleton<AgentRuntime>();
 builder.Services.AddSingleton<UsageReconciler>();
 builder.Services.AddSingleton<IPushSender, WebPushSender>();
