@@ -8,7 +8,6 @@ using Jarvis.Orchestrator.Intelligence;
 
 namespace Jarvis.Api.Integrations;
 
-public interface IAgentExecutor { Task<string> ExecuteAsync(AgentTask task, CancellationToken ct); }
 public sealed class AgentExecutor(ITextReasoningProvider reasoning, IRuntimeStore reader, TimeProvider clock, IWorkflowCatalog? catalog = null, IDomainRegistry? registry = null) : IAgentExecutor
 {
     private readonly IWorkflowCatalog workflowCatalog = catalog ?? new WorkflowCatalog();

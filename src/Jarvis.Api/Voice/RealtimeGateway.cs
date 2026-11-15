@@ -11,7 +11,6 @@ using Jarvis.Orchestrator.Intelligence;
 
 namespace Jarvis.Api.Voice;
 
-public interface IRealtimeConnectionFactory { Task<WebSocket> ConnectAsync(string model, CancellationToken ct); }
 public sealed class RealtimeConnectionFactory(IConfiguration config) : IRealtimeConnectionFactory
 {
     public async Task<WebSocket> ConnectAsync(string model, CancellationToken ct)

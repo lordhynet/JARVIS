@@ -525,3 +525,9 @@ Follow-up: expired claims are included in `RuntimeMaintenance`'s read-only expir
 The periodic runtime maintenance sweep now removes expired agent outbox notifications and their dependent push-delivery records. It leaves active, unexpired notifications and canonical financial reservations intact. This bounds transient outbox growth independently of the operator-controlled privacy-retention setting; no private configuration was edited.
 
 Fresh validation: the focused cache-maintenance test passed (one test, zero failures/skips), asserting expired notification/delivery cleanup, preservation of an active notice, and preservation of the usage reservation.
+
+## TD-12 application ports below the API — 15 November 2026
+
+Moved `IAgentExecutor` into `Jarvis.Orchestrator.Workflows` and `IRealtimeConnectionFactory` into `Jarvis.Orchestrator.Intelligence`. Implementations remain in the API integration/voice adapters, and existing service behavior and runtime contracts are unchanged. API DI now binds implementations to the Orchestrator-owned ports; no project, package, route or persistence changes were made.
+
+Fresh validation: the API/test build succeeded and 18 focused tests passed (zero failures/skips) across realtime protocols, agent/domain execution and CQRS architecture.

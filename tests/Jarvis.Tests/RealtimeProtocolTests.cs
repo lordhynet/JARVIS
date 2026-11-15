@@ -7,6 +7,7 @@ using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
 using Jarvis.Orchestrator.Workflows;
+using Jarvis.Orchestrator.Intelligence;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
