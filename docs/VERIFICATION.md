@@ -605,3 +605,7 @@ Fresh validation: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-wor
 Core now records bounded rolling wake-attempt timestamps per authenticated device and allows at most six attempts in ten minutes. Expired device entries are pruned on each attempt, total tracked devices are capped, and accepted/rate-limited outcomes are counted without device identifiers. The counter lives in RuntimeState and is removed by normal Core erasure.
 
 Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~WakeCandidateRateLimitTests|FullyQualifiedName~CompanionVoiceTests|FullyQualifiedName~RealtimeProtocolTests"` passed 16/16, zero failures/skips. This builds API and test projects and covers wake arbitration, limit behavior and realtime protocol handling.
+
+Android now closes only wake-started live sessions when local input has no speech onset within eight seconds. Speech onset requires three consecutive 20 ms RMS frames above the local threshold; direct user-started voice is unchanged. The stop reason is sent over the authenticated voice stream for a Core counter; no device ID is attached. Local wake listening resumes after the idle window closes.
+
+Fresh Android validation: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-workers=1` succeeded: 28 debug unit tests passed, zero failures/errors/skips; release lint passed. Mobile commit `9d9f479`. This verifies policy with synthetic PCM; acoustic threshold and false-wake performance remain unmeasured on hardware.
