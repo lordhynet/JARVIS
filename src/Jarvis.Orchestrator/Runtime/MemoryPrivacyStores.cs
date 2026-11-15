@@ -30,6 +30,7 @@ public sealed class GuardedMemorySessions(InMemorySessionStore inner, MemoryPriv
     public Task<ConversationSession> AddAsync(ConversationSession value, CancellationToken ct = default) => boundary.Run(() => inner.AddAsync(value, ct));
     public Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default) => boundary.Run(() => inner.GetAsync(id, ct));
     public Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default) => boundary.Run(() => inner.ListAsync(ct));
+    public Task<IReadOnlyList<PendingVoiceProjection>> ListPendingVoiceProjectionsAsync(int limit, CancellationToken ct = default) => boundary.Run(() => inner.ListPendingVoiceProjectionsAsync(limit, ct));
     public Task<ConversationSession?> UpdateAsync(Guid id, Func<ConversationSession,ConversationSession> update, CancellationToken ct = default) => boundary.Run(() => inner.UpdateAsync(id, update, ct));
     public Task<ConversationSession?> AppendCheckpointAsync(Guid id, Func<ConversationSession,SessionCheckpoint> create, DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() => inner.AppendCheckpointAsync(id, create, now, ct));
 }

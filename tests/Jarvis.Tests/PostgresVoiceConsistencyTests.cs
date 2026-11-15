@@ -24,6 +24,7 @@ public sealed partial class PostgresSessionTests
         Assert.Equal(0, await repair.RepairTranscriptsAsync(default));
         var runtime = restarted.Services.GetRequiredService<IRuntimeStore>(); var turn = Assert.Single(await runtime.ReadAsync(s => s.VoiceTurns.Values.ToArray()));
         Assert.Equal(turnId, turn.Id); Assert.Equal(1.25, turn.SpeechSeconds); Assert.Equal("Durable captured speech", turn.Text);
+        Assert.Empty((await restarted.Services.GetRequiredService<ISessionStore>().GetAsync(sessionId))!.PendingVoiceProjectionIds!);
         // Idle repair has no runtime write (xmin is unchanged).
         await using var db = await restarted.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>().CreateDbContextAsync();
         var before = await db.Database.SqlQueryRaw<string>("SELECT xmin::text AS \"Value\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1").SingleAsync();

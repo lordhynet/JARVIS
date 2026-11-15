@@ -50,6 +50,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.ToTable("Sessions");
             b.HasKey(s => s.Id);
             b.Property(s => s.Title).HasMaxLength(120);
+            b.Property(s => s.PendingVoiceProjectionIdsJson).HasColumnType("jsonb");
             b.HasIndex(s => s.UpdatedAt);
             b.HasMany(s => s.Checkpoints).WithOne().HasForeignKey(c => c.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -77,12 +78,14 @@ public sealed class SessionRow
     public List<CheckpointRow> Checkpoints { get; set; } = [];
     public string? HandoffJson { get; set; }
     public string MessagesJson { get; set; } = "[]";
+    public string PendingVoiceProjectionIdsJson { get; set; } = "[]";
 
     public ConversationSession ToContract() => new(Id, Activity, Title, Status, ActiveDeviceId,
         CurrentTask, CreatedAt, UpdatedAt,
         Checkpoints.OrderBy(c => c.Sequence).Select(c => c.ToContract()).ToList(),
         HandoffJson is null ? null : JsonSerializer.Deserialize<SessionHandoff>(HandoffJson),
-        JsonSerializer.Deserialize<List<ChatMessage>>(MessagesJson));
+        JsonSerializer.Deserialize<List<ChatMessage>>(MessagesJson),
+        JsonSerializer.Deserialize<List<Guid>>(PendingVoiceProjectionIdsJson));
 
     public static SessionRow FromContract(ConversationSession s) => new()
     {
@@ -91,7 +94,8 @@ public sealed class SessionRow
         CreatedAt = DatabaseTimestamp(s.CreatedAt), UpdatedAt = DatabaseTimestamp(s.UpdatedAt),
         Checkpoints = s.Checkpoints.Select(CheckpointRow.FromContract).ToList(),
         HandoffJson = s.Handoff is null ? null : JsonSerializer.Serialize(s.Handoff),
-        MessagesJson = JsonSerializer.Serialize(s.Messages ?? [])
+        MessagesJson = JsonSerializer.Serialize(s.Messages ?? []),
+        PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(s.PendingVoiceProjectionIds ?? [])
     };
 
     // PostgreSQL timestamps store microseconds; normalize responses before returning

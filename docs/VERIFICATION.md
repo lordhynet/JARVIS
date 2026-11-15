@@ -609,3 +609,9 @@ Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~WakeCa
 Android now closes only wake-started live sessions when local input has no speech onset within eight seconds. Speech onset requires three consecutive 20 ms RMS frames above the local threshold; direct user-started voice is unchanged. The stop reason is sent over the authenticated voice stream for a Core counter; no device ID is attached. Local wake listening resumes after the idle window closes.
 
 Fresh Android validation: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-workers=1` succeeded: 28 debug unit tests passed, zero failures/errors/skips; release lint passed. Mobile commit `9d9f479`. This verifies policy with synthetic PCM; acoustic threshold and false-wake performance remain unmeasured on hardware.
+
+## Round 3 RR3-03 — pending voice-projection markers
+
+Added `PendingVoiceProjectionIdsJson` to each session and an additive migration that seeds markers for existing voice transcript rows once. Transcript writes add the request ID in the same canonical session update; successful projection removes it. Repair selects only sessions with pending IDs, then loads only those marked sessions, projects idempotently, and clears the processed markers. An idle repair no longer lists sessions or reads `MessagesJson` or `RuntimeDocuments`. A failed projection leaves its marker for restart recovery.
+
+Fresh validation: `dotnet build Jarvis.sln --no-restore` succeeded with zero warnings/errors. EF `migrations has-pending-model-changes` reported no model changes, and `migrations list` discovered `20261115233000_PendingVoiceProjection`. The in-memory voice consistency tests passed 3/3, including crash recovery and an idle sweep spy that rejects transcript list/read calls. With a disposable PostgreSQL 17 test database, the restart/repair/idempotency/erasure test passed 1/1 and applied the new migration. No production database or paid provider was used.

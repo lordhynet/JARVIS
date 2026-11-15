@@ -36,26 +36,42 @@ public sealed class VoiceTranscriptService(ISessionStore sessions, IRuntimeStore
             var previous = current.Messages?.SingleOrDefault(m => m.RequestId == id);
             if (previous is not null) {
                 Guard.Require(previous.Role == role && previous.Text == text && (!previous.IsVoice || previous.SpeechSeconds == speechSeconds), 409, "Transcript ID was reused.");
-                return previous.IsVoice ? current : current with { Messages = current.Messages!.Select(m => m.RequestId == id ? m with { IsVoice = true, SpeechSeconds = speechSeconds } : m).ToArray() };
+                return current with {
+                    Messages = previous.IsVoice ? current.Messages : current.Messages!.Select(m => m.RequestId == id ? m with { IsVoice = true, SpeechSeconds = speechSeconds } : m).ToArray(),
+                    PendingVoiceProjectionIds = (current.PendingVoiceProjectionIds ?? []).Append(id).Distinct().ToArray()
+                };
             }
             Guard.Require((current.Messages?.Count ?? 0) < 2000, 409, "Session transcript is full.");
-            return current with { UpdatedAt = now, Messages = [.. current.Messages ?? [], new(id, role, text, now, true, speechSeconds)] };
+            return current with { UpdatedAt = now, Messages = [.. current.Messages ?? [], new(id, role, text, now, true, speechSeconds)],
+                PendingVoiceProjectionIds = (current.PendingVoiceProjectionIds ?? []).Append(id).Distinct().ToArray() };
         }, ct);
         Guard.Require(session is not null, 404, "Session not found.");
         var canonical = VoiceTranscriptRules.Turn(sessionId, session.Messages!.Single(m => m.RequestId == id));
         await runtime.UpdateAsync(s => { VoiceTranscriptRules.Publish(s, canonical); return true; }, ct);
+        await sessions.UpdateAsync(sessionId, current => current with { PendingVoiceProjectionIds = (current.PendingVoiceProjectionIds ?? []).Where(pending => pending != id).ToArray() }, ct);
     }
 }
 
-public sealed class MemoryVoiceRepairStore(InMemorySessionStore sessions, InMemoryRuntimeStore runtime, MemoryPrivacyBoundary boundary) : IVoiceRepairStore
+public sealed class MemoryVoiceRepairStore(ISessionStore sessions, InMemoryRuntimeStore runtime, MemoryPrivacyBoundary boundary) : IVoiceRepairStore
 {
     public Task<int> RepairTranscriptsAsync(CancellationToken ct) => boundary.Run(async () => {
-        var known = await runtime.ReadAsync(s => s.VoiceTurns.Keys.ToHashSet(), ct);
-        var missing = (await sessions.ListAsync(ct)).SelectMany(s => (s.Messages ?? []).Where(m => m.IsVoice && !known.Contains(m.RequestId)).Select(m => VoiceTranscriptRules.Turn(s.Id, m))).Take(100).ToArray();
-        if (missing.Length == 0) return 0;
-        return await runtime.UpdateAsync(s => {
-            var count = 0; foreach (var turn in missing.Where(t => !s.RetiredSessions.Contains(t.SessionId) && !s.VoiceTurns.ContainsKey(t.Id))) { VoiceTranscriptRules.Publish(s, turn); count++; }
+        var pending = await sessions.ListPendingVoiceProjectionsAsync(100, ct);
+        if (pending.Count == 0) return 0;
+        var turns = new List<VoiceTurn>();
+        foreach (var entry in pending) {
+            var session = await sessions.GetAsync(entry.SessionId, ct);
+            if (session is null) continue;
+            var ids = entry.RequestIds.ToHashSet();
+            turns.AddRange((session.Messages ?? []).Where(m => ids.Contains(m.RequestId) && m.IsVoice).Select(m => VoiceTranscriptRules.Turn(session.Id, m)));
+        }
+        var written = turns.Count == 0 ? 0 : await runtime.UpdateAsync(s => {
+            var count = 0; foreach (var turn in turns.Where(t => !s.RetiredSessions.Contains(t.SessionId) && !s.VoiceTurns.ContainsKey(t.Id))) { VoiceTranscriptRules.Publish(s, turn); count++; }
             return count;
         }, ct);
+        foreach (var entry in pending) {
+            var ids = entry.RequestIds.ToHashSet();
+            await sessions.UpdateAsync(entry.SessionId, current => current with { PendingVoiceProjectionIds = (current.PendingVoiceProjectionIds ?? []).Where(id => !ids.Contains(id)).ToArray() }, ct);
+        }
+        return written;
     });
 }

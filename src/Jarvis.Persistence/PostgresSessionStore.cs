@@ -104,6 +104,24 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         var result = rows.Select(s => s.ToContract()).ToList(); await tx.CommitAsync(ct); return result;
     }
 
+    public async Task<IReadOnlyList<PendingVoiceProjection>> ListPendingVoiceProjectionsAsync(int limit, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        var rows = await db.Database.SqlQuery<PendingProjectionRow>($"""
+            SELECT s."Id" AS "SessionId", s."PendingVoiceProjectionIdsJson"::text AS "RequestIdsJson"
+            FROM "Sessions" s
+            WHERE s."PendingVoiceProjectionIdsJson" <> '[]'::jsonb
+            ORDER BY s."UpdatedAt", s."Id"
+            LIMIT {Math.Clamp(limit, 0, 1000)}
+            """).ToListAsync(ct);
+        await tx.CommitAsync(ct);
+        return rows.Select(r => new PendingVoiceProjection(r.SessionId,
+            JsonSerializer.Deserialize<List<Guid>>(r.RequestIdsJson) ?? [])).ToArray();
+    }
+    private sealed class PendingProjectionRow { public Guid SessionId { get; set; } public string RequestIdsJson { get; set; } = "[]"; }
+
     public async Task<ConversationSession?> AppendCheckpointAsync(Guid sessionId,
         Func<ConversationSession, SessionCheckpoint> createCheckpoint, DateTimeOffset now,
         CancellationToken ct = default)
@@ -144,6 +162,7 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         row.ActiveDeviceId = updated.ActiveDeviceId;
         row.HandoffJson = updated.Handoff is null ? null : JsonSerializer.Serialize(updated.Handoff);
         row.MessagesJson = JsonSerializer.Serialize(updated.Messages ?? []);
+        row.PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(updated.PendingVoiceProjectionIds ?? []);
         row.UpdatedAt = SessionRow.DatabaseTimestamp(updated.UpdatedAt);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);

@@ -388,6 +388,10 @@ namespace Jarvis.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("PendingVoiceProjectionIdsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 

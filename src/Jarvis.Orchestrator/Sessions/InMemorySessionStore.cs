@@ -47,6 +47,16 @@ public sealed class InMemorySessionStore : ISessionStore
         return Task.FromResult(list);
     }
 
+    public Task<IReadOnlyList<PendingVoiceProjection>> ListPendingVoiceProjectionsAsync(int limit, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        IReadOnlyList<PendingVoiceProjection> pending = _sessions.Values
+            .Where(s => s.PendingVoiceProjectionIds is { Count: > 0 })
+            .Take(Math.Clamp(limit, 0, 1000))
+            .Select(s => new PendingVoiceProjection(s.Id, s.PendingVoiceProjectionIds!)).ToArray();
+        return Task.FromResult(pending);
+    }
+
     public Task<ConversationSession?> AppendCheckpointAsync(
         Guid sessionId,
         Func<ConversationSession, SessionCheckpoint> createCheckpoint,

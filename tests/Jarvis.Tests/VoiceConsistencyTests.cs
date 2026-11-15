@@ -13,6 +13,18 @@ internal sealed class FailVoiceProjection(IRuntimeStore inner) : IRuntimeStore
 public sealed class VoiceConsistencyTests
 {
     [Fact]
+    public async Task Idle_repair_checks_pending_markers_without_listing_or_loading_transcripts()
+    {
+        var inner = new InMemorySessionStore();
+        var sessions = new NoTranscriptReadSessionStore(inner);
+        var runtime = new InMemoryRuntimeStore();
+        var repair = new MemoryVoiceRepairStore(sessions, runtime, new MemoryPrivacyBoundary());
+        Assert.Equal(0, await repair.RepairTranscriptsAsync(default));
+        Assert.Equal(0, sessions.TranscriptReads);
+        Assert.Empty(await runtime.ReadAsync(s => s.VoiceTurns));
+    }
+
+    [Fact]
     public async Task Interrupted_projection_repairs_from_canonical_transcript_without_duplicate_or_chat_backfill()
     {
         using var host = new JarvisApiFactory(); var sessions = host.Services.GetRequiredService<ISessionStore>();
@@ -24,6 +36,7 @@ public sealed class VoiceConsistencyTests
         var marker = (await sessions.GetAsync(id))!.Messages!.Single(m => m.RequestId == turn); Assert.True(marker.IsVoice); Assert.Equal(2.75, marker.SpeechSeconds);
         var repair = host.Services.GetRequiredService<IVoiceRepairStore>(); Assert.Equal(1, await repair.RepairTranscriptsAsync(default)); Assert.Equal(0, await repair.RepairTranscriptsAsync(default));
         var recorded = Assert.Single(await runtime.ReadAsync(s => s.VoiceTurns.Values.ToArray())); Assert.Equal(turn, recorded.Id); Assert.Equal(marker.At, recorded.At);
+        Assert.Empty((await sessions.GetAsync(id))!.PendingVoiceProjectionIds!);
         var service = host.Services.GetRequiredService<VoiceTranscriptService>();
         await service.RecordAsync(id, turn, "user", "Captured words", 2.75, default);
         await Assert.ThrowsAsync<DomainException>(() => service.RecordAsync(id, turn, "user", "Different text", 2.75, default));
@@ -44,4 +57,15 @@ public sealed class VoiceConsistencyTests
         var state = await runtime.ReadAsync(s => s); Assert.Null(state.AudioLease); Assert.Equal(lease, state.AudioDrainLease); Assert.Equal(lease.ExpiresAt, state.AudioDrainUntil);
         Assert.Throws<DomainException>(() => AudioFencing.RequireAvailable(state, now));
     }
+}
+
+internal sealed class NoTranscriptReadSessionStore(InMemorySessionStore inner) : ISessionStore
+{
+    public int TranscriptReads { get; private set; }
+    public Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default) { TranscriptReads++; return inner.GetAsync(id, ct); }
+    public Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default) { TranscriptReads++; throw new InvalidOperationException("Idle repair must not list transcript sessions."); }
+    public Task<IReadOnlyList<PendingVoiceProjection>> ListPendingVoiceProjectionsAsync(int limit, CancellationToken ct = default) => inner.ListPendingVoiceProjectionsAsync(limit, ct);
+    public Task<ConversationSession> AddAsync(ConversationSession session, CancellationToken ct = default) => inner.AddAsync(session, ct);
+    public Task<ConversationSession?> UpdateAsync(Guid id, Func<ConversationSession, ConversationSession> update, CancellationToken ct = default) => inner.UpdateAsync(id, update, ct);
+    public Task<ConversationSession?> AppendCheckpointAsync(Guid sessionId, Func<ConversationSession, SessionCheckpoint> createCheckpoint, DateTimeOffset now, CancellationToken ct = default) => inner.AppendCheckpointAsync(sessionId, createCheckpoint, now, ct);
 }

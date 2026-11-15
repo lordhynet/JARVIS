@@ -1,43 +1,49 @@
-using System.Text.Json;
 using Jarvis.Orchestrator.Runtime;
+using Jarvis.Orchestrator.Sessions;
+using Jarvis.Contracts;
 using Microsoft.EntityFrameworkCore;
 
 namespace Jarvis.Persistence;
 
 public sealed class PostgresVoiceRepairStore(IDbContextFactory<SessionDbContext> factory) : IVoiceRepairStore
 {
-    private sealed class RepairRow
-    {
-        public Guid SessionId { get; set; }
-        public Guid RequestId { get; set; }
-        public string Role { get; set; } = "";
-        public string Text { get; set; } = "";
-        public DateTimeOffset At { get; set; }
-        public double? SpeechSeconds { get; set; }
-    }
-    private static Task<List<RepairRow>> Missing(SessionDbContext db, CancellationToken ct) => db.Database.SqlQueryRaw<RepairRow>("""
-        SELECT s."Id" AS "SessionId", (m.value->>'RequestId')::uuid AS "RequestId", m.value->>'Role' AS "Role",
-            m.value->>'Text' AS "Text", (m.value->>'At')::timestamptz AS "At", (m.value->>'SpeechSeconds')::double precision AS "SpeechSeconds"
-        FROM "Sessions" s CROSS JOIN LATERAL jsonb_array_elements(s."MessagesJson"::jsonb) m(value)
-        CROSS JOIN "RuntimeDocuments" r
-        WHERE r."Id"=1 AND m.value->>'IsVoice'='true'
-            AND NOT (COALESCE(r."Json"->'VoiceTurns',jsonb_build_object()) ? (m.value->>'RequestId'))
-            AND NOT (COALESCE(r."Json"->'RetiredSessions','[]'::jsonb) ? s."Id"::text)
-        ORDER BY s."Id", (m.value->>'At')::timestamptz LIMIT 100
-        """).ToListAsync(ct);
     public async Task<int> RepairTranscriptsAsync(CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
-        // Read-only precheck: an idle sweep never locks or serializes the runtime row.
-        if ((await Missing(db, ct)).Count == 0) { await tx.CommitAsync(ct); return 0; }
-        var row = (await db.RuntimeDocuments.FromSqlRaw("SELECT * FROM \"RuntimeDocuments\" WHERE \"Id\"=1 FOR UPDATE").ToListAsync(ct)).Single();
-        var state = JsonSerializer.Deserialize<RuntimeState>(row.Json)!; var count = 0;
-        foreach (var missing in await Missing(db, ct)) {
-            if (state.RetiredSessions.Contains(missing.SessionId) || state.VoiceTurns.ContainsKey(missing.RequestId)) continue;
-            VoiceTranscriptRules.Publish(state, new(missing.RequestId, missing.SessionId, missing.Role, missing.Text, missing.SpeechSeconds, missing.At)); count++;
+        // Pending marker projection only: idle repair does not read MessagesJson or RuntimeDocuments.
+        var rows = await db.Database.SqlQueryRaw<PendingRow>("""
+            SELECT s."Id" AS "SessionId", s."PendingVoiceProjectionIdsJson"::text AS "RequestIdsJson"
+            FROM "Sessions" s WHERE s."PendingVoiceProjectionIdsJson" <> '[]'::jsonb
+            ORDER BY s."UpdatedAt", s."Id" LIMIT 100
+            """).ToListAsync(ct);
+        await tx.CommitAsync(ct);
+        if (rows.Count == 0) return 0;
+
+        var sessions = new PostgresSessionStore(factory);
+        var turns = new List<VoiceTurn>();
+        foreach (var pending in rows) {
+            var ids = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(pending.RequestIdsJson) ?? [];
+            var session = await sessions.GetAsync(pending.SessionId, ct);
+            if (session is null) continue;
+            turns.AddRange((session.Messages ?? []).Where(m => ids.Contains(m.RequestId) && m.IsVoice)
+                .Select(m => VoiceTranscriptRules.Turn(session.Id, m)));
         }
-        if (count > 0) { row.Json = JsonSerializer.Serialize(state); await db.SaveChangesAsync(ct); }
-        await tx.CommitAsync(ct); return count;
+        var runtime = new PostgresRuntimeStore(factory);
+        var count = turns.Count == 0 ? 0 : await runtime.UpdateAsync(state => {
+            var written = 0;
+            foreach (var turn in turns.Where(t => !state.RetiredSessions.Contains(t.SessionId) && !state.VoiceTurns.ContainsKey(t.Id))) {
+                VoiceTranscriptRules.Publish(state, turn); written++;
+            }
+            return written;
+        }, ct);
+        foreach (var pending in rows) {
+            var ids = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(pending.RequestIdsJson) ?? [];
+            await sessions.UpdateAsync(pending.SessionId, current => current with {
+                PendingVoiceProjectionIds = (current.PendingVoiceProjectionIds ?? []).Where(id => !ids.Contains(id)).ToArray()
+            }, ct);
+        }
+        return count;
     }
+    private sealed class PendingRow { public Guid SessionId { get; set; } public string RequestIdsJson { get; set; } = "[]"; }
 }

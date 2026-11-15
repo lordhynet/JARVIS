@@ -35,7 +35,8 @@ public sealed record ConversationSession(
     DateTimeOffset UpdatedAt,
     IReadOnlyList<SessionCheckpoint> Checkpoints,
     SessionHandoff? Handoff = null,
-    IReadOnlyList<ChatMessage>? Messages = null);
+    IReadOnlyList<ChatMessage>? Messages = null,
+    IReadOnlyList<Guid>? PendingVoiceProjectionIds = null);
 
 /// <summary>
 /// A resumable snapshot of where a session is. Written before any handoff
