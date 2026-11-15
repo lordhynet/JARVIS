@@ -1,6 +1,8 @@
 using Jarvis.Contracts;
 using Jarvis.Api.Integrations;
 using Jarvis.Orchestrator.Runtime;
+using Jarvis.Orchestrator.Cqrs;
+using Jarvis.Orchestrator.Cqrs.Imports;
 
 namespace Jarvis.Api.Endpoints;
 
@@ -16,9 +18,9 @@ public static class ImportEndpoints
         {
             Guard.Require(s.ImportedDocuments.TryGetValue(id, out var document) && document.DeletedAt is null, 404, "Import not found."); return document;
         }, ct));
-        app.MapPost("/api/imports", (ImportDocumentRequest request, ImportService service, CancellationToken ct) => service.ImportAsync(request, ct));
-        app.MapDelete("/api/imports/{id:guid}", (Guid id, int revision, ImportService service, CancellationToken ct) => service.DeleteAsync(id, revision, ct));
-        app.MapPost("/api/imports/{id:guid}/claims", (Guid id, AttachSourceClaimRequest request, ImportService service, CancellationToken ct) => service.AttachClaimAsync(id, request, ct));
+        app.MapPost("/api/imports", (ImportDocumentRequest request, ICommandHandler<ImportDocument, ImportedDocument> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));
+        app.MapDelete("/api/imports/{id:guid}", (Guid id, int revision, ICommandHandler<DeleteImport, bool> handler, CancellationToken ct) => handler.HandleAsync(new(id, revision), ct));
+        app.MapPost("/api/imports/{id:guid}/claims", (Guid id, AttachSourceClaimRequest request, ICommandHandler<AttachImportClaim, SourceClaim> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct));
         app.MapGet("/api/imports/{id:guid}/claims", (Guid id, IRuntimeReader reader, CancellationToken ct) => reader.ReadAsync(s => s.SourceClaims.Values.Where(x => x.DocumentId == id).ToList(), ct));
         app.MapGet("/api/imports/{id:guid}/review", (Guid id, IRuntimeReader reader, CancellationToken ct) => reader.ReadAsync(s =>
         {

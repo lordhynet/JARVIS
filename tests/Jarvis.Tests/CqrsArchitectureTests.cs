@@ -3,6 +3,7 @@ using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Cqrs;
 using Jarvis.Orchestrator.Cqrs.Agents;
+using Jarvis.Orchestrator.Cqrs.Imports;
 using Jarvis.Orchestrator.Cqrs.Devices;
 using Jarvis.Orchestrator.Cqrs.Learning;
 using Jarvis.Orchestrator.Cqrs.Sessions;
@@ -112,6 +113,22 @@ public sealed class CqrsArchitectureTests
         Assert.Empty(await factory.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.Goals));
     }
 
+    [Fact]
+    public async Task Import_write_endpoint_dispatches_the_command_handler()
+    {
+        var expected = new ImportedDocument(Guid.NewGuid(), "cv", "Fixture", "Imported by handler", "hash", 1,
+            DateTimeOffset.UtcNow, []);
+        using var original = new ScenarioFactory();
+        using var factory = original.WithWebHostBuilder(b => b.ConfigureServices(s =>
+            s.AddSingleton<ICommandHandler<ImportDocument, ImportedDocument>>(new StubImportDocument(expected))));
+        using var client = factory.CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey);
+        var request = new ImportDocumentRequest(Guid.NewGuid(), "cv", "Fixture", "Imported by handler", true);
+        using var response = await client.PostAsJsonAsync("/api/imports", request, LifeScenarioTests.Json);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(expected.Id, (await response.Content.ReadFromJsonAsync<ImportedDocument>(LifeScenarioTests.Json))!.Id);
+        Assert.Empty(await factory.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.ImportedDocuments));
+    }
+
     private sealed class StubSessionQuery(ConversationSession session) : IQueryHandler<ListSessions, IReadOnlyList<ConversationSession>>
     {
         public Task<IReadOnlyList<ConversationSession>> HandleAsync(ListSessions query, CancellationToken ct = default) =>
@@ -121,5 +138,10 @@ public sealed class CqrsArchitectureTests
     private sealed class StubSaveAgentGoal(PersonalGoal goal) : ICommandHandler<SaveAgentGoal, PersonalGoal>
     {
         public Task<PersonalGoal> HandleAsync(SaveAgentGoal command, CancellationToken ct = default) => Task.FromResult(goal);
+    }
+
+    private sealed class StubImportDocument(ImportedDocument document) : ICommandHandler<ImportDocument, ImportedDocument>
+    {
+        public Task<ImportedDocument> HandleAsync(ImportDocument command, CancellationToken ct = default) => Task.FromResult(document);
     }
 }

@@ -1,6 +1,7 @@
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Cqrs;
 using Jarvis.Orchestrator.Cqrs.Agents;
+using Jarvis.Orchestrator.Cqrs.Imports;
 using Jarvis.Orchestrator.Cqrs.Devices;
 using Jarvis.Orchestrator.Cqrs.Integrations;
 using Jarvis.Orchestrator.Cqrs.Learning;
@@ -38,6 +39,8 @@ public static class CqrsRegistration
         services.AddSingleton<IWorkflowReader>(s => s.GetRequiredService<IWorkflowStore>());
         services.AddSingleton<WorkflowCommandHandlers>();
         services.AddSingleton<AgentCommandHandlers>();
+        services.AddSingleton<ImportService>();
+        services.AddSingleton<ImportCommandHandlers>();
         services.AddSingleton<TrainingService>();
         services.AddSingleton<TrainingDrillService>();
         services.AddSingleton<DrillCommandHandlers>();
@@ -119,6 +122,9 @@ public static class CqrsRegistration
         Command<StartAgentRun, AgentRunView, AgentCommandHandlers>(services);
         Command<CancelAgentRun, bool, AgentCommandHandlers>(services);
         Command<MarkAgentNotificationRead, bool, AgentCommandHandlers>(services);
+        Command<ImportDocument, ImportedDocument, ImportCommandHandlers>(services);
+        Command<DeleteImport, bool, ImportCommandHandlers>(services);
+        Command<AttachImportClaim, SourceClaim, ImportCommandHandlers>(services);
 
         Query<GetSession, ConversationSession?, SessionQueryHandlers>(services);
         Query<ListSessions, IReadOnlyList<ConversationSession>, SessionQueryHandlers>(services);

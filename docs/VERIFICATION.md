@@ -537,3 +537,9 @@ Fresh validation: the API/test build succeeded and 18 focused tests passed (zero
 Agent goal, trigger, control, schedule, run-start/cancel and notification-read writes now dispatch through registered Orchestrator command handlers. Endpoint route shapes and result types are unchanged; agent business rules remain in the existing `AgentRuntime`, and notification mutation now resides in the application handler. Agent GET projections and internal calendar-worker calls remain as-is.
 
 Fresh validation: the API/test build succeeded and eight focused tests passed (zero failures/skips), including complete handler registration, endpoint delegation to an injected goal command handler, agent runtime eligibility and idle-work behavior.
+
+## TD-13 import write endpoints through CQRS — 15 November 2026
+
+Document import, source-claim attachment and import deletion routes now dispatch through registered Orchestrator command handlers. Existing routes and result types are unchanged; validation, idempotency, source invalidation and deletion behavior remain in `ImportService`. Read-only import projections and paid assessment dispatch remain unchanged.
+
+Fresh validation: the API/test build succeeded and eight focused tests passed (zero failures/skips), covering CQRS registration, endpoint dispatch to an injected import command handler, CV claim validation/idempotency, deletion cleanup and interview transcript validation.

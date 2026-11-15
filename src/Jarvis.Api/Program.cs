@@ -150,7 +150,6 @@ builder.Services.AddSingleton<ITextReasoningAdapter, AnthropicMessagesAdapter>()
 builder.Services.AddSingleton<AiCoach>();
 builder.Services.AddSingleton<AgentRuntime>();
 builder.Services.AddSingleton<UsageReconciler>();
-builder.Services.AddSingleton<ImportService>();
 builder.Services.AddSingleton<IPushSender, WebPushSender>();
 builder.Services.AddSingleton<PushNotifications>();
 builder.Services.AddHostedService<PushWorker>();
