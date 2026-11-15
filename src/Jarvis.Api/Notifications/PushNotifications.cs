@@ -54,6 +54,13 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
     {
         if (!Ready) return false;
         var fingerprint = PrivacyData.Hash(config[ApiKeyMiddleware.ConfigKey] ?? "");
+        var nowCheck = clock.GetUtcNow();
+        if (!await store.ReadAsync(s =>
+            s.PushDeliveries.Values.Any(d => !s.AgentOutbox.ContainsKey(d.NotificationId) || !s.PushSubscriptions.ContainsKey(d.SubscriptionId)) ||
+            !s.AgentControls.Paused && !AgentRuntime.IsQuiet(s.AgentControls, nowCheck) && s.AgentOutbox.Values.Any(n => n.Delivered && !n.Read && n.ExpiresAt > nowCheck &&
+                s.PushSubscriptions.Values.Any(subscription => subscription.KeyFingerprint == fingerprint &&
+                    (!s.PushDeliveries.TryGetValue(AgentRuntime.StableId($"push-v1:{n.Id}:{subscription.Id}"), out var delivery) ||
+                     delivery.Attempt < 3 && delivery.AvailableAt <= nowCheck && (delivery.Status == "Pending" || delivery.Status == "Sending" && delivery.LeaseExpiresAt <= nowCheck)))), ct)) return false;
         var claim = await store.UpdateAsync(s =>
         {
             var now = clock.GetUtcNow();
@@ -99,6 +106,7 @@ public sealed class PushWorker(PushNotifications notifications, IPrivacyReader p
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using var invocation = CoreInvocationContext.Enter(InvocationOrigin.Agent);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         while (await timer.WaitForNextTickAsync(stoppingToken))
             try { var status = await privacy.StatusAsync(stoppingToken); if (status.Erased) continue; using var scope = PrivacyContext.Enter(status.Epoch); await notifications.DispatchOneAsync(stoppingToken); }
@@ -106,4 +114,3 @@ public sealed class PushWorker(PushNotifications notifications, IPrivacyReader p
             catch (Exception error) { logger.LogWarning("Browser push delivery failed ({Type}).", error.GetType().Name); }
     }
 }
-        using var invocation = CoreInvocationContext.Enter(InvocationOrigin.Agent);

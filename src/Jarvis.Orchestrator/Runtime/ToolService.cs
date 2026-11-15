@@ -12,7 +12,13 @@ public interface IHomeControl
 
 public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IHomeControl home, TimeProvider clock)
 {
-    public Task<int> RecoverInterruptedAsync(CancellationToken ct) => store.UpdateAsync(s =>
+    public async Task<int> RecoverInterruptedAsync(CancellationToken ct)
+    {
+        if (!await store.ReadAsync(s => s.Tools.Values.Any(t => t.Invocation.Status == ToolInvocationStatus.Running &&
+            clock.GetUtcNow() - t.Invocation.RequestedAt > TimeSpan.FromMinutes(7)), ct)) return 0;
+        return await RecoverCoreAsync(ct);
+    }
+    private Task<int> RecoverCoreAsync(CancellationToken ct) => store.UpdateAsync(s =>
     {
         var stale = s.Tools.Values.Where(t => t.Invocation.Status == ToolInvocationStatus.Running &&
             clock.GetUtcNow() - t.Invocation.RequestedAt > TimeSpan.FromMinutes(7)).ToList();

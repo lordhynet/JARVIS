@@ -23,7 +23,8 @@ public sealed class RuntimeWorker(ICommandHandler<ExpireHandoffs, CommandComplet
                 await sessions.HandleAsync(new ExpireHandoffs(), stoppingToken);
                 await tools.HandleAsync(new RecoverInterruptedTools(), stoppingToken);
                 if (clock.GetUtcNow() >= nextPrune) {
-                    await runtime.UpdateAsync(s => RuntimeMaintenance.Prune(s, clock.GetUtcNow()), stoppingToken);
+                    if (await runtime.ReadAsync(s => RuntimeMaintenance.HasExpired(s, clock.GetUtcNow()), stoppingToken))
+                        await runtime.UpdateAsync(s => RuntimeMaintenance.Prune(s, clock.GetUtcNow()), stoppingToken);
                     nextPrune = clock.GetUtcNow().AddMinutes(1);
                 }
             }

@@ -15,6 +15,12 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
     public static readonly string[] Workflows = WorkflowCatalog.BuiltIns.Select(x => x.Key).ToArray();
     private readonly IWorkflowCatalog workflowCatalog = catalog ?? new WorkflowCatalog();
     private IReadOnlyList<string> WorkflowKeys => workflowCatalog.Keys;
+    public static bool IsQuiet(AgentControls controls, DateTimeOffset now)
+    {
+        var local = TimeOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, TrainingProjection.Zone(controls.TimeZone)).DateTime);
+        var start = LocalTime(controls.QuietStart); var end = LocalTime(controls.QuietEnd);
+        return start != end && (start < end ? local >= start && local < end : local >= start || local < end);
+    }
     public static TimeOnly LocalTime(string value) { Guard.Require(TimeOnly.TryParseExact(value, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var time), 400, "Time must be HH:mm."); return time; }
     public Task<AgentSchedule> SaveScheduleAsync(SaveAgentScheduleRequest request, CancellationToken ct)
     {
@@ -74,7 +80,25 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             WorkflowPolicy: WorkflowCatalog.Snapshot(descriptor));
         s.AgentRuns.Add(id, run); foreach (var task in tasks) s.AgentTasks.Add(task.Id, task); return run;
     }
-    public Task<int> TickAsync(CancellationToken ct) => store.UpdateAsync(s =>
+    public async Task<int> TickAsync(CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        var due = await store.ReadAsync(s =>
+            s.AgentRuns.Values.Any(r => r.DeletedAt is null && r.Status is "Queued" or "Running") ||
+            s.Goals.Values.Any(g => g.Status == "Active" && (g.Deadline <= now || !s.AgentControls.Paused && g.LastRunId is null && g.NextReviewAt <= now)) ||
+            s.AgentTriggers.Values.Any(t => t.Status is "Pending" or "Dispatched" && (t.ExpiresAt <= now || !s.AgentControls.Paused && t.Status == "Pending" && t.DueAt <= now)) ||
+            !s.AgentControls.Paused && (!IsQuiet(s.AgentControls, now) && s.AgentOutbox.Values.Any(n => !n.Delivered && n.DeliverAfter <= now && n.ExpiresAt > now) ||
+                s.AgentSchedules.Values.Any(schedule => {
+                    if (!schedule.Enabled || !WorkflowKeys.Contains(schedule.Workflow) || s.AgentControls.PausedWorkflows?.Contains(schedule.Workflow) == true) return false;
+                    var zone = TrainingProjection.Zone(schedule.TimeZone); var local = TimeZoneInfo.ConvertTime(now, zone);
+                    var at = local.Date + LocalTime(schedule.LocalTime).ToTimeSpan(); if (zone.IsInvalidTime(at)) at = at.AddHours(1);
+                    var offset = zone.IsAmbiguousTime(at) ? zone.GetAmbiguousTimeOffsets(at).Max() : zone.GetUtcOffset(at);
+                    var delta = now - new DateTimeOffset(at, offset).ToUniversalTime();
+                    return delta >= TimeSpan.Zero && delta <= TimeSpan.FromMinutes(30) && schedule.LastOccurrence != local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ":" + schedule.LocalTime;
+                })), ct);
+        return due ? await TickCoreAsync(ct) : 0;
+    }
+    private Task<int> TickCoreAsync(CancellationToken ct) => store.UpdateAsync(s =>
     {
         var now = clock.GetUtcNow(); var count = TickPlanning(s, clock.GetUtcNow());
         if (!s.AgentControls.Paused) foreach (var schedule in s.AgentSchedules.Values.Where(x => x.Enabled).ToList())
@@ -123,7 +147,19 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
         }
         return count;
     }, ct);
-    public Task<AgentTask?> ClaimAsync(CancellationToken ct) => store.UpdateAsync(s =>
+    public async Task<AgentTask?> ClaimAsync(CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        var due = await store.ReadAsync(s => !s.AgentControls.Paused && s.AgentTasks.Values.Any(t =>
+            t.Status == AgentTaskStatus.Running && t.LeaseExpiresAt <= now ||
+            t.Status is AgentTaskStatus.Queued or AgentTaskStatus.RetryScheduled && t.AvailableAt <= now &&
+            s.AgentTasks.Values.Count(x => x.Status == AgentTaskStatus.Running && x.LeaseExpiresAt > now) < 2 &&
+            s.AgentRuns.TryGetValue(t.RunId, out var run) && run.DeletedAt is null && run.Status is "Queued" or "Running" && run.Deadline > now &&
+            s.AgentControls.PausedWorkflows?.Contains(run.Workflow) != true &&
+            (t.Role != AgentRole.Review || run.TaskIds.Where(id => id != t.Id).All(id => s.AgentTasks[id].Status == AgentTaskStatus.Succeeded))), ct);
+        return due ? await ClaimCoreAsync(ct) : null;
+    }
+    private Task<AgentTask?> ClaimCoreAsync(CancellationToken ct) => store.UpdateAsync(s =>
     {
         var now = clock.GetUtcNow(); if (s.AgentControls.Paused) return null;
         foreach (var stale in s.AgentTasks.Values.Where(x => x.Status == AgentTaskStatus.Running && x.LeaseExpiresAt <= now).ToList())
