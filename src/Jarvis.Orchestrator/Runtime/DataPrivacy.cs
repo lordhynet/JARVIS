@@ -58,7 +58,7 @@ public static class PrivacyData
         state.AgentSchedules.Values.ToList(), state.AgentControls, state.AgentOutbox.Values.ToList(), state.ProviderResults.Values.ToList(),
         state.UsageReservations.Values.ToList(), jobs, state.Goals.Values.Where(x => x.Status != "Deleted").ToList(),
         state.AgentTriggers.Values.ToList(), state.UsageReconciliations.Values.ToList(), state.ImportedDocuments.Values.Where(x => x.DeletedAt is null).ToList(), state.SourceClaims.Values.ToList(), state.VoiceRecalls.Values.ToList(),
-        state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList());
+        state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList());
     public static RuntimeState EmptyAfterErase(RuntimeState old) => new()
     {
         UsageReservations = old.UsageReservations, NextAudioFence = checked(old.NextAudioFence + 1), AgentControls = new(Paused: true),
@@ -100,7 +100,7 @@ public static class PrivacyData
         foreach (var answer in state.TrainingAttempts.Values.Where(x => selection.Training.Contains(x.Id)).ToList())
         {
             state.TrainingAttempts[answer.Id] = answer with { Answers = [], Assessments = [], CanonicalAssessmentId = null, DeletedAt = at, Revision = answer.Revision + 1 };
-            foreach (var result in state.ProviderResults.Values.Where(x => x.ScopeId == answer.Id).ToList()) state.ProviderResults.Remove(result.Id);
+            ReasoningLifecycle.Retire(state, answer.Id);
             affected.Add(answer.QuestionId);
         }
         foreach (var id in affected) if (state.TrainingBaselines.ContainsKey(id)) TrainingProjection.Rebuild(state, id);
@@ -112,8 +112,11 @@ public static class PrivacyData
             x.AnswerUtteranceId is Guid utterance && voiceIds.Contains(utterance) ||
             x.CorrectionStartUtteranceId is Guid correction && voiceIds.Contains(correction)).ToList()) state.VoiceCoachings.Remove(coaching.Id);
         foreach (var id in voiceIds) state.VoiceTurns.Remove(id);
-        foreach (var id in selection.Providers) state.ProviderResults.Remove(id);
-        foreach (var id in selection.Sessions) state.RetiredSessions.Add(id);
+        foreach (var id in selection.Providers) {
+            state.ProviderResults.Remove(id);
+            if (state.ProviderAttempts.TryGetValue(id, out var attempt)) state.ProviderAttempts[id] = attempt with { Fingerprint = "" };
+        }
+        foreach (var id in selection.Sessions) { state.RetiredSessions.Add(id); ReasoningLifecycle.Retire(state, id); }
         foreach (var recall in state.VoiceRecalls.Values.Where(x => selection.Sessions.Contains(x.SessionId) ||
             voiceIds.Contains(x.StartUtteranceId) || x.AnswerUtteranceId is Guid answer && voiceIds.Contains(answer) ||
             x.RatingUtteranceId is Guid rated && voiceIds.Contains(rated)).ToList()) state.VoiceRecalls.Remove(recall.Id);
@@ -127,7 +130,7 @@ public static class PrivacyData
             foreach (var id in run.TaskIds)
             {
                 var task = state.AgentTasks[id]; state.AgentTasks[id] = task with { Input = "", Output = null, ClaimToken = null, Status = AgentTaskStatus.Cancelled };
-                foreach (var cached in state.ProviderResults.Values.Where(x => x.ScopeId == id).ToList()) state.ProviderResults.Remove(cached.Id);
+                ReasoningLifecycle.Retire(state, id);
             }
             foreach (var notice in state.AgentOutbox.Values.Where(x => x.RunId == run.Id).ToList()) state.AgentOutbox.Remove(notice.Id);
         }

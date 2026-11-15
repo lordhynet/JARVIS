@@ -139,6 +139,16 @@ Recovery requires the originating Windows user/profile's DPAPI material. Preserv
 
 This checklist prepares owner actions. Source remediation does not perform credential rotation, private configuration edits or deployment.
 
+### Text routing and attempt records
+
+Chat, coaching, agents and legacy interview briefs use the same normalized reasoning port. OpenAI Responses and Anthropic Messages codecs are installed. `AI:{profile}:Provider` defaults to `openai` for existing profiles. Selecting another provider also requires an explicit `AllowedDataClasses` array (`Public` and/or `Personal`), its reviewed model/rates/date and its credential. Existing Anthropic briefs retain the `PaidAI` and `Anthropic` configuration layout. No destination is selected automatically when a route cannot supply the requested capability.
+
+Grounded public search requires the Research profile, Public data class, an installed adapter advertising that capability and positive `AI:Research:SearchUsdPerCall`. The public example leaves this price unset. Anthropic's installed codec supports conversation and JSON reasoning; grounded search is refused there. Future installed codecs can register the same interface; their credentials use `Providers:{provider}:ApiKey` unless a legacy credential mapping exists.
+
+Every text attempt enters a shared durable reservation before adapter dispatch. Attempt records contain provider/model, profile, capability, data class, consent, reviewed rate revision, reservation ID and outcome. Keys and prompt text are excluded from these records. The selected model, key and prices are captured for that attempt; configuration changes during the response cannot change its billing calculation. Known completed responses can be returned from cache. Pending, failed or uncertain attempts cannot be automatically replayed; old paid workflow claims can reuse a matching completed result but cannot silently pay again when it is unavailable.
+
+Source deletion fences subsequent publication, clears cached text and removes the attempt's content fingerprint. The content-free route/charge record remains alongside the existing financial ledger. Full Core erasure removes attempt records while retaining the separately defined financial commitments. Attempt fingerprints also expire with the seven-day disposable-cache policy. Hardware, private configuration and paid-provider acceptance remain separate operator steps.
+
 Home Assistant now requires HTTPS outside loopback unless `HomeAssistant:AllowInsecureLan=true` is explicitly set by the operator. The public example defaults this exception to false. This does not encrypt an insecure LAN link; TLS is preferred.
 
 Legacy draft migration precaution: before replacing a phone's existing connection credential, explicitly export any legacy encrypted drafts using the current trusted connection. Legacy cache discovery is keyed by the old URL/credential identity; changing the credential does not delete those files, but the new connection will not automatically discover them. Do not replay or upload them during pairing. This remediation did not alter existing encrypted draft files or their keys.

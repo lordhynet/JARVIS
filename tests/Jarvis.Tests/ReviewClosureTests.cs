@@ -36,9 +36,12 @@ public sealed class ReviewClosureTests
     {
         var state = new RuntimeState(); var now = DateTimeOffset.UtcNow; var id = Guid.NewGuid();
         state.ProviderResults[id] = new(id, id, "fixture", "{}", now.AddDays(-8));
+        state.ProviderAttempts[id] = new(id, id, "context-hash", new("openai", "fixture", "fixture", "v1", "rev",
+            DateOnly.FromDateTime(now.UtcDateTime), 1, 1, 100), id, "Cached", now.AddDays(-8), now);
         state.UsageReservations[id] = new(id, id, "fixture", now, 1);
         Assert.Equal(1, RuntimeMaintenance.Prune(state, now)); Assert.Single(state.UsageReservations);
         Assert.Empty(state.ProviderResults);
+        Assert.Equal("", state.ProviderAttempts[id].Fingerprint);
     }
     [Fact]
     public void Realtime_audio_usage_uses_audio_rates_and_missing_breakdowns_use_the_higher_bound()

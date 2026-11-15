@@ -21,6 +21,7 @@ public sealed class TestBudgetSource(TimeProvider clock) : IBudgetPolicySource
         foreach (var rate in new[] { "AudioInput", "TextInput", "CachedAudioInput", "CachedTextInput", "AudioOutput", "TextOutput" }) builder.UseSetting($"AI:Voice:{rate}UsdPerMillion", "1");
         builder.UseSetting("AI:Voice:TranscriptionUsdPerMinute", "0.01"); builder.UseSetting("AI:Voice:TranscriptionModel", "fixture-transcription");
         builder.UseSetting("AI:Voice:TranscriptionRateCardModel", "fixture-transcription");
+        builder.UseSetting("AI:Research:SearchUsdPerCall", "0.01");
         builder.ConfigureServices(s => s.AddSingleton<IBudgetPolicySource>(p => new TestBudgetSource(p.GetRequiredService<TimeProvider>())));
     }
 }

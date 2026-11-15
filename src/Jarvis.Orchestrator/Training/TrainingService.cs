@@ -131,7 +131,7 @@ public sealed class TrainingService(IRuntimeStore store, ISessionReader sessions
         var attempt = Current(state, id, expectedRevision);
         state.TrainingAttempts[id] = attempt with { Revision = checked(attempt.Revision + 1), DeletedAt = clock.GetUtcNow(),
             Answers = [], Assessments = [], CanonicalAssessmentId = null };
-        foreach (var cached in state.ProviderResults.Values.Where(x => x.ScopeId == id).ToList()) state.ProviderResults.Remove(cached.Id);
+        ReasoningLifecycle.Retire(state, id);
         if (state.TrainingBaselines.ContainsKey(attempt.QuestionId)) TrainingProjection.Rebuild(state, attempt.QuestionId);
         return true;
     }, ct);

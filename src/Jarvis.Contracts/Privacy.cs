@@ -24,4 +24,4 @@ public sealed record CoreDataExport(int SchemaVersion, DateTimeOffset ExportedAt
     IReadOnlyList<UsageReconciliation> Reconciliations, IReadOnlyList<ImportedDocument> Imports, IReadOnlyList<SourceClaim> SourceClaims,
     IReadOnlyList<VoiceRecall>? VoiceRecalls = null, IReadOnlyList<GbpCommitment>? GbpCommitments = null,
     IReadOnlyList<BudgetApproval>? BudgetApprovals = null, IReadOnlyList<BudgetManagementReceipt>? BudgetReceipts = null,
-    IReadOnlyList<VoiceCoaching>? VoiceCoachings = null);
+    IReadOnlyList<VoiceCoaching>? VoiceCoachings = null, IReadOnlyList<ProviderAttempt>? ProviderAttempts = null);

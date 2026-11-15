@@ -14,6 +14,39 @@ namespace Jarvis.Tests;
 
 public sealed class PaidAiTests
 {
+    private sealed class RecoveryClock : TimeProvider {
+        public DateTimeOffset Now = DateTimeOffset.UtcNow.AddMinutes(1);
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+    [Fact]
+    public async Task Recovered_worker_claim_reuses_completed_provider_output_without_another_charge()
+    {
+        var source = Guid.NewGuid(); var calls = 0; var clock = new RecoveryClock();
+        using var root = new PaidFactory(_ => { Interlocked.Increment(ref calls); return Task.FromResult(Response(source)); });
+        using var host = root.WithWebHostBuilder(builder => builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(clock)));
+        var first = await Prepare(host, source); var provider = host.Services.GetRequiredService<PaidAiProvider>();
+        var original = await provider.GenerateAsync(first, default);
+        clock.Now = clock.Now.Add(WorkflowService.LeaseDuration).AddSeconds(1);
+        var recovered = (await host.Services.GetRequiredService<WorkflowService>().ClaimAsync("replacement-worker"))!;
+        Assert.NotEqual(first.ClaimToken, recovered.ClaimToken);
+        var result = await provider.GenerateAsync(recovered, default);
+        Assert.Equal(original.Summary, result.Summary); Assert.Equal(1, calls);
+        Assert.Single(await host.Services.GetRequiredService<IRuntimeReader>().ReadAsync(s => s.UsageReservations.Values.ToArray()));
+    }
+    [Fact]
+    public async Task Deleting_paid_source_clears_cached_text_and_attempt_fingerprint_but_keeps_the_charge()
+    {
+        var source = Guid.NewGuid();
+        using var host = new PaidFactory(_ => Task.FromResult(Response(source)));
+        var run = await Prepare(host, source); await host.Services.GetRequiredService<PaidAiProvider>().GenerateAsync(run, default);
+        await host.Services.GetRequiredService<WorkflowService>().DeleteAsync(run.Id);
+        var runtime = host.Services.GetRequiredService<IRuntimeReader>();
+        Assert.Empty(await runtime.ReadAsync(s => s.ProviderResults.Values.Where(x => x.ScopeId == run.Id).ToArray()));
+        var attempt = Assert.Single(await runtime.ReadAsync(s => s.ProviderAttempts.Values.ToArray()));
+        Assert.True(attempt.SourceDeleted); Assert.Equal("", attempt.Fingerprint);
+        Assert.Single(await runtime.ReadAsync(s => s.UsageReservations.Values.ToArray()));
+        await Assert.ThrowsAsync<DomainException>(() => host.Services.GetRequiredService<PaidAiProvider>().GenerateAsync(run, default));
+    }
     [Fact]
     public async Task Unexpected_usage_is_recorded_and_blocks_further_paid_dispatch()
     {
@@ -75,7 +108,8 @@ public sealed class PaidAiTests
         Assert.Equal(3, result.Drills.Count); Assert.Equal(sourceId, Assert.Single(result.SourceIds)); Assert.Equal(1, requests);
         var reservation = Assert.Single(await host.Services.GetRequiredService<IRuntimeReader>().ReadAsync(s => s.UsageReservations.Values.ToList()));
         Assert.NotNull(reservation.ActualUsd); Assert.True(reservation.ActualUsd < reservation.ReservedUsd);
-        await Assert.ThrowsAsync<DomainException>(() => provider.GenerateAsync(run, default));
+        var cached = await provider.GenerateAsync(run, default);
+        Assert.Equal(result.Summary, cached.Summary); Assert.Equal(result.SourceIds, cached.SourceIds); Assert.Equal(result.Model, cached.Model);
         Assert.Equal(1, requests);
     }
 

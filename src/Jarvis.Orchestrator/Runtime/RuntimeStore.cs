@@ -6,6 +6,8 @@ namespace Jarvis.Orchestrator.Runtime;
 
 public sealed class RuntimeState
 {
+    public Dictionary<Guid, ProviderAttempt> ProviderAttempts { get; set; } = [];
+    public HashSet<Guid> RetiredReasoningScopes { get; set; } = [];
     public Dictionary<string, HubAccessTicket> HubTickets { get; set; } = [];
     public Dictionary<string, DeviceCredential> DeviceCredentials { get; set; } = [];
     public Dictionary<Guid, VoiceCoaching> VoiceCoachings { get; set; } = [];

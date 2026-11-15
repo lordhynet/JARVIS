@@ -211,7 +211,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
         foreach (var taskId in run.TaskIds)
         {
             var task = s.AgentTasks[taskId]; s.AgentTasks[taskId] = task with { Status = AgentTaskStatus.Cancelled, ClaimToken = null, Input = delete ? "" : task.Input, Output = delete ? null : task.Output };
-            if (delete) foreach (var cache in s.ProviderResults.Where(x => x.Value.ScopeId == taskId).Select(x => x.Key).ToList()) s.ProviderResults.Remove(cache);
+            if (delete) ReasoningLifecycle.Retire(s, taskId);
         }
         foreach (var note in s.AgentOutbox.Values.Where(x => x.RunId == id).ToList()) s.AgentOutbox.Remove(note.Id);
         return true;
@@ -233,7 +233,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
         {
             s.AgentTasks[task.Id] = task with { Output = null, Input = "", ClaimToken = null, Status = AgentTaskStatus.Cancelled, ErrorCode = "source_deleted" };
             s.AgentRuns[task.RunId] = s.AgentRuns[task.RunId] with { Status = "SourceDeleted" };
-            foreach (var cached in s.ProviderResults.Values.Where(x => x.ScopeId == task.Id).ToList()) s.ProviderResults.Remove(cached.Id);
+            ReasoningLifecycle.Retire(s, task.Id);
             foreach (var notice in s.AgentOutbox.Values.Where(x => x.RunId == task.RunId).ToList()) s.AgentOutbox.Remove(notice.Id);
         }
     }

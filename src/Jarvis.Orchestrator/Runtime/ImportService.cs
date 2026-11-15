@@ -76,7 +76,7 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock)
             foreach (var claim in group) s.SourceClaims.Remove(claim.Id);
         }
         foreach (var assessment in s.AiCoachAssessments.Values.Where(x => x.AttemptId == document.Id).ToList()) s.AiCoachAssessments.Remove(assessment.Id);
-        foreach (var result in s.ProviderResults.Values.Where(x => x.ScopeId == document.Id).ToList()) s.ProviderResults.Remove(result.Id);
+        ReasoningLifecycle.Retire(s, document.Id);
         s.ImportedDocuments[document.Id] = document with { Title = "", Text = "", Segments = [], DeletedAt = at, Revision = document.Revision + 1 };
     }
 

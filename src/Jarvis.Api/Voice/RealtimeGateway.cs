@@ -23,7 +23,7 @@ public sealed class RealtimeConnectionFactory(IConfiguration config) : IRealtime
     }
 }
 public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectionFactory connections, ManagedAi ai,
-    UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, IPrivacyReader privacy, IConfiguration config, TimeProvider clock, CoreVoiceTools tools)
+    UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, IPrivacyReader privacy, TimeProvider clock, CoreVoiceTools tools)
 {
     public async Task RunAsync(HttpContext context)
     {
@@ -68,16 +68,16 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             var toolBytes = JsonSerializer.SerializeToUtf8Bytes(CoreVoiceTools.Definitions).Length;
             // Tool results share the explicitly capped post-instruction conversation context.
             // Reserve that token cap per response, plus conservative prefix/audio overhead.
-            var pricing = RealtimePricing.Read(config);
+            var voiceRates = ai.RealtimeRates(); var pricing = voiceRates.Pricing;
             var maximum = ((Encoding.UTF8.GetByteCount(instructions) + toolBytes + conversationTokens + 5120m) * maxTurns * pricing.MaxInput + maxTurns * outputTokens * pricing.MaxOutput) / 1_000_000m + pricing.Transcription(60);
-            var reservation = await budget.ReserveAsync(Guid.NewGuid(), session.Id, ai.Model("Voice"), maximum, ai.Limits, timeout.Token, UsageLane.Voice, "openai");
+            var reservation = await budget.ReserveAsync(Guid.NewGuid(), session.Id, voiceRates.Model, maximum, ai.Limits, timeout.Token, UsageLane.Voice, "openai");
             timeout.CancelAfter(TimeSpan.FromSeconds(65));
             Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio lease expired before provider dispatch.");
-            using var provider = await connections.ConnectAsync(ai.Model("Voice"), timeout.Token);
+            using var provider = await connections.ConnectAsync(voiceRates.Model, timeout.Token);
             upstreamSocket = provider;
             Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio lease expired while connecting.");
             async Task Provider(object value) { await providerSend.WaitAsync(timeout.Token); try { await SendAsync(provider, value, timeout.Token); } finally { providerSend.Release(); } }
-            await Provider(new { type = "session.update", session = new { type = "realtime", model = ai.Model("Voice"), output_modalities = new[] { "audio" },
+            await Provider(new { type = "session.update", session = new { type = "realtime", model = voiceRates.Model, output_modalities = new[] { "audio" },
                 instructions, max_output_tokens = outputTokens, tools = CoreVoiceTools.Definitions,
                 truncation = new { type = "retention_ratio", retention_ratio = .8, token_limits = new { post_instructions = conversationTokens } },
                 audio = new { input = new { format = new { type = "audio/pcm", rate = 24000 }, transcription = new { model = pricing.TranscriptionModel },

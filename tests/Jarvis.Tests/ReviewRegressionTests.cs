@@ -42,7 +42,7 @@ public sealed class ReviewRegressionTests
         var runtime = new AgentRuntime(store, clock);
         await runtime.StartAsync(new(Guid.NewGuid(), "daily-coaching", false), default);
         var task = (await runtime.ClaimAsync(default))!;
-        var executor = new AgentExecutor(host.Services.GetRequiredService<ManagedAi>(), store, clock);
+        var executor = new AgentExecutor(host.Services.GetRequiredService<Jarvis.Orchestrator.Intelligence.ITextReasoningProvider>(), store, clock);
         using var result = JsonDocument.Parse(await executor.ExecuteAsync(task, default));
         var selected = result.RootElement.GetProperty("storyIds").EnumerateArray().Select(x => x.GetGuid()).ToArray();
         Assert.Equal(new[] { storyIds[2], storyIds[1] }, selected);

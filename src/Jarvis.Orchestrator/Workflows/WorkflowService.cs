@@ -6,7 +6,7 @@ using Jarvis.Orchestrator.Domains;
 
 namespace Jarvis.Orchestrator.Workflows;
 
-public sealed class WorkflowService(IWorkflowStore store, TimeProvider clock, IWorkflowCatalog? catalog = null)
+public sealed class WorkflowService(IWorkflowStore store, TimeProvider clock, IWorkflowCatalog? catalog = null, IRuntimeStore? runtime = null)
 {
     private readonly IWorkflowCatalog workflows = catalog ?? new WorkflowCatalog();
     public const int MaximumAttempts = 3;
@@ -101,10 +101,17 @@ public sealed class WorkflowService(IWorkflowStore store, TimeProvider clock, IW
         Required(await store.UpdateAsync(id, run => Terminal(run.Status) ? run :
             Finish(run, WorkflowStatus.Cancelled, clock.GetUtcNow(), null), ct));
 
-    public async Task DeleteAsync(Guid id, CancellationToken ct = default) =>
+    public async Task DeleteAsync(Guid id, CancellationToken ct = default)
+    {
+        if (await store.GetAsync(id, ct) is null) return;
+        if (runtime is not null) await runtime.UpdateAsync(s => {
+            ReasoningLifecycle.Retire(s, id);
+            return true;
+        }, ct);
         await store.UpdateAsync(id, run => run.DeletedAt is not null ? run :
             Finish(run, WorkflowStatus.Cancelled, clock.GetUtcNow(), null) with
             { DeletedAt = clock.GetUtcNow(), Brief = null, Result = null, AllowCloudProcessing = false }, ct);
+    }
 
     public static bool Terminal(WorkflowStatus status) => status is WorkflowStatus.Succeeded or
         WorkflowStatus.Failed or WorkflowStatus.Cancelled or WorkflowStatus.Expired;
