@@ -51,6 +51,9 @@ class LiveVoiceService : Service() {
     private var wake: PowerManager.WakeLock? = null
     @Volatile private var active = false
     @Volatile private var wakeEnabled = false
+    @Volatile private var wakeInitiatedWindow = false
+    @Volatile private var wakeSpeechObserved = false
+    @Volatile private var wakeSpeechDeadlineElapsed: Long? = null
     @Volatile private var ready = false
     private var wakeDetector: LocalWakeDetector? = null
     private var pendingWakeTicket: VoiceTicket? = null
@@ -94,7 +97,9 @@ class LiveVoiceService : Service() {
                 sessionId = intent.getStringExtra("sessionId").orEmpty()
                 wakeDetector?.stop(); wakeDetector = null
                 mutable.value = mutable.value.copy(wakeListening = false)
-                intent.getStringExtra("voiceTicket")?.let { pendingWakeTicket = runCatching { gson.fromJson(it, VoiceTicket::class.java) }.getOrNull() }
+                val wakeTicket = intent.getStringExtra("voiceTicket")
+                pendingWakeTicket = wakeTicket?.let { runCatching { gson.fromJson(it, VoiceTicket::class.java) }.getOrNull() }
+                wakeInitiatedWindow = wakeTicket != null; wakeSpeechObserved = false; wakeSpeechDeadlineElapsed = null
                 if (sessionId.isBlank() || checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { stopVoice("Microphone permission and an active session are required."); return START_NOT_STICKY }
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) { stopVoice("Allow notifications for visible live-voice Stop controls."); return START_NOT_STICKY }
                 val stop = PendingIntent.getService(this, 201, Intent(this, LiveVoiceService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
@@ -351,9 +356,22 @@ class LiveVoiceService : Service() {
         try {
         if (!active || !ready || generation != current || socket !== window) return
         recorder.startRecording(); val samples = ShortArray(rate / 50)
+        val speechOnset = WakeSpeechOnsetDetector()
         while (active && ready && generation == current && socket === window) {
             val count = recorder.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING); if (count <= 0) break
             if (!ready || SystemClock.elapsedRealtime() >= leaseDeadline.get()) continue
+            if (wakeInitiatedWindow && !wakeSpeechObserved) {
+                val now = SystemClock.elapsedRealtime()
+                val detected = speechOnset.observe(samples, count)
+                if (detected) { wakeSpeechObserved = true; wakeSpeechDeadlineElapsed = null }
+                else {
+                    val deadline = wakeSpeechDeadlineElapsed ?: (now + 8_000).also { wakeSpeechDeadlineElapsed = it }
+                    if (now >= deadline) {
+                        stopVoice("No speech heard after wake. Local wake remains active.", wakeStopReason = "no_speech_timeout")
+                        break
+                    }
+                }
+            }
             val step = rate / 24000; val pcm = ByteArray(count / step * 2)
             for (i in 0 until count / step) { val value = if (step == 1) samples[i].toInt() else (samples[i * 2].toInt() + samples[i * 2 + 1].toInt()) / 2; pcm[i * 2] = value.toByte(); pcm[i * 2 + 1] = (value shr 8).toByte() }
             val ws = socket ?: continue
@@ -377,7 +395,7 @@ class LiveVoiceService : Service() {
         while (true) { val queued = soundQueue.tryReceive().getOrNull() ?: break; playbackBudget.release(queued.second.size) }
         if (track != null) runCatching { track.pause(); track.flush(); writtenSamples = 0; itemStartSamples = 0; itemSamples = 0; playbackItem = null; track.play() }
     }
-    private fun stopVoice(message: String, disableWake: Boolean = false) {
+    private fun stopVoice(message: String, disableWake: Boolean = false, wakeStopReason: String? = null) {
         if (disableWake) {
             wakeEnabled = false; getSharedPreferences("installation", 0).edit().putBoolean("local-wake-enabled", false).apply()
             wakeDetector?.stop(); wakeDetector = null
@@ -386,7 +404,9 @@ class LiveVoiceService : Service() {
         val nextAudioPhase = if (keepWake) CompanionAudioPhase.WakeListening else CompanionAudioPhase.Idle
         if (!active && !keepWake && mutable.value.message == message && audioPhase == nextAudioPhase) return
         val stoppedLease = currentLease; currentLease = null; pendingWakeTicket = null; val stoppedClient = client; val stoppedCapture = captureJob
-        active = false; ready = false; generation++; socket?.send("{\"type\":\"stop\"}"); socket?.close(1000, "Stopped"); socket = null
+        active = false; ready = false; generation++
+        val stopFrame = if (wakeStopReason == "no_speech_timeout") gson.toJson(mapOf("type" to "stop", "reason" to wakeStopReason)) else "{\"type\":\"stop\"}"
+        socket?.send(stopFrame); socket?.close(1000, "Stopped"); socket = null
         reconnectJob?.cancel(); reconnectJob = null
         initializationJob?.cancel(); initializationJob = null
         runCatching { capture?.stop() }; captureJob?.cancel(); captureJob = null
@@ -401,6 +421,7 @@ class LiveVoiceService : Service() {
             }
         }
         soundQueue.close(); focus?.let { audio.abandonAudioFocusRequest(it) }; focus = null
+        wakeInitiatedWindow = false; wakeSpeechObserved = false; wakeSpeechDeadlineElapsed = null
         transitionAudioPhase(nextAudioPhase)
         mediaSession?.release(); mediaSession = null; transport?.dispatcher?.executorService?.shutdown(); transport?.connectionPool?.evictAll(); transport = null
         wake?.let { if (it.isHeld) it.release() }; wake = null
