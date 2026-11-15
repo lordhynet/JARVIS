@@ -253,7 +253,8 @@ app.MapGet("/api/operations", (IRuntimeReader reader, TimeProvider clock, Cancel
     activeGoals = s.Goals.Values.Count(x => x.Status == "Active"), pendingTriggers = s.AgentTriggers.Values.Count(x => x.Status == "Pending"),
     uncertainCharges = s.UsageReservations.Values.Count(x => x.ActualUsd is null || x.ReconciliationRequired),
     monthCommittedUsd = s.UsageReservations.Values.Where(x => x.At.Year == clock.GetUtcNow().Year && x.At.Month == clock.GetUtcNow().Month).Sum(x => x.ActualUsd ?? x.ReservedUsd),
-    agentsPaused = s.AgentControls.Paused
+    agentsPaused = s.AgentControls.EffectiveAgentsPaused,
+    paidAiPaused = s.AgentControls.EffectivePaidAiPaused
 }, ct));
 app.UseDefaultFiles();
 app.UseStaticFiles();

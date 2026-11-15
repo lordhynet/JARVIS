@@ -19,4 +19,9 @@ public sealed record AgentRunView(AgentRun Run, IReadOnlyList<AgentTaskView> Tas
 public sealed record StartAgentRunRequest(Guid RequestId, string Workflow, bool AllowCloudProcessing, string? Brief = null);
 public sealed record AgentNotification(Guid Id, Guid RunId, string Title, DateTimeOffset CreatedAt, DateTimeOffset DeliverAfter,
     DateTimeOffset ExpiresAt, bool Delivered = false, bool Read = false);
-public sealed record AgentControls(bool Paused = false, IReadOnlyList<string>? PausedWorkflows = null, string QuietStart = "22:00", string QuietEnd = "08:00", string TimeZone = "Europe/London");
+public sealed record AgentControls(bool Paused = false, IReadOnlyList<string>? PausedWorkflows = null, string QuietStart = "22:00", string QuietEnd = "08:00", string TimeZone = "Europe/London", bool? PaidAiPaused = null, bool? AgentsPaused = null)
+{
+    // Null retains the meaning of historical persisted Paused values and old clients.
+    [System.Text.Json.Serialization.JsonIgnore] public bool EffectivePaidAiPaused => PaidAiPaused ?? Paused;
+    [System.Text.Json.Serialization.JsonIgnore] public bool EffectiveAgentsPaused => AgentsPaused ?? Paused;
+}

@@ -14,7 +14,7 @@ public sealed class BudgetApprovalService(IRuntimeStore store, IBudgetPolicySour
             GbpBudgetRules.Validate(p, now);
             Guard.Require(s.BudgetScopeId is null || s.BudgetScopeId == p.ScopeId, 503, "Accounting scope needs explicit migration.");
             Guard.Require(GbpBudgetRules.Unclassified(s, now) == 0, 503, "Legacy AI charges require owner classification before paid dispatch.");
-            Guard.Require(!s.AgentControls.Paused && !s.UsageReservations.Values.Any(r => r.ReconciliationRequired), 503, "Paid work is paused or requires charge reconciliation.");
+            Guard.Require(!s.AgentControls.EffectivePaidAiPaused && !s.UsageReservations.Values.Any(r => r.ReconciliationRequired), 503, "Paid work is paused or requires charge reconciliation.");
             detail = "GBP authority ready. Existing USD daily/month/lane limits remain additional restrictions.";
         }
         catch (DomainException e) { ready = false; detail = e.Message; }

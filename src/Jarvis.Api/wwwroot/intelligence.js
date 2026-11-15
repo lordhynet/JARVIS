@@ -66,7 +66,8 @@ export function initIntelligence({ api, node, button, notice }) {
     if (workflows.includes(selected)) workflow.value = selected;
     submit.disabled = workflows.length === 0;
     controls.replaceChildren(node('h3', 'Pause and quiet hours'));
-    controls.append(button(settings.paused ? 'Resume all paid AI and agents' : 'Pause all paid AI and agents', async () => { await api('/agents/controls', { ...settings, paused: !settings.paused }, 'PUT'); await load(); }));
+    controls.append(button(settings.paidAiPaused ?? settings.paused ? 'Resume paid AI' : 'Pause paid AI', async () => { await api('/agents/controls', { ...settings, paused: false, paidAiPaused: !(settings.paidAiPaused ?? settings.paused) }, 'PUT'); await load(); }));
+    controls.append(button(settings.agentsPaused ?? settings.paused ? 'Resume agents' : 'Pause agents', async () => { await api('/agents/controls', { ...settings, paused: false, agentsPaused: !(settings.agentsPaused ?? settings.paused) }, 'PUT'); await load(); }));
     for (const kind of workflows) {
       const paused = (settings.pausedWorkflows || []).includes(kind);
       controls.append(button(`${paused ? 'Resume' : 'Pause'} ${kind}`, async () => {

@@ -9,7 +9,7 @@ public static class AudioFencing
     }
     public static void RequireAvailable(RuntimeState state, DateTimeOffset now)
     {
-        Guard.Require(!state.AgentControls.Paused && (state.AudioLease is null || state.AudioLease.ExpiresAt <= now) &&
+        Guard.Require((state.AudioLease is null || state.AudioLease.ExpiresAt <= now) &&
             (state.AudioDrainUntil is null || state.AudioDrainUntil <= now), 409,
             "Another audio lease is active or draining. Stop the source device or wait for its lease to expire.");
         state.AudioDrainLease = null; state.AudioDrainUntil = null;

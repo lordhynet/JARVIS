@@ -15,7 +15,7 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
     {
         Guard.Require(maximum > 0 && limits.DailyUsd > 0 && limits.MonthlyUsd > 0,
             503, "Configure positive paid AI budgets and token rates before enabling the provider.");
-        Guard.Require(!s.AgentControls.Paused, 503, "Paid AI is globally paused.");
+        Guard.Require(!s.AgentControls.EffectivePaidAiPaused, 503, "Paid AI is globally paused.");
         Guard.Require(!s.UsageReservations.ContainsKey(id), 409, "This provider dispatch was already reserved; do not replay it.");
         Guard.Require(!s.UsageReservations.Values.Any(x => x.ReconciliationRequired), 503,
             "A provider rate or usage mismatch requires reconciliation before further paid work.");

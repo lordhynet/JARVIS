@@ -79,7 +79,7 @@ public sealed partial class AgentRuntime
         foreach (var goal in s.Goals.Values.Where(x => x.Status == "Active").ToList())
         {
             if (goal.Deadline <= now) { if (goal.LastRunId is Guid expiredRun) Supersede(s, expiredRun, "goal_expired"); s.Goals[goal.Id] = goal with { Status = "Expired", Revision = goal.Revision + 1, UpdatedAt = now }; continue; }
-            if (!available.ContainsKey(goal.Workflow) || available[goal.Workflow].RequiresCloud && !goal.AllowCloudProcessing || s.AgentControls.Paused || s.AgentControls.PausedWorkflows?.Contains(goal.Workflow) == true || goal.NextReviewAt > now || goal.LastRunId is not null) continue;
+            if (!available.ContainsKey(goal.Workflow) || available[goal.Workflow].RequiresCloud && !goal.AllowCloudProcessing || s.AgentControls.EffectiveAgentsPaused || s.AgentControls.PausedWorkflows?.Contains(goal.Workflow) == true || goal.NextReviewAt > now || goal.LastRunId is not null) continue;
             var id = StableId($"goal-v1:{goal.Id}:{goal.Revision}");
             Create(s, id, null, $"goal:{goal.Id}:{goal.Revision}", goal.Workflow, goal.AllowCloudProcessing, goal.Title + "\n" + goal.Brief, now, available[goal.Workflow]);
             s.AgentRuns[id] = s.AgentRuns[id] with { Deadline = s.AgentRuns[id].Deadline < goal.Deadline ? s.AgentRuns[id].Deadline : goal.Deadline };
@@ -88,7 +88,7 @@ public sealed partial class AgentRuntime
         foreach (var trigger in s.AgentTriggers.Values.Where(x => x.Status is "Pending" or "Dispatched").OrderBy(x => x.DueAt).ToList())
         {
             if (trigger.ExpiresAt <= now) { if (trigger.RunId is Guid expiredRun) Supersede(s, expiredRun, "event_expired"); s.AgentTriggers[trigger.Id] = trigger with { Status = "Expired", Brief = "" }; continue; }
-            if (!available.ContainsKey(trigger.Workflow) || available[trigger.Workflow].RequiresCloud && !trigger.AllowCloudProcessing || trigger.Status != "Pending" || s.AgentControls.Paused || s.AgentControls.PausedWorkflows?.Contains(trigger.Workflow) == true || trigger.DueAt > now) continue;
+            if (!available.ContainsKey(trigger.Workflow) || available[trigger.Workflow].RequiresCloud && !trigger.AllowCloudProcessing || trigger.Status != "Pending" || s.AgentControls.EffectiveAgentsPaused || s.AgentControls.PausedWorkflows?.Contains(trigger.Workflow) == true || trigger.DueAt > now) continue;
             var id = StableId($"trigger-run-v1:{trigger.Id}:{trigger.Revision}");
             Create(s, id, null, $"event:{trigger.Id}:{trigger.Revision}", trigger.Workflow, trigger.AllowCloudProcessing, trigger.Brief, now, available[trigger.Workflow]);
             s.AgentRuns[id] = s.AgentRuns[id] with { Deadline = s.AgentRuns[id].Deadline < trigger.ExpiresAt ? s.AgentRuns[id].Deadline : trigger.ExpiresAt };

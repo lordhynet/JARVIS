@@ -35,7 +35,7 @@ public sealed class IntelligenceRuntimeTests
         Assert.Equal(409, (await Assert.ThrowsAsync<DomainException>(() => audio.RenewAsync(first.Lease, default))).StatusCode);
         Assert.True(await audio.CurrentAsync(second.Lease, default));
         await new AgentRuntime(store, clock).ControlsAsync(new(Paused: true), default);
-        Assert.False(await audio.CurrentAsync(second.Lease, default));
+        Assert.True(await audio.CurrentAsync(second.Lease, default));
     }
 
     [Fact]

@@ -57,7 +57,7 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
         var nowCheck = clock.GetUtcNow();
         if (!await store.ReadAsync(s =>
             s.PushDeliveries.Values.Any(d => !s.AgentOutbox.ContainsKey(d.NotificationId) || !s.PushSubscriptions.ContainsKey(d.SubscriptionId)) ||
-            !s.AgentControls.Paused && !AgentRuntime.IsQuiet(s.AgentControls, nowCheck) && s.AgentOutbox.Values.Any(n => n.Delivered && !n.Read && n.ExpiresAt > nowCheck &&
+            !s.AgentControls.EffectiveAgentsPaused && !AgentRuntime.IsQuiet(s.AgentControls, nowCheck) && s.AgentOutbox.Values.Any(n => n.Delivered && !n.Read && n.ExpiresAt > nowCheck &&
                 s.PushSubscriptions.Values.Any(subscription => subscription.KeyFingerprint == fingerprint &&
                     (!s.PushDeliveries.TryGetValue(AgentRuntime.StableId($"push-v1:{n.Id}:{subscription.Id}"), out var delivery) ||
                      delivery.Attempt < 3 && delivery.AvailableAt <= nowCheck && (delivery.Status == "Pending" || delivery.Status == "Sending" && delivery.LeaseExpiresAt <= nowCheck)))), ct)) return false;
@@ -65,7 +65,7 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
         {
             var now = clock.GetUtcNow();
             foreach (var obsolete in s.PushDeliveries.Values.Where(x => !s.AgentOutbox.ContainsKey(x.NotificationId) || !s.PushSubscriptions.ContainsKey(x.SubscriptionId)).ToList()) s.PushDeliveries.Remove(obsolete.Id);
-            if (s.AgentControls.Paused) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
+            if (s.AgentControls.EffectiveAgentsPaused) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
             var local = TimeOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, Jarvis.Orchestrator.Training.TrainingProjection.Zone(s.AgentControls.TimeZone)).DateTime);
             var start = AgentRuntime.LocalTime(s.AgentControls.QuietStart); var end = AgentRuntime.LocalTime(s.AgentControls.QuietEnd);
             var quiet = start != end && (start < end ? local >= start && local < end : local >= start || local < end);

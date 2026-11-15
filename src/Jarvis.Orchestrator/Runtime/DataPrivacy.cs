@@ -61,7 +61,7 @@ public static class PrivacyData
         state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList(), domains ?? state.DomainRegistry.Export());
     public static RuntimeState EmptyAfterErase(RuntimeState old) => new()
     {
-        UsageReservations = old.UsageReservations, NextAudioFence = checked(old.NextAudioFence + 1), AgentControls = new(Paused: true),
+        UsageReservations = old.UsageReservations, NextAudioFence = checked(old.NextAudioFence + 1), AgentControls = new(Paused: true, PaidAiPaused: true, AgentsPaused: true),
         AudioDrainUntil = old.AudioLease?.ExpiresAt ?? old.AudioDrainUntil,
         BudgetScopeId = old.BudgetScopeId, BudgetEpoch = checked(old.BudgetEpoch + 1), BudgetRevision = checked(old.BudgetRevision + 1),
         GbpCommitments = old.GbpCommitments,
