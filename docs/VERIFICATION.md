@@ -467,3 +467,9 @@ Fresh affected backend run:23 passed, zero failures/skips (`TestResults/td14-fin
 Committed repair-based consistency for the existing separate session/runtime stores. Voice transcript messages now carry a durable marker and canonical speech duration; the runtime VoiceTurns projection is idempotently repaired after interrupted writes. Orphan paid audio leases are fenced and drained while preserving the source lease expiry. Repairs respect privacy epochs and retired sessions; idle PostgreSQL repair performs no runtime-row write.
 
 Fresh validation before commit: API build passed (zero warnings/errors, `TestResults/td17-commit-build.log`). The focused voice/recovery run passed41 checks (`TestResults/td17-final.log`, 45s), including concurrent repair, restart, idempotence, erasure fencing, realtime transcript behavior, and drain preservation. One initial Postgres SQL expression used `{}` with EF SQL formatting and failed; changed to `jsonb_build_object()` and reran the full affected set successfully. No provider calls, new migration, deployment or private settings changes.
+
+## RR2-02 paid realtime pause — 15 November 2026
+
+The realtime lease monitor now checks the independent paid-AI pause every second. A paid realtime session ends with `paid_ai_paused`, clears pending provider work, and settles the usage reservation. The pause does not revoke the local audio lease; the normal stream cleanup releases the lease after the paid session stops.
+
+Fresh validation: API/test project build and two focused tests passed, zero failures/skips (`tests/Jarvis.Tests/TestResults/intelligence.trx`): the new pause/settlement/local-audio test and existing invalid-ticket rejection test. No live provider call or private configuration change.

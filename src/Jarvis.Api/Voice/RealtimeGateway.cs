@@ -232,7 +232,10 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             }, timeout.Token);
             pumps.Add(downstream);
             var expiry = Task.Delay(TimeSpan.FromSeconds(60), timeout.Token);
-            var leaseMonitor = Task.Run(async () => { while (!timeout.IsCancellationRequested) { await Task.Delay(2000, timeout.Token); Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio ownership expired."); } }, timeout.Token);
+            var paidPauseRequested = 0;
+            var leaseMonitor = Task.Run(async () => { while (!timeout.IsCancellationRequested) { await Task.Delay(1000, timeout.Token);
+                if (await runtime.ReadAsync(s => s.AgentControls.EffectivePaidAiPaused, timeout.Token)) { Interlocked.Exchange(ref paidPauseRequested, 1); return; }
+                Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio ownership expired."); } }, timeout.Token);
             pumps.Add(leaseMonitor);
             var finished = await Task.WhenAny(upstream, downstream, expiry, leaseMonitor);
             if (finished != expiry) await finished;
@@ -257,7 +260,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                 var cost = tokenCost + pricing.Transcription(bytes / 48000d);
                 await budget.SettleAsync(reservation.Id, cost, inputTokens, output, timeout.Token);
             }
-            await Client(new { type = "ended", reason = finished == expiry ? "window_complete" : "stopped" });
+            await Client(new { type = "ended", reason = finished == expiry ? "window_complete" : Volatile.Read(ref paidPauseRequested) == 1 ? "paid_ai_paused" : "stopped" });
             await timeout.CancelAsync(); provider.Abort();
             try { await Task.WhenAll(upstream, downstream, leaseMonitor); } catch (Exception) when (timeout.IsCancellationRequested) { }
         }

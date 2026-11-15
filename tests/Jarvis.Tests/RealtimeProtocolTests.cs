@@ -6,6 +6,7 @@ using Jarvis.Api.Voice;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
+using Jarvis.Orchestrator.Workflows;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -139,6 +140,33 @@ public sealed class RealtimeProtocolTests
         var usage = Assert.Single(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.UsageReservations.Values.ToList()));
         Assert.NotNull(usage.ActualUsd); Assert.False(usage.ReconciliationRequired);
         Assert.Equal(1, measurements);
+    }
+
+    [Fact]
+    public async Task Paid_pause_ends_realtime_window_and_settles_usage_but_does_not_revoke_local_audio()
+    {
+        using var factory = new ProviderFactory(_ => throw new InvalidOperationException("No real HTTP provider call expected."));
+        var provider = new ProviderSocket { EmitAudio = true };
+        using var host = factory.WithWebHostBuilder(b => b.ConfigureServices(s => s.AddSingleton<IRealtimeConnectionFactory>(provider)));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        var devices = host.Services.GetRequiredService<DeviceService>();
+        await devices.RegisterAsync(new("pause-phone", "Pause fixture", DeviceKind.AndroidCompanion, new(true, true, false, false, [])));
+        await devices.VerifyAsync("pause-phone"); var id = Guid.NewGuid(); var now = DateTimeOffset.UtcNow;
+        await host.Services.GetRequiredService<ISessionStore>().AddAsync(new(id, ActivityType.General, "Voice", SessionStatus.Active, "pause-phone", null, now, now, []));
+        var ticket = await host.Services.GetRequiredService<AudioOwnership>().StartAsync(new(id, "pause-phone", true), timeout.Token);
+        using var socket = await host.Server.CreateWebSocketClient().ConnectAsync(new("ws://localhost/voice-stream"), timeout.Token);
+        await Send(socket, new { type = "authenticate", ticket = ticket.Ticket }, timeout.Token);
+        Assert.Equal("ready", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+        Assert.Equal("audio", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+        Assert.Equal("audio", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+        await host.Services.GetRequiredService<AgentRuntime>().ControlsAsync(new(PaidAiPaused: true, AgentsPaused: false), timeout.Token);
+        var error = await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token);
+        Assert.Equal("ended", error.GetProperty("type").GetString());
+        Assert.Equal("paid_ai_paused", error.GetProperty("reason").GetString());
+        var usage = Assert.Single(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.UsageReservations.Values.ToArray()));
+        Assert.NotNull(usage.ActualUsd); Assert.False(usage.ReconciliationRequired);
+        Assert.Null(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AudioLease));
+        Assert.Null(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AudioDrainUntil));
     }
 
     [Theory]
