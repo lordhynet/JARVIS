@@ -130,6 +130,15 @@ New backups use Windows CurrentUser DPAPI and the `.dump.dpapi` extension, with 
 
 Recovery requires the originating Windows user/profile's DPAPI material. Preserve that recovery access and verify restore before relying on a copied backup on another computer; a copied encrypted dump alone is insufficient. Existing plaintext backups, directory sync settings and Windows profile recovery were not changed. The isolated synthetic deployment test verifies restore on the current account only.
 
+### Owner rollout checklist after review fixes
+
+1. Configure `BudgetManagement:OwnerKey` (separate from `Jarvis:ApiKey`) and opaque `SubjectId` on the trusted Core host.
+2. Verify each phone's audio-only registration, issue its credential using owner-authorized `POST /api/devices/{id}/credential`, and pair the phone with the returned `jdv1_` secret. Export any needed legacy drafts before changing pairing identity. After all phones are migrated, rotate the legacy Core key and update trusted browsers. Keep Core restricted to the LAN until these first two steps are complete.
+3. Configure `JARVIS_FRONTEND_REPOSITORY`, `JARVIS_MOBILE_REPOSITORY`, any required private repository read token and required CI checks. Execute the workflow and record its actual result in `docs/VERIFICATION.md`.
+4. Record real-device checks for earbuds, screen-off, network toggles, incoming calls, browser/phone handoff and simultaneous audio starts on two devices. Automated fixtures do not establish hardware acceptance.
+
+This checklist prepares owner actions. Source remediation does not perform credential rotation, private configuration edits or deployment.
+
 Home Assistant now requires HTTPS outside loopback unless `HomeAssistant:AllowInsecureLan=true` is explicitly set by the operator. The public example defaults this exception to false. This does not encrypt an insecure LAN link; TLS is preferred.
 
 Legacy draft migration precaution: before replacing a phone's existing connection credential, explicitly export any legacy encrypted drafts using the current trusted connection. Legacy cache discovery is keyed by the old URL/credential identity; changing the credential does not delete those files, but the new connection will not automatically discover them. Do not replay or upload them during pairing. This remediation did not alter existing encrypted draft files or their keys.

@@ -408,4 +408,20 @@ Remaining review work: complete domain/capability registration and legacy workfl
 
 Production remained healthy on `sha256:071b1c76ed0497352ca712d74c8262aed7c0eec9d8910ded373ebb2bda147195`. No new dependency/project or database migration, real paid-provider call, private settings change, key rotation, phone installation or production deployment occurred in this increment.
 
+## Next-actions baseline and RR follow-up — 15 November 2026
+
+Step 0 uses one baseline commit because the existing changes span shared contracts and composition: Core `0a888d5`, tagged `baseline-2026-11-15`; Android `9414eb6`; frontend `8a5978d`. Configured owner Git identity was used without overrides or attribution trailers. No remotes, pushes, amendments or history rewrites were made. Private/generated paths remain excluded.
+
+Fresh RR verification:
+
+- RR-01: two Android transport policy JVM tests passed (`TestResults/rr01.log`, 2m5s). A burst of ten seconds fits within the twenty-second PCM budget; overflow remains rejected. Mobile commit `b35dab5`.
+- RR-02/RR-03: 36 affected backend tests passed (`TestResults/rr02-03.log`, 58s), covering companion continuity, authorization and provenance. RR-02 adds PostgreSQL metadata selection and handoff-only polling; RR-03 appends Unknown origin and tags HTTP/background entry points.
+- Subsequent RR backend checks: 51 passed (`TestResults/rr-followup.log`, 1m17s), including PostgreSQL projections, device-bound stopped-audio release, existing handoff, provenance, agent and push behavior.
+- Final RR-07 checks: 14 passed (`TestResults/rr07-final.log`), including an idle agent tick/claim test asserting zero calls to UpdateAsync. Read-only prechecks precede write transactions for scheduling, claims, stale-tool recovery, pruning and push delivery; mutations still recheck conditions under the existing transaction.
+- RR-04: two browser tests passed on desktop/mobile (`TestResults/rr04-browser.log`, 24.3s). Ordinary GETs carry no owner credential; privacy export still carries it.
+
+RR-05/RR-06 Android validation completed: **21 JVM tests passed, zero failures**, release lint passed (`TestResults/rr05-06-android.log`, 3m39s). Mobile commits `ff7f3e6` and `3e8f739`. The earlier APK predates these RR fixes; rebuild before hardware acceptance. No fresh hardware, remote CI or production acceptance is claimed.
+
+Core RR commits: RR-02 `f6bbdbb`, RR-03 `9c2d00a`, RR-04 `fbb09c3`, RR-05 `1350f2e`, RR-07 `1435ea9`. The source is ready for the requested independent re-review. The owner rollout checklist is prepared in `docs/CONFIGURATION.md`; private configuration remains owner-assisted.
+
 Final Android follow-up: `:app:testReleaseUnitTest :app:lintRelease --offline --no-daemon --max-workers=1` completed successfully (3m23s), using the existing JDK/Gradle/cache with a 1GB build heap and in-process Kotlin compilation for this memory-constrained machine. Compilation, test execution and lint analysis ran on the final Android source. The JUnit XML totals are **18 tests, zero failures/errors**; the new case verifies that ordinary 401, offline and malformed-epoch failures preserve drafts, while confirmed erasure/valid generation changes request cleanup. No APK was assembled/installed and no hardware acceptance is inferred. The earlier pre-follow-up Android build also passed; it is superseded by this final result.
