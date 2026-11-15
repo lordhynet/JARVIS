@@ -473,3 +473,9 @@ Fresh validation before commit: API build passed (zero warnings/errors, `TestRes
 The realtime lease monitor now checks the independent paid-AI pause every second. A paid realtime session ends with `paid_ai_paused`, clears pending provider work, and settles the usage reservation. The pause does not revoke the local audio lease; the normal stream cleanup releases the lease after the paid session stops.
 
 Fresh validation: API/test project build and two focused tests passed, zero failures/skips (`tests/Jarvis.Tests/TestResults/intelligence.trx`): the new pause/settlement/local-audio test and existing invalid-ticket rejection test. No live provider call or private configuration change.
+
+## RR2-03 shared work eligibility — 15 November 2026
+
+Agent tick, task claim and push dispatch now use shared eligibility rules before and inside their write transactions. Rules include expiration/recovery work and honor workflow availability, consent, pause state, quiet hours, delivery lease/retry state and schedule windows. The transactional recheck remains in place for races.
+
+Fresh validation: API/test build succeeded and13 focused tests passed, zero failures/skips (`tests/Jarvis.Tests/TestResults/intelligence.trx`), covering idle write avoidance, goal-deadline transition eligibility, stale task lease recovery, push dispatch, and planning behavior. No new dependencies or migrations.

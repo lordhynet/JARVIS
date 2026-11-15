@@ -9,6 +9,22 @@ using WebPush;
 namespace Jarvis.Api.Notifications;
 
 public interface IPushSender { Task SendAsync(BrowserPushSubscription subscription, Guid noticeId, CancellationToken ct); }
+public static class PushEligibility
+{
+    public static bool HasDispatchWork(RuntimeState s, DateTimeOffset now, string fingerprint)
+    {
+        if (s.PushDeliveries.Values.Any(d => !s.AgentOutbox.ContainsKey(d.NotificationId) || !s.PushSubscriptions.ContainsKey(d.SubscriptionId))) return true;
+        return !s.AgentControls.EffectiveAgentsPaused && !AgentRuntime.IsQuiet(s.AgentControls, now) &&
+            s.AgentOutbox.Values.Any(n => n.Delivered && !n.Read && n.ExpiresAt > now &&
+                s.PushSubscriptions.Values.Any(subscription => subscription.KeyFingerprint == fingerprint &&
+                    (!s.PushDeliveries.TryGetValue(AgentRuntime.StableId($"push-v1:{n.Id}:{subscription.Id}"), out var delivery) || IsReady(delivery, now))));
+    }
+
+    public static bool IsReady(PushDelivery delivery, DateTimeOffset now) =>
+        delivery.Attempt < 3 && delivery.AvailableAt <= now &&
+        (delivery.Status == "Pending" || delivery.Status == "Sending" && delivery.LeaseExpiresAt <= now);
+}
+
 public sealed class WebPushSender(IHttpClientFactory clients, IConfiguration config) : IPushSender
 {
     public async Task SendAsync(BrowserPushSubscription subscription, Guid noticeId, CancellationToken ct)
@@ -55,16 +71,12 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
         if (!Ready) return false;
         var fingerprint = PrivacyData.Hash(config[ApiKeyMiddleware.ConfigKey] ?? "");
         var nowCheck = clock.GetUtcNow();
-        if (!await store.ReadAsync(s =>
-            s.PushDeliveries.Values.Any(d => !s.AgentOutbox.ContainsKey(d.NotificationId) || !s.PushSubscriptions.ContainsKey(d.SubscriptionId)) ||
-            !s.AgentControls.EffectiveAgentsPaused && !AgentRuntime.IsQuiet(s.AgentControls, nowCheck) && s.AgentOutbox.Values.Any(n => n.Delivered && !n.Read && n.ExpiresAt > nowCheck &&
-                s.PushSubscriptions.Values.Any(subscription => subscription.KeyFingerprint == fingerprint &&
-                    (!s.PushDeliveries.TryGetValue(AgentRuntime.StableId($"push-v1:{n.Id}:{subscription.Id}"), out var delivery) ||
-                     delivery.Attempt < 3 && delivery.AvailableAt <= nowCheck && (delivery.Status == "Pending" || delivery.Status == "Sending" && delivery.LeaseExpiresAt <= nowCheck)))), ct)) return false;
+        if (!await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, nowCheck, fingerprint), ct)) return false;
         var claim = await store.UpdateAsync(s =>
         {
             var now = clock.GetUtcNow();
             foreach (var obsolete in s.PushDeliveries.Values.Where(x => !s.AgentOutbox.ContainsKey(x.NotificationId) || !s.PushSubscriptions.ContainsKey(x.SubscriptionId)).ToList()) s.PushDeliveries.Remove(obsolete.Id);
+            if (!PushEligibility.HasDispatchWork(s, now, fingerprint)) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
             if (s.AgentControls.EffectiveAgentsPaused) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
             var local = TimeOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, Jarvis.Orchestrator.Training.TrainingProjection.Zone(s.AgentControls.TimeZone)).DateTime);
             var start = AgentRuntime.LocalTime(s.AgentControls.QuietStart); var end = AgentRuntime.LocalTime(s.AgentControls.QuietEnd);
@@ -78,7 +90,7 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
                     s.PushDeliveries.TryAdd(id, new(id, notice.Id, subscription.Id, 0, "Pending", now));
                 }
             var next = s.PushDeliveries.Values.OrderBy(x => x.AvailableAt).FirstOrDefault(x =>
-                x.Attempt < 3 && x.AvailableAt <= now && (x.Status == "Pending" || x.Status == "Sending" && x.LeaseExpiresAt <= now) &&
+                PushEligibility.IsReady(x, now) &&
                 s.AgentOutbox.TryGetValue(x.NotificationId, out var note) && !note.Read && note.ExpiresAt > now &&
                 s.PushSubscriptions.TryGetValue(x.SubscriptionId, out var subscription) && subscription.KeyFingerprint == fingerprint);
             if (next is null) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);

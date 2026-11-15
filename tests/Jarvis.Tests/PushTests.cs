@@ -35,11 +35,13 @@ public sealed class PushTests
             s.AgentOutbox[id] = new(id, Guid.NewGuid(), "Ready", clock.Now, clock.Now, clock.Now.AddDays(1), Delivered: false); return true; });
         Assert.False(await notifications.DispatchOneAsync(default));
         await store.UpdateAsync(s => { s.AgentOutbox[id] = s.AgentOutbox[id] with { Delivered = true }; return true; });
+        Assert.True(await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, clock.Now, PrivacyData.Hash("current-key"))));
         clock.Now = clock.Now.AddHours(11); Assert.False(await notifications.DispatchOneAsync(default));
         clock.Now = clock.Now.AddHours(-11); config[ApiKeyMiddleware.ConfigKey] = "rotated-key";
         Assert.False(await notifications.DispatchOneAsync(default)); config[ApiKeyMiddleware.ConfigKey] = "current-key";
         await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => notifications.DispatchOneAsync(default)));
         Assert.Equal(1, sender.Count); Assert.Equal("Delivered", Assert.Single(await store.ReadAsync(s => s.PushDeliveries.Values.ToList())).Status);
+        Assert.False(await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, clock.Now, PrivacyData.Hash("current-key"))));
         Assert.False(await notifications.DispatchOneAsync(default));
         await notifications.UnsubscribeAsync(subId, default); Assert.False(await notifications.DispatchOneAsync(default));
     }
