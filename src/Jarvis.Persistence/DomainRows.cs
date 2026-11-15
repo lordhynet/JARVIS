@@ -57,9 +57,10 @@ public sealed class DomainApprovalRow
     public string Fingerprint { get; set; } = "";
     public int AppliedRevision { get; set; }
     public string Reason { get; set; } = "";
-    public DomainApproval Contract() => new(Id, DomainVersionId, SubjectId, Decision, PolicyVersion, At, RequestId, Fingerprint, AppliedRevision, Reason);
+    public DomainRiskClass? RiskClass { get; set; }
+    public DomainApproval Contract() => new(Id, DomainVersionId, SubjectId, Decision, PolicyVersion, At, RequestId, Fingerprint, AppliedRevision, Reason, RiskClass);
     public static DomainApprovalRow From(DomainApproval x) => new() { Id=x.Id, DomainVersionId=x.DomainVersionId, SubjectId=x.SubjectId, Decision=x.Decision,
-        PolicyVersion=x.PolicyVersion, At=x.At, RequestId=x.RequestId, Fingerprint=x.Fingerprint, AppliedRevision=x.AppliedRevision, Reason=x.Reason };
+        PolicyVersion=x.PolicyVersion, At=x.At, RequestId=x.RequestId, Fingerprint=x.Fingerprint, AppliedRevision=x.AppliedRevision, Reason=x.Reason, RiskClass=x.RiskClass };
 }
 public sealed class UserDomainStateRow
 {

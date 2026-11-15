@@ -13,10 +13,11 @@ test('domain preview binds manual approval to the exact version and scopes the o
   await page.getByRole('button', { name: 'Proactive agents', exact: true }).click();
   const row = page.locator('[data-panel=agents] .list-item').filter({ hasText: 'Education ' + id });
   await expect(row).toContainText('no shared personal coaching context'); await expect(row.locator('img')).toHaveCount(0);
+  await expect(row.getByLabel('Approval risk class')).toHaveValue('General'); await row.getByLabel('Approval risk class').selectOption('Finance');
   await row.getByText('Exact manifest to approve', { exact: true }).click(); await expect(row).toContainText(preview.version.manifestHash);
   page.once('dialog', d => d.accept()); const activated = page.waitForRequest(r => r.url().endsWith('/domains/' + key + '/activate'));
   await row.getByRole('button', { name: 'Approve and activate this version', exact: true }).click(); const request = await activated;
-  expect(request.headers()['x-jarvis-owner-key']).toBeTruthy(); expect(request.postDataJSON().versionId).toBe(preview.version.id); expect(request.postDataJSON().manifestHash).toBe(preview.version.manifestHash);
+  expect(request.headers()['x-jarvis-owner-key']).toBeTruthy(); expect(request.postDataJSON().versionId).toBe(preview.version.id); expect(request.postDataJSON().manifestHash).toBe(preview.version.manifestHash); expect(request.postDataJSON().riskClass).toBe('Finance');
   await expect(row).toContainText('Active');
   await expect(page.locator('[data-panel=agents]').getByLabel('Workflow', { exact: true }).locator(`option[value="domain-${key}-practice"]`)).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();

@@ -29,7 +29,7 @@ public sealed partial class PostgresSessionTests
         var registry = restarted.Services.GetRequiredService<IDomainRegistry>();
         Assert.Equal(draft.Version.Id, (await registry.ResolveActiveAsync("education", default))!.Version.Id);
         var export = await c.GetFromJsonAsync<CoreDataExport>("/api/privacy/export", Json);
-        Assert.Contains(export!.Domains!.Approvals, a => a.RequestId == approved.RequestId);
+        Assert.Equal(DomainRiskClass.General, Assert.Single(export!.Domains!.Approvals, a => a.RequestId == approved.RequestId).RiskClass);
         var status = await c.GetFromJsonAsync<PrivacyStatus>("/api/privacy/status", Json);
         await DomainRegistryTests.Post<PrivacyStatus>(c, "/api/privacy/erase", new EraseCoreRequest(Guid.NewGuid(), status!.Revision, PrivacyData.ErasePhrase));
         await using var verify = await restarted.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>().CreateDbContextAsync();

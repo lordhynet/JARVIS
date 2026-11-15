@@ -63,9 +63,11 @@ public static class DomainPolicy
         if (Regex.IsMatch(text, @"\b(finance|financial|investment|trading|stocks|tax|banking)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return DomainRiskClass.Finance;
         return DomainRiskClass.General;
     }
-    public static IReadOnlyList<string> Dependencies(DomainManifest manifest, ICapabilityCatalog installed)
+    public static bool CanRaiseRisk(DomainRiskClass inferred, DomainRiskClass approved) =>
+        Enum.IsDefined(approved) && (inferred == DomainRiskClass.General || inferred == approved);
+    public static IReadOnlyList<string> Dependencies(DomainManifest manifest, ICapabilityCatalog installed, DomainRiskClass? riskOverride = null)
     {
-        var gaps = new List<string>(); var risk = Risk(manifest);
+        var gaps = new List<string>(); var risk = riskOverride ?? Risk(manifest);
         foreach (var required in manifest.Capabilities) {
             var actual = installed.Installed.FirstOrDefault(c => c.Key == required.Id);
             if (actual is null) { gaps.Add("Capability is not installed: " + required.Id); continue; }

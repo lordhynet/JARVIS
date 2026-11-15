@@ -74,8 +74,11 @@ public sealed class PostgresDomainRegistryStore(IDbContextFactory<SessionDbConte
             join version in db.DomainVersions.AsNoTracking() on definition.CurrentVersionId equals version.Id
             where definition.Status == DomainStatus.Active && (key == null || definition.Key == key) && version.DomainId == definition.Id &&
                 !db.UserDomainState.Any(u => u.DomainId == definition.Id && u.SubjectId == DomainPolicy.OwnerSubject && !u.Enabled)
-            select new { Definition = definition, Version = version, Approved = db.DomainApprovals.Any(a => a.DomainVersionId == version.Id && a.Decision == "Approved" && a.PolicyVersion == DomainPolicy.Version) }).ToListAsync(ct);
+            select new { Definition = definition, Version = version,
+                ApprovalRisk = db.DomainApprovals.Where(a => a.DomainVersionId == version.Id && a.Decision == "Approved" && a.PolicyVersion == DomainPolicy.Version)
+                    .OrderByDescending(a => a.At).Select(a => a.RiskClass).FirstOrDefault() }).ToListAsync(ct);
         await tx.CommitAsync(ct);
-        return rows.Select(x => new DomainResolved(x.Definition.Contract(), x.Version.Contract(), status.Epoch, x.Approved)).ToArray();
+        return rows.Select(x => new DomainResolved(x.Definition.Contract(), x.Version.Contract(), status.Epoch,
+            x.ApprovalRisk is not null, x.ApprovalRisk)).ToArray();
     }
 }

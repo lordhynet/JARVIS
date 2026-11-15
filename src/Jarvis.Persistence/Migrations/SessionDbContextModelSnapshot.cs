@@ -91,6 +91,9 @@ namespace Jarvis.Persistence.Migrations
                     b.Property<Guid>("RequestId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("RiskClass")
+                        .HasColumnType("integer");
+
                     b.Property<string>("SubjectId")
                         .IsRequired()
                         .HasMaxLength(120)

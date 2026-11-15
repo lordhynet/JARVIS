@@ -74,6 +74,31 @@ public sealed class DomainRegistryTests
     }
 
     [Fact]
+    public async Task Approval_can_raise_general_risk_but_cannot_lower_inferred_risk_and_persists_choice()
+    {
+        using var host = new JarvisApiFactory().WithWebHostBuilder(b => b.UseSetting("Jarvis:WorkflowsEnabled", "false"));
+        using var client = host.CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey); TestOwnerManagement.Authorize(client);
+        var general = await Post<DomainPreview>(client, "/api/domains/drafts", Draft(Education("safe-study")));
+        var elevated = new ActivateDomainRequest(Guid.NewGuid(), general.Definition.Revision, general.Version.Id, general.Version.ManifestHash,
+            "Owner selected stricter risk", DomainRiskClass.Finance);
+        var raisedReceipt = await Post<DomainOperationReceipt>(client, "/api/domains/safe-study/activate", elevated);
+        var approvals = await host.Services.GetRequiredService<IDomainRegistryStore>().ReadAsync((s, _) => s.Approvals.Values.ToArray(), default);
+        Assert.Equal(DomainRiskClass.Finance, Assert.Single(approvals).RiskClass);
+        Assert.Equal(DomainRiskClass.Finance, (await host.Services.GetRequiredService<IDomainRegistry>().ResolveActiveAsync("safe-study", default))!.ApprovedRiskClass);
+        var loweredAfterApproval = new ActivateDomainRequest(Guid.NewGuid(), raisedReceipt.Revision, general.Version.Id, general.Version.ManifestHash,
+            "Attempt to lower previously raised risk", DomainRiskClass.General);
+        using var rejectedRaiseDowngrade = await client.PostAsJsonAsync("/api/domains/safe-study/activate", loweredAfterApproval, DomainPolicy.Json);
+        Assert.Equal(HttpStatusCode.Conflict, rejectedRaiseDowngrade.StatusCode);
+
+        var finance = await Post<DomainPreview>(client, "/api/domains/drafts", Draft(Education("finance-study") with { Description = "Study finance and investment fundamentals." }));
+        var lower = new ActivateDomainRequest(Guid.NewGuid(), finance.Definition.Revision, finance.Version.Id, finance.Version.ManifestHash,
+            "Attempt to lower inferred risk", DomainRiskClass.General);
+        using var rejected = await client.PostAsJsonAsync("/api/domains/finance-study/activate", lower, DomainPolicy.Json);
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Null(await host.Services.GetRequiredService<IDomainRegistry>().ResolveActiveAsync("finance-study", default));
+    }
+
+    [Fact]
     public async Task Strict_schema_privileges_dependencies_and_aliases_fail_closed()
     {
         using var host = new JarvisApiFactory().WithWebHostBuilder(b => b.UseSetting("Jarvis:WorkflowsEnabled", "false")); using var client = host.CreateClient();

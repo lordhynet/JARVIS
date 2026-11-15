@@ -117,7 +117,14 @@ public sealed class DomainRegistryService(IDomainRegistryStore store, ICapabilit
             Guard.Require(state.Versions.TryGetValue(request.VersionId, out var version) && definition.Revision == request.ExpectedRevision &&
                 version.DomainId == definition.Id && version.ManifestHash == request.ManifestHash, 409, "Domain revision/version/hash changed.");
             UniqueNames(state, version.Manifest, definition.Id);
-            var preview = Preview(state, definition, version); Guard.Require(preview.UnmetDependencies.Count == 0, 409, string.Join(" ", preview.UnmetDependencies));
+            var preview = Preview(state, definition, version);
+            var priorRisk = state.Approvals.Values.Where(a => a.DomainVersionId == version.Id && a.Decision == "Approved" && a.PolicyVersion == DomainPolicy.Version)
+                .OrderByDescending(a => a.At).FirstOrDefault()?.RiskClass;
+            var riskClass = request.RiskClass ?? priorRisk ?? preview.Risk;
+            Guard.Require(DomainPolicy.CanRaiseRisk(preview.Risk, riskClass), 409, "Approval risk cannot lower or replace the domain's inferred risk class.");
+            Guard.Require(priorRisk is null or DomainRiskClass.General || riskClass == priorRisk, 409, "An already approved sensitive risk class cannot be lowered or replaced.");
+            var gaps = DomainPolicy.Dependencies(version.Manifest, capabilities, riskClass);
+            Guard.Require(gaps.Count == 0, 409, string.Join(" ", gaps));
             var visited = new HashSet<string>(StringComparer.Ordinal) { key }; var parent = version.Manifest.ParentKey;
             while (parent is not null) {
                 Guard.Require(visited.Add(parent) && visited.Count <= 20, 409, "Domain parent cycle is forbidden.");
@@ -127,7 +134,7 @@ public sealed class DomainRegistryService(IDomainRegistryStore store, ICapabilit
             var now = Now(); var revision = checked(definition.Revision + 1);
             var action = definition.CurrentVersionId is Guid current && state.Versions[current].Version > version.Version ? "rollback" : "activate";
             state.Definitions[definition.Id] = definition with { CurrentVersionId = version.Id, Status = DomainStatus.Active, DisplayName = version.Manifest.DisplayName, Revision = revision, UpdatedAt = now };
-            state.Approvals.Add(request.RequestId, new(request.RequestId, version.Id, actor.SubjectId, "Approved", DomainPolicy.Version, now, request.RequestId, fingerprint, revision, request.Reason));
+            state.Approvals.Add(request.RequestId, new(request.RequestId, version.Id, actor.SubjectId, "Approved", DomainPolicy.Version, now, request.RequestId, fingerprint, revision, request.Reason, riskClass));
             var receipt = new DomainOperationReceipt(request.RequestId, definition.Id, key, version.Id, revision, version.ManifestHash, now, action);
             state.AuditEvents.Add(request.RequestId, new(request.RequestId, definition.Id, version.Id, action, actor.SubjectId, request.RequestId, now, JsonSerializer.Serialize(new { fingerprint, receipt })));
             return receipt;
@@ -163,7 +170,9 @@ public sealed class DomainRegistryService(IDomainRegistryStore store, ICapabilit
             resolved.Version.ManifestHash == DomainPolicy.Hash(DomainPolicy.BuiltIn(installed)) &&
             resolved.Version.Id == DomainPolicy.StableId("installed-domain-version:" + resolved.Definition.Key + ":" + resolved.Version.ManifestHash);
         Guard.Require(trustedInstalled || resolved.HasCurrentApproval, 409, "Domain requires approval under the current policy.");
-        var gaps = DomainPolicy.Dependencies(resolved.Version.Manifest, capabilities);
+        var riskClass = resolved.ApprovedRiskClass ?? DomainPolicy.Risk(resolved.Version.Manifest);
+        Guard.Require(DomainPolicy.CanRaiseRisk(DomainPolicy.Risk(resolved.Version.Manifest), riskClass), 409, "Stored approval risk is below the inferred domain risk.");
+        var gaps = DomainPolicy.Dependencies(resolved.Version.Manifest, capabilities, riskClass);
         Guard.Require(gaps.Count == 0, 409, string.Join(" ", gaps)); return resolved;
     }
     public async Task<DomainResolved?> ResolveActiveAsync(string key, CancellationToken ct)

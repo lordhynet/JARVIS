@@ -485,3 +485,9 @@ Fresh validation: API/test build succeeded and13 focused tests passed, zero fail
 Captured voice proposals now accept explicit `add`, `create`, `build`, `make`, `extend`, `configure`, `set up` and `start` requests that name a domain, module, programme/program, course or subject. General requests still cannot invoke proposal generation.
 
 Fresh validation: API/test build succeeded and13 DomainFactory tests passed, zero failures/skips (`tests/Jarvis.Tests/TestResults/intelligence.trx`). The three exact examples in `CLAUDE.md` and additional supported/rejected phrase cases are covered. No provider request beyond injected fixtures.
+
+## RR2-04 domain approval risk — 15 November 2026
+
+Owner preview now displays the inferred risk class and a confirmation-bound approval risk choice. General drafts may be raised to a sensitive class; inferred sensitive classes cannot be lowered or exchanged, and a previously approved sensitive class cannot be reduced on later activation. Risk-specific capability checks run at activation and active-domain validation. Approval risk is stored in the relational approval record; the additive migration backfills existing approvals from their version manifests.
+
+Fresh validation: six DomainRegistry/PostgresDomainRegistry tests passed, zero failures/skips, including persisted approval risk across a PostgreSQL restart (`tests/Jarvis.Tests/TestResults/intelligence.trx`). Desktop and mobile domain-preview browser checks passed (2 total), confirming the selector and submitted risk (`TestResults/browser-domains.log`). EF reported no pending model changes after migration scaffolding. No production migration/deployment or private settings change.

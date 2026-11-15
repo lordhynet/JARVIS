@@ -17,6 +17,9 @@ public sealed class MemoryDomainRegistryStore(IRuntimeStore runtime, IPrivacyRea
     public async Task<IReadOnlyList<DomainResolved>> ReadActiveAsync(string? key, CancellationToken ct) => await ReadAsync((state, epoch) =>
         (IReadOnlyList<DomainResolved>)state.Definitions.Values.Where(d => d.Status == DomainStatus.Active && d.CurrentVersionId is not null && (key is null || d.Key == key) &&
             state.UserStates.GetValueOrDefault(DomainPolicy.OwnerSubject + ":" + d.Id)?.Enabled != false)
-            .Select(d => new DomainResolved(d, state.Versions[d.CurrentVersionId!.Value], epoch,
-                state.Approvals.Values.Any(a => a.DomainVersionId == d.CurrentVersionId && a.Decision == "Approved" && a.PolicyVersion == DomainPolicy.Version))).ToArray(), ct);
+            .Select(d => {
+                var approval = state.Approvals.Values.Where(a => a.DomainVersionId == d.CurrentVersionId && a.Decision == "Approved" && a.PolicyVersion == DomainPolicy.Version)
+                    .OrderByDescending(a => a.At).FirstOrDefault();
+                return new DomainResolved(d, state.Versions[d.CurrentVersionId!.Value], epoch, approval is not null, approval?.RiskClass);
+            }).ToArray(), ct);
 }
