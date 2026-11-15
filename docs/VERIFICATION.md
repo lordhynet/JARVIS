@@ -531,3 +531,9 @@ Fresh validation: the focused cache-maintenance test passed (one test, zero fail
 Moved `IAgentExecutor` into `Jarvis.Orchestrator.Workflows` and `IRealtimeConnectionFactory` into `Jarvis.Orchestrator.Intelligence`. Implementations remain in the API integration/voice adapters, and existing service behavior and runtime contracts are unchanged. API DI now binds implementations to the Orchestrator-owned ports; no project, package, route or persistence changes were made.
 
 Fresh validation: the API/test build succeeded and 18 focused tests passed (zero failures/skips) across realtime protocols, agent/domain execution and CQRS architecture.
+
+## TD-13 agent write endpoints through CQRS — 15 November 2026
+
+Agent goal, trigger, control, schedule, run-start/cancel and notification-read writes now dispatch through registered Orchestrator command handlers. Endpoint route shapes and result types are unchanged; agent business rules remain in the existing `AgentRuntime`, and notification mutation now resides in the application handler. Agent GET projections and internal calendar-worker calls remain as-is.
+
+Fresh validation: the API/test build succeeded and eight focused tests passed (zero failures/skips), including complete handler registration, endpoint delegation to an injected goal command handler, agent runtime eligibility and idle-work behavior.

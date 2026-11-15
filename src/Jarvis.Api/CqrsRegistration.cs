@@ -1,5 +1,6 @@
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Cqrs;
+using Jarvis.Orchestrator.Cqrs.Agents;
 using Jarvis.Orchestrator.Cqrs.Devices;
 using Jarvis.Orchestrator.Cqrs.Integrations;
 using Jarvis.Orchestrator.Cqrs.Learning;
@@ -36,6 +37,7 @@ public static class CqrsRegistration
         services.AddSingleton<IRuntimeReader>(s => s.GetRequiredService<IRuntimeStore>());
         services.AddSingleton<IWorkflowReader>(s => s.GetRequiredService<IWorkflowStore>());
         services.AddSingleton<WorkflowCommandHandlers>();
+        services.AddSingleton<AgentCommandHandlers>();
         services.AddSingleton<TrainingService>();
         services.AddSingleton<TrainingDrillService>();
         services.AddSingleton<DrillCommandHandlers>();
@@ -109,6 +111,14 @@ public static class CqrsRegistration
         Command<CancelWorkflow, WorkflowRun, WorkflowCommandHandlers>(services);
         Command<CreateInterviewBrief, WorkflowRun, WorkflowCommandHandlers>(services);
         Command<DeleteWorkflow, CommandCompleted, WorkflowCommandHandlers>(services);
+        Command<SaveAgentGoal, PersonalGoal, AgentCommandHandlers>(services);
+        Command<DeleteAgentGoal, bool, AgentCommandHandlers>(services);
+        Command<IngestAgentTrigger, DurableAgentTrigger, AgentCommandHandlers>(services);
+        Command<UpdateAgentControls, AgentControls, AgentCommandHandlers>(services);
+        Command<SaveAgentSchedule, AgentSchedule, AgentCommandHandlers>(services);
+        Command<StartAgentRun, AgentRunView, AgentCommandHandlers>(services);
+        Command<CancelAgentRun, bool, AgentCommandHandlers>(services);
+        Command<MarkAgentNotificationRead, bool, AgentCommandHandlers>(services);
 
         Query<GetSession, ConversationSession?, SessionQueryHandlers>(services);
         Query<ListSessions, IReadOnlyList<ConversationSession>, SessionQueryHandlers>(services);

@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Cqrs;
+using Jarvis.Orchestrator.Cqrs.Agents;
 using Jarvis.Orchestrator.Cqrs.Devices;
 using Jarvis.Orchestrator.Cqrs.Learning;
 using Jarvis.Orchestrator.Cqrs.Sessions;
@@ -94,9 +95,31 @@ public sealed class CqrsArchitectureTests
         Assert.Empty(await factory.Services.GetRequiredService<ISessionStore>().ListAsync());
     }
 
+    [Fact]
+    public async Task Agent_goal_write_endpoint_dispatches_the_command_handler()
+    {
+        var expected = new PersonalGoal(Guid.NewGuid(), 1, "Fixture", "Handler-owned", "practice-reminder", false,
+            DateTimeOffset.UtcNow.AddDays(1), DateTimeOffset.UtcNow.AddDays(2), "Active", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        using var original = new ScenarioFactory();
+        using var factory = original.WithWebHostBuilder(b => b.ConfigureServices(s =>
+            s.AddSingleton<ICommandHandler<SaveAgentGoal, PersonalGoal>>(new StubSaveAgentGoal(expected))));
+        using var client = factory.CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey);
+        var request = new SaveGoalRequest(Guid.NewGuid(), null, "Fixture", "Handler-owned", "practice-reminder", false,
+            DateTimeOffset.UtcNow.AddDays(1), DateTimeOffset.UtcNow.AddDays(2));
+        using var response = await client.PostAsJsonAsync("/api/goals", request, LifeScenarioTests.Json);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(expected.Id, (await response.Content.ReadFromJsonAsync<PersonalGoal>(LifeScenarioTests.Json))!.Id);
+        Assert.Empty(await factory.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.Goals));
+    }
+
     private sealed class StubSessionQuery(ConversationSession session) : IQueryHandler<ListSessions, IReadOnlyList<ConversationSession>>
     {
         public Task<IReadOnlyList<ConversationSession>> HandleAsync(ListSessions query, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<ConversationSession>>([session]);
+    }
+
+    private sealed class StubSaveAgentGoal(PersonalGoal goal) : ICommandHandler<SaveAgentGoal, PersonalGoal>
+    {
+        public Task<PersonalGoal> HandleAsync(SaveAgentGoal command, CancellationToken ct = default) => Task.FromResult(goal);
     }
 }
