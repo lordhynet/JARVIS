@@ -225,7 +225,12 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                             await Provider(new { type = "conversation.item.truncate", item_id = Guard.Text(item.GetString(), "Audio item", 200), content_index = 0, audio_end_ms = played });
                         }
                     }
-                    else if (type == "stop") return;
+                    else if (type == "stop")
+                    {
+                        if (message.TryGetProperty("reason", out var stopReason) && stopReason.GetString() == "no_speech_timeout")
+                            CoreTelemetry.WakeSilenceStops.Add(1);
+                        return;
+                    }
                     else throw new DomainException(400, "Unsupported voice client event.");
                 }
             }, timeout.Token);

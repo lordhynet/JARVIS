@@ -43,6 +43,7 @@ public sealed class RuntimeState
     public DateTimeOffset? AudioDrainUntil { get; set; }
     public long NextAudioFence { get; set; } = 1;
     public Dictionary<string, VoiceTicketRecord> VoiceTickets { get; set; } = [];
+    public Dictionary<string, List<DateTimeOffset>> WakeCandidateAttempts { get; set; } = [];
     public Dictionary<Guid, VoiceTurn> VoiceTurns { get; set; } = [];
     public Dictionary<Guid, CoachingAttempt> CoachingAttempts { get; set; } = [];
     public Dictionary<Guid, TrainingOperation> CoachingOperations { get; set; } = [];

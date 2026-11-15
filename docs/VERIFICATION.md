@@ -599,3 +599,9 @@ Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~Device
 The Android wake-listening phase no longer sets `MODE_IN_COMMUNICATION` or selects a communication/SCO device. The routing state machine enters communication routing only for live voice after Core has granted its lease, then restores the default route when returning to local wake listening or stopping. JVM policy tests cover idle, wake, live and return transitions.
 
 Fresh validation: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-workers=1` succeeded. All 25 Android debug unit tests passed, zero failures/errors/skips; release lint passed. Mobile commit: `2f6389d`.
+
+## Round 3 RR3-07 — per-device wake rate limit
+
+Core now records bounded rolling wake-attempt timestamps per authenticated device and allows at most six attempts in ten minutes. Expired device entries are pruned on each attempt, total tracked devices are capped, and accepted/rate-limited outcomes are counted without device identifiers. The counter lives in RuntimeState and is removed by normal Core erasure.
+
+Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~WakeCandidateRateLimitTests|FullyQualifiedName~CompanionVoiceTests|FullyQualifiedName~RealtimeProtocolTests"` passed 16/16, zero failures/skips. This builds API and test projects and covers wake arbitration, limit behavior and realtime protocol handling.
