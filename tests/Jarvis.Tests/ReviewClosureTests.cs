@@ -39,8 +39,10 @@ public sealed class ReviewClosureTests
         state.ProviderAttempts[id] = new(id, id, "context-hash", new("openai", "fixture", "fixture", "v1", "rev",
             DateOnly.FromDateTime(now.UtcDateTime), 1, 1, 100), id, "Cached", now.AddDays(-8), now);
         state.UsageReservations[id] = new(id, id, "fixture", now, 1);
-        Assert.Equal(1, RuntimeMaintenance.Prune(state, now)); Assert.Single(state.UsageReservations);
+        var claim = Guid.NewGuid(); state.AiCoachAssessmentClaims[claim] = new(claim, id, Guid.NewGuid(), 1, 1, now.AddSeconds(-1));
+        Assert.Equal(2, RuntimeMaintenance.Prune(state, now)); Assert.Single(state.UsageReservations);
         Assert.Empty(state.ProviderResults);
+        Assert.Empty(state.AiCoachAssessmentClaims);
         Assert.Equal("", state.ProviderAttempts[id].Fingerprint);
     }
     [Fact]
