@@ -53,6 +53,74 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("Checkpoints", (string)null);
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.PrivacyControlRow", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<long>("Epoch")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("Erased")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("ErasedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErasureKeyFingerprint")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ErasureRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("PrivacyControls");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Epoch = 0L,
+                            Erased = false,
+                            Revision = 1
+                        });
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.PrivacyJobRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CountsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedAt");
+
+                    b.ToTable("PrivacyJobs");
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.RuntimeDocument", b =>
                 {
                     b.Property<int>("Id")
@@ -120,11 +188,71 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("Sessions", (string)null);
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.WorkflowEventRow", b =>
+                {
+                    b.Property<Guid>("EventId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.HasKey("EventId");
+
+                    b.HasIndex("RunId", "Revision")
+                        .IsUnique();
+
+                    b.ToTable("WorkflowEvents");
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.WorkflowRunRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("AvailableAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AvailableAt");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.ToTable("WorkflowRuns");
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.CheckpointRow", b =>
                 {
                     b.HasOne("Jarvis.Persistence.SessionRow", null)
                         .WithMany("Checkpoints")
                         .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.WorkflowEventRow", b =>
+                {
+                    b.HasOne("Jarvis.Persistence.WorkflowRunRow", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

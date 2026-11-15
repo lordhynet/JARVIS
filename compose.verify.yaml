@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17
+    image: postgres:17@sha256:0d938e975177bef9f1f61f3f9dbcf2e0aa0a139568f66d3415ed8892eb97f6ac
     environment:
       POSTGRES_DB: jarvis
       POSTGRES_USER: jarvis
@@ -19,10 +19,7 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:${JARVIS_VERIFY_PORT:-5198}:8080"
-    environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      Jarvis__StorageProvider: Postgres
-      Jarvis__ApiKey: ${JARVIS_VERIFY_API_KEY:?Verification key is required}
-      ConnectionStrings__Jarvis: Host=postgres;Database=jarvis;Username=jarvis;Password=${JARVIS_VERIFY_DB_PASSWORD}
+    volumes:
+      - "${JARVIS_VERIFY_SETTINGS_PATH:?Verification appsettings.json is required}:/app/appsettings.json:ro"
 volumes:
   verification-data:

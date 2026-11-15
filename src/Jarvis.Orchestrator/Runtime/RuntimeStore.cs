@@ -6,27 +6,78 @@ namespace Jarvis.Orchestrator.Runtime;
 
 public sealed class RuntimeState
 {
+    public Dictionary<string, HubAccessTicket> HubTickets { get; set; } = [];
+    public Dictionary<string, DeviceCredential> DeviceCredentials { get; set; } = [];
+    public Dictionary<Guid, VoiceCoaching> VoiceCoachings { get; set; } = [];
+    public string? BudgetScopeId { get; set; }
+    public long BudgetEpoch { get; set; }
+    public int BudgetRevision { get; set; }
+    public Dictionary<Guid, GbpCommitment> GbpCommitments { get; set; } = [];
+    public Dictionary<Guid, BudgetApproval> BudgetApprovals { get; set; } = [];
+    public Dictionary<Guid, BudgetManagementReceipt> BudgetReceipts { get; set; } = [];
+    public Dictionary<Guid, VoiceRecall> VoiceRecalls { get; set; } = [];
+    public Dictionary<Guid, BrowserPushSubscription> PushSubscriptions { get; set; } = [];
+    public Dictionary<Guid, PushDelivery> PushDeliveries { get; set; } = [];
+    public Dictionary<Guid, ImportedDocument> ImportedDocuments { get; set; } = [];
+    public Dictionary<Guid, SourceClaim> SourceClaims { get; set; } = [];
+    public Dictionary<Guid, PersonalGoal> Goals { get; set; } = [];
+    public Dictionary<Guid, DurableAgentTrigger> AgentTriggers { get; set; } = [];
+    public Dictionary<Guid, UsageReconciliation> UsageReconciliations { get; set; } = [];
+    public HashSet<Guid> RetiredSessions { get; set; } = [];
+    public Dictionary<Guid, TrainingDrill> TrainingDrills { get; set; } = [];
+    public Dictionary<Guid, UsageReservation> UsageReservations { get; set; } = [];
+    public Dictionary<Guid, ProviderResult> ProviderResults { get; set; } = [];
+    public AgentControls AgentControls { get; set; } = new();
+    public Dictionary<Guid, AgentSchedule> AgentSchedules { get; set; } = [];
+    public Dictionary<Guid, AgentRun> AgentRuns { get; set; } = [];
+    public Dictionary<Guid, AgentTask> AgentTasks { get; set; } = [];
+    public Dictionary<Guid, AgentNotification> AgentOutbox { get; set; } = [];
+    public Dictionary<Guid, AiCoachAssessment> AiCoachAssessments { get; set; } = [];
+    public AudioLease? AudioLease { get; set; }
+    public AudioLease? AudioDrainLease { get; set; }
+    public DateTimeOffset? AudioDrainUntil { get; set; }
+    public long NextAudioFence { get; set; } = 1;
+    public Dictionary<string, VoiceTicketRecord> VoiceTickets { get; set; } = [];
+    public Dictionary<Guid, VoiceTurn> VoiceTurns { get; set; } = [];
+    public Dictionary<Guid, CoachingAttempt> CoachingAttempts { get; set; } = [];
+    public Dictionary<Guid, TrainingOperation> CoachingOperations { get; set; } = [];
+    public Dictionary<Guid, ImprovementProgramme> Programmes { get; set; } = [];
+    public Guid? ActiveProgrammeId { get; set; }
+    public Dictionary<Guid, TrainingAttempt> TrainingAttempts { get; set; } = [];
+    public Dictionary<Guid, TrainingOperation> TrainingOperations { get; set; } = [];
+    public Dictionary<Guid, LearningItem> TrainingBaselines { get; set; } = [];
+    public Dictionary<Guid, HashSet<Guid>> TrainingBaselineReviews { get; set; } = [];
+    public Dictionary<Guid, long> TrainingManualSequences { get; set; } = [];
+    public long NextTrainingSequence { get; set; } = 1;
+    public Dictionary<Guid, Story> Stories { get; set; } = [];
     public Dictionary<string, RegisteredDevice> Devices { get; set; } = [];
     public Dictionary<Guid, LearningItem> Learning { get; set; } = [];
     public Dictionary<Guid, LearningReview> Reviews { get; set; } = [];
     public Dictionary<Guid, AuditedTool> Tools { get; set; } = [];
 }
 
+public sealed record TrainingOperation(string Kind, Guid AttemptId, string Fingerprint);
+public sealed record HubAccessTicket(string KeyFingerprint, long Epoch, DateTimeOffset ExpiresAt);
+
 // Callbacks are synchronous, pure state changes; no network I/O while holding a lock.
 public interface IRuntimeReader
 {
+    Task<AudioLease?> ReadAudioLeaseAsync(CancellationToken ct = default) => ReadAsync(s => s.AudioLease, ct);
     Task<T> ReadAsync<T>(Func<RuntimeState, T> read, CancellationToken ct = default);
 }
 
 public interface IRuntimeStore : IRuntimeReader
 {
     Task<T> UpdateAsync<T>(Func<RuntimeState, T> update, CancellationToken ct = default);
+    Task<UsageReservation> SettleUsageAsync(Guid id, decimal actual, int input, int output, CancellationToken ct = default) =>
+        UpdateAsync(s => Jarvis.Orchestrator.Workflows.UsageAccounting.Settle(s, id, actual, input, output), ct);
 }
 
 public sealed class InMemoryRuntimeStore : IRuntimeStore
 {
     private readonly object _gate = new();
     private RuntimeState _state = new();
+    public void ReplacePrivacyData(RuntimeState state) { lock (_gate) _state = Copy(state); }
     private static RuntimeState Copy(RuntimeState state) =>
         JsonSerializer.Deserialize<RuntimeState>(JsonSerializer.Serialize(state))!;
 

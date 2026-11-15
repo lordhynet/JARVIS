@@ -1,0 +1,47 @@
+const { test, expect } = require('@playwright/test');
+test('privacy preview and export are available without destructive confirmation', async ({ page }) => {
+  await page.goto('/'); await page.getByLabel('API key', { exact: true }).fill('browser-test-only-key'); await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByRole('button', { name: 'Privacy & data', exact: true }).click();
+  const panel = page.locator('[data-panel=privacy]'); await expect(panel).toContainText('Core active');
+  await expect(panel).toContainText('Automatic retention: disabled');
+  await panel.getByLabel('Type ERASE MY CORE DATA', { exact: true }).fill('yes');
+  await panel.getByRole('button', { name: 'Erase Core data', exact: true }).click();
+  await expect(panel).toContainText('Core active');
+  const download = page.waitForEvent('download'); await panel.getByRole('button', { name: 'Download Core data export', exact: true }).click();
+  expect((await download).suggestedFilename()).toMatch(/^jarvis-core-.*\.json$/);
+});
+
+test('confirmed erasure clears private browser drafts and renders the reopen flow', async ({ page }) => {
+  // Exercise browser state cleanup without erasing the shared test server database.
+  let erased = false;
+  await page.route('**/api/privacy/status', async route => route.fulfill({ json: {
+    epoch: erased ? 1 : 0, revision: erased ? 2 : 1, erased, erasedAt: null, erasureRequestId: null
+  } }));
+  await page.route('**/api/privacy/erase', async route => {
+    expect(route.request().postDataJSON().confirmation).toBe('ERASE MY CORE DATA'); erased = true;
+    await route.fulfill({ json: { epoch: 1, revision: 2, erased: true } });
+  });
+  await page.goto('/'); await page.getByLabel('API key', { exact: true }).fill('browser-test-only-key'); await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.locator('#session-title').fill('Private unsaved title');
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  let received;
+  const started = new Promise(resolve => { received = resolve; });
+  await page.route('**/api/sessions', async route => {
+    received(); await held;
+    await route.fulfill({ json: [{ id: 'old-session', title: 'Old private response', activity: 'General', status: 'Active' }] });
+  });
+  await page.getByRole('button', { name: 'Conversations', exact: true }).click(); await started;
+  await page.getByRole('button', { name: 'Privacy & data', exact: true }).click();
+  const panel = page.locator('[data-panel=privacy]'); await expect(panel).toContainText('Core active');
+  await panel.getByLabel('Type ERASE MY CORE DATA', { exact: true }).fill('ERASE MY CORE DATA');
+  await panel.getByRole('button', { name: 'Erase Core data', exact: true }).click();
+  await expect(panel).toContainText('Core data erased');
+  await expect(panel.getByLabel('Type START A NEW CORE', { exact: true })).toBeVisible();
+  release();
+  await expect(page.locator('#notice')).toContainText('previous Core connection');
+  await expect(page.locator('#session-title')).toHaveValue('');
+  await expect(page.locator('#session-list')).toBeEmpty();
+});

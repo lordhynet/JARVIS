@@ -2,6 +2,8 @@
 **/obj
 .git
 .env
+.https
+appsettings.json
 .claude
 node_modules
 TestResults

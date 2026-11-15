@@ -6,6 +6,7 @@ namespace Jarvis.Orchestrator.Runtime;
 public interface IConversationProvider
 {
     Task<string> ReplyAsync(ConversationSession session, string text, CancellationToken ct);
+    Task<string> ReplyAsync(ConversationSession session, string text, Guid requestId, CancellationToken ct) => ReplyAsync(session, text, ct);
 }
 
 public sealed class ConversationService(ISessionStore sessions, IConversationProvider provider, TimeProvider clock)
@@ -20,7 +21,7 @@ public sealed class ConversationService(ISessionStore sessions, IConversationPro
         if (Existing(session, request.RequestId, text)) return session;
         var previousCount = session.Messages?.Count ?? 0;
         Guard.Require(previousCount < 2000, 409, "Session transcript is full. Checkpoint and start a new session.");
-        var reply = await provider.ReplyAsync(session, text, ct);
+        var reply = await provider.ReplyAsync(session, text, request.RequestId, ct);
         var updated = await sessions.UpdateAsync(id, current =>
         {
             if (Existing(current, request.RequestId, text)) return current;

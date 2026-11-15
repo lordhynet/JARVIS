@@ -2,7 +2,7 @@ const { test, expect } = require('@playwright/test');
 const key = 'browser-test-only-key';
 async function connect(page) {
   await page.goto('/');
-  await page.getByLabel('API key', { exact: true }).fill(key);
+  await page.getByLabel('API key', { exact: true }).fill(key); await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.locator('#workspace')).toBeVisible();
 }
@@ -55,9 +55,10 @@ test('register browser and refuse voice before hardware verification', async ({ 
 });
 test('unauthenticated API is denied and key is never written to browser storage', async ({ page }) => {
   await page.goto('/'); const result = await page.request.get('/api/learning'); expect(result.status()).toBe(401);
-  await connect(page); const storage = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })); expect(storage).not.toContain(key);
+  await connect(page); const storage = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })); expect(storage).not.toContain(key); expect(storage).not.toContain('browser-test-only-owner-management-123456789');
   await page.getByRole('button', { name: 'Connections', exact: true }).click(); await page.getByRole('button', { name: 'Disconnect this tab' }).click();
   await expect(page.locator('#login')).toBeVisible(); await expect(page.locator('#workspace')).toBeHidden();
+  await expect(page.locator('#owner-key')).toHaveValue('');
 });
 test('simulated microphone: recording waits for stop and reports missing cloud setup', async ({ page, context }) => {
   await context.grantPermissions(['microphone']);
@@ -69,6 +70,11 @@ test('simulated microphone: recording waits for stop and reports missing cloud s
   await page.getByRole('button', { name: 'Conversations', exact: true }).click(); await page.getByRole('button', { name: 'Start a conversation' }).click();
   await expect(page.locator('#session-status')).toHaveText('Active'); await page.getByRole('button', { name: 'Use this device', exact: true }).click();
   await expect(page.locator('#owner')).toContainText('this browser');
+  await page.evaluate(() => { window.cloudRecognitionStarts = 0; window.SpeechRecognition = class { constructor() { window.cloudRecognitionStarts++; } }; });
+  await expect(page.getByRole('button', { name: 'Enable cloud keyword listening', exact: true })).toBeVisible();
+  page.once('dialog', async dialog => { expect(dialog.message()).toContain('continuously send microphone audio'); await dialog.dismiss(); });
+  await page.getByRole('button', { name: 'Enable cloud keyword listening', exact: true }).click();
+  expect(await page.evaluate(() => window.cloudRecognitionStarts)).toBe(0);
   let uploads = 0; page.on('request', r => { if (r.url().endsWith('/api/voice/transcribe')) uploads++; });
   await page.getByRole('button', { name: 'Record voice', exact: true }).click(); await expect(page.locator('#notice')).toContainText('Recording.');
   expect(uploads).toBe(0); await page.waitForTimeout(1200);
@@ -85,6 +91,8 @@ test('two browser devices transfer a live recording session without overlapping 
       await connect(p); await p.getByRole('button', { name: 'Devices', exact: true }).click();
       await p.locator('#device-name').fill(name); await p.getByRole('button', { name: 'Register this device', exact: true }).click();
       await p.getByRole('button', { name: 'Test microphone & speaker', exact: true }).click();
+      await expect(p.getByRole('button', { name: 'I heard the speaker test — verify this device' })).toBeVisible();
+      await p.getByRole('button', { name: 'Devices', exact: true }).click();
       await p.getByRole('button', { name: 'I heard the speaker test — verify this device' }).click();
     }
     await register(page, 'Source test browser'); await register(target, 'Target test browser');

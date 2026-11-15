@@ -80,3 +80,9 @@ by a simulated HTTP provider, a successful token configuration, or a desktop scr
 No OpenAI, Home Assistant or calendar credentials were configured in JARVIS's local user
 secrets during this implementation. Those account-dependent checks and physical hardware
 checks remain outstanding. Public TfL is testable without those credentials.
+
+### Voice coaching validation
+
+Use `./scripts/test-backend.ps1 -Filter 'FullyQualifiedName~VoiceCoachingTests|FullyQualifiedName~Voice_coaching|FullyQualifiedName~CoachingTests|FullyQualifiedName~PrivacyTests'` with the existing isolated PostgreSQL test setup. The PostgreSQL voice coaching test restarts hosts and races submissions across two instances, verifying one canonical attempt and matching completed lifecycle metadata.
+
+For constrained hosts, the optional `-Diagnostics` flag adds per-test console output, limits xUnit scheduling to two parallel threads and uses a five-minute hang timeout without memory dumps. Explicit concurrency inside a test remains enabled. This option does not alter application settings or spend limits.

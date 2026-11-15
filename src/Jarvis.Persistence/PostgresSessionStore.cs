@@ -8,29 +8,44 @@ namespace Jarvis.Persistence;
 // Each operation owns a context, so the store is safe to share across requests.
 public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> factory) : ISessionStore
 {
+    public async Task<SessionAudioState?> ReadAudioStateAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        var state = await db.Sessions.AsNoTracking().Where(s => s.Id == id).Select(s => new SessionAudioState(s.Status, s.ActiveDeviceId)).SingleOrDefaultAsync(ct);
+        await tx.CommitAsync(ct); return state;
+    }
     public async Task<ConversationSession> AddAsync(ConversationSession session, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
         var row = SessionRow.FromContract(session);
         db.Sessions.Add(row);
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return row.ToContract();
     }
 
     public async Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
         var row = await db.Sessions.AsNoTracking().Include(s => s.Checkpoints)
             .SingleOrDefaultAsync(s => s.Id == id, ct);
-        return row?.ToContract();
+        var result = row?.ToContract(); await tx.CommitAsync(ct); return result;
     }
 
     public async Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
         var rows = await db.Sessions.AsNoTracking().Include(s => s.Checkpoints)
             .OrderByDescending(s => s.UpdatedAt).ThenBy(s => s.Id).ToListAsync(ct);
-        return rows.Select(s => s.ToContract()).ToList();
+        var result = rows.Select(s => s.ToContract()).ToList(); await tx.CommitAsync(ct); return result;
     }
 
     public async Task<ConversationSession?> AppendCheckpointAsync(Guid sessionId,
@@ -52,6 +67,7 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
         // Lock the parent before reading checkpoints. PostgreSQL serializes writers even
         // across API processes; a process-local lock would lose updates after scaling out.
         var rows = await db.Sessions.FromSqlInterpolated(

@@ -6,6 +6,10 @@ public static class RuntimeEndpoints
     {
         app.MapDeviceEndpoints();
         app.MapLearningEndpoints();
+        app.MapTrainingEndpoints();
+        app.MapCoachingEndpoints();
+        app.MapStoryEndpoints();
+        app.MapWorkflowEndpoints();
         app.MapToolEndpoints();
         app.MapIntegrationEndpoints();
     }

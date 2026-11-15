@@ -13,6 +13,34 @@ namespace Jarvis.Tests;
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
+    public async Task Story_bank_survives_restart_and_coordinates_edits_across_hosts()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = Guid.NewGuid();
+        using (var a = new PostgresApiFactory(database.ConnectionString))
+        using (var b = new PostgresApiFactory(database.ConnectionString))
+        using (var clientA = a.AuthorisedClient())
+        using (var clientB = b.AuthorisedClient())
+        {
+            var draft = new StoryContent("FX module", "Alternative Bank", "FX transaction service");
+            await LifeScenarioTests.Post<Story>(clientA, "/api/stories", new CreateStoryRequest(id, draft));
+            var responses = await Task.WhenAll(clientA.PutAsJsonAsync($"/api/stories/{id}", new UpdateStoryRequest(1, draft with { Result = "Recovered pending transactions" })),
+                clientB.PutAsJsonAsync($"/api/stories/{id}", new UpdateStoryRequest(1, draft with { Result = "Prevented duplicate processing" })));
+            try
+            {
+                Assert.Single(responses, r => r.StatusCode == System.Net.HttpStatusCode.OK);
+                Assert.Single(responses, r => r.StatusCode == System.Net.HttpStatusCode.Conflict);
+            }
+            finally { foreach (var response in responses) response.Dispose(); }
+        }
+        using var restarted = new PostgresApiFactory(database.ConnectionString);
+        using var client = restarted.AuthorisedClient();
+        var restored = await client.GetFromJsonAsync<Story>($"/api/stories/{id}");
+        Assert.Equal(2, restored!.Version);
+        Assert.False(string.IsNullOrWhiteSpace(restored.Content.Result));
+    }
+
+    [PostgresFact]
     public async Task Existing_milestone_two_sessions_upgrade_without_losing_data()
     {
         await using var database = await TestDatabase.CreateAsync();
@@ -42,6 +70,7 @@ public sealed partial class PostgresSessionTests
         using (var client = first.CreateClient())
         {
             client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey);
+            TestOwnerManagement.Authorize(client);
             await LifeScenarioTests.Register(client, "laptop"); await LifeScenarioTests.Register(client, "phone");
             var session = await LifeScenarioTests.Session(client); sessionId = session.Id;
             await LifeScenarioTests.Post<ConversationSession>(client, $"/api/sessions/{sessionId}/claim", new { deviceId = "laptop" });
@@ -72,6 +101,7 @@ public sealed partial class PostgresSessionTests
         using (var clientB = b.CreateClient())
         {
             clientA.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey); clientB.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey);
+            TestOwnerManagement.Authorize(clientA); TestOwnerManagement.Authorize(clientB);
             var session = await LifeScenarioTests.Session(clientA);
             var tool = await LifeScenarioTests.Post<AuditedTool>(clientA, "/api/tools/home", new HomeActionRequest(Guid.NewGuid(), session.Id, "light.desk", "turn_on")); toolId = tool.Invocation.Id;
             await Task.WhenAll(Enumerable.Range(0, 10).Select(i => LifeScenarioTests.Post<AuditedTool>(i % 2 == 0 ? clientA : clientB, $"/api/tools/{toolId}/confirm", new { approve = true })));

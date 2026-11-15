@@ -12,7 +12,8 @@ public enum DeviceKind
 
 /// <summary>
 /// What a device says it can do. JARVIS only routes work to a capability a device
-/// has declared AND that has been verified on real hardware.
+/// has declared and an owner has confirmed. Confirmation is an administrative
+/// assertion; it does not prove a physical hardware test passed.
 /// </summary>
 public sealed record DeviceCapabilities(
     bool CanListen,

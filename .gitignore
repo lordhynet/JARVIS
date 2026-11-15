@@ -6,6 +6,8 @@ obj/
 TestResults/
 *.log
 .env
+/.env.*
+/appsettings.json
 appsettings.*.local.json
 publish/
 logs/
@@ -15,3 +17,4 @@ playwright-report/
 backups/
 
 .claude/settings.local.json
+.https/

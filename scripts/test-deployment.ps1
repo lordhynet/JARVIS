@@ -2,7 +2,7 @@ param([int]$Port = 5198, [switch]$LiveTransit)
 $ErrorActionPreference = 'Stop'
 $project = 'jarvis-verify-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
 $previous = @{}
-foreach ($name in @('JARVIS_VERIFY_DB_PASSWORD','JARVIS_VERIFY_API_KEY','JARVIS_VERIFY_PORT')) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
+foreach ($name in @('JARVIS_VERIFY_DB_PASSWORD','JARVIS_VERIFY_API_KEY','JARVIS_VERIFY_PORT','JARVIS_VERIFY_SETTINGS_PATH','COMPOSE_DISABLE_ENV_FILE')) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
 $env:JARVIS_VERIFY_DB_PASSWORD = [guid]::NewGuid().ToString('N')
 $env:JARVIS_VERIFY_API_KEY = [guid]::NewGuid().ToString('N')
 $env:JARVIS_VERIFY_PORT = "$Port"
@@ -11,6 +11,19 @@ $headers = @{ 'X-Jarvis-Key' = $env:JARVIS_VERIFY_API_KEY }
 $composeArgs = @('compose','-f','compose.verify.yaml','-p',$project)
 $checks = [System.Collections.Generic.List[string]]::new()
 Push-Location (Split-Path $PSScriptRoot -Parent)
+$fixtureDirectory = Join-Path $env:TEMP $project
+New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+$fixturePath = Join-Path $fixtureDirectory 'appsettings.json'
+$fixture = Get-Content appsettings.example.json -Raw | ConvertFrom-Json
+$fixture.Database.Password = $env:JARVIS_VERIFY_DB_PASSWORD
+$fixture.Jarvis.ApiKey = $env:JARVIS_VERIFY_API_KEY
+$fixture.BudgetManagement.OwnerKey = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
+$fixture.BudgetManagement.SubjectId = 'isolated-verification-owner'
+$headers['X-Jarvis-Owner-Key'] = $fixture.BudgetManagement.OwnerKey
+$fixture.Server.Tls.Enabled = $false
+$fixture | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $fixturePath
+$env:JARVIS_VERIFY_SETTINGS_PATH = $fixturePath
+$env:COMPOSE_DISABLE_ENV_FILE = '1'
 function Wait-Ready {
     for ($attempt=0; $attempt -lt 40; $attempt++) {
         try { Invoke-RestMethod "$base/health/ready" -TimeoutSec 3 | Out-Null; return } catch { Start-Sleep -Seconds 1 }
@@ -42,10 +55,10 @@ try {
     if (@($reviews).Count -ne 1) { throw 'Learning review did not survive container restart.' }
     $checks.Add('Real API container restart survival')
     $output = Join-Path $PWD "TestResults/$project"
-    & ./scripts/backup-database.ps1 -OutputDirectory $output -ComposeFile compose.verify.yaml -ProjectName $project
-    $backup = Get-ChildItem -LiteralPath $output -Filter '*.dump' | Select-Object -First 1
+    & ./scripts/backup-database.ps1 -OutputDirectory $output -ComposeFile compose.verify.yaml -ProjectName $project -ConfigurationPath $fixturePath
+    $backup = Get-ChildItem -LiteralPath $output -Filter '*.dump.dpapi' | Select-Object -First 1
     if (!$backup) { throw 'Backup artifact missing.' }
-    & ./scripts/restore-database.ps1 -BackupPath $backup.FullName -NewDatabaseName jarvis_restore_verification -ComposeFile compose.verify.yaml -ProjectName $project
+    & ./scripts/restore-database.ps1 -BackupPath $backup.FullName -NewDatabaseName jarvis_restore_verification -ComposeFile compose.verify.yaml -ProjectName $project -ConfigurationPath $fixturePath
     $sessionCount = & docker @composeArgs exec -T postgres psql -U jarvis -d jarvis_restore_verification -tAc 'SELECT count(*) FROM "Sessions"'
     if ($LASTEXITCODE -ne 0 -or "$sessionCount".Trim() -ne '1') { throw 'Restored session count is incorrect.' }
     $checkpointCount = & docker @composeArgs exec -T postgres psql -U jarvis -d jarvis_restore_verification -tAc 'SELECT count(*) FROM "Checkpoints"'
@@ -60,6 +73,20 @@ try {
         if ($transit[0].id -ne 'jubilee') { throw 'Live TfL response did not include Jubilee.' }
         $checks.Add('Live TfL through the deployed API')
     }
+    # Destructive checks target only this randomly named verification project.
+    $privacy = Invoke-RestMethod "$base/api/privacy/status" -Headers $headers -TimeoutSec 10
+    $export = Invoke-RestMethod "$base/api/privacy/export" -Headers $headers -TimeoutSec 10
+    if (@($export.sessions).Count -ne 1) { throw 'Privacy export missed the fixture session.' }
+    $eraseRequest = @{ requestId=[guid]::NewGuid().ToString(); expectedRevision=$privacy.revision; confirmation='ERASE MY CORE DATA' }
+    $erased = Post '/privacy/erase' $eraseRequest
+    if (!$erased.erased) { throw 'Isolated Core was not marked erased.' }
+    $retry = Post '/privacy/erase' $eraseRequest
+    if ($retry.epoch -ne $erased.epoch) { throw 'Erasure retry changed the data generation.' }
+    $empty = Invoke-RestMethod "$base/api/privacy/export" -Headers $headers -TimeoutSec 10
+    if (@($empty.sessions).Count -ne 0 -or @($empty.learning).Count -ne 0) { throw 'Isolated erasure retained private fixture data.' }
+    $blocked = Invoke-WebRequest "$base/api/sessions" -Headers $headers -SkipHttpErrorCheck -TimeoutSec 10
+    if ($blocked.StatusCode -ne 503) { throw 'Erased Core still accepts ordinary operations.' }
+    $checks.Add('Isolated export, atomic erasure, idempotent retry and maintenance gate')
     $report = [pscustomobject]@{ completedAt=[DateTimeOffset]::UtcNow.ToString('O'); checks=$checks; result='Passed' }
     $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $output 'deployment-report.json')
     $report | ConvertTo-Json -Depth 5

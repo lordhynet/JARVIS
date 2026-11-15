@@ -11,6 +11,10 @@ public sealed class InMemorySessionStore : ISessionStore
 {
     private readonly ConcurrentDictionary<Guid, ConversationSession> _sessions = new();
     private readonly object _writeLock = new();
+    public void ReplacePrivacyData(IReadOnlyList<ConversationSession> sessions)
+    {
+        lock (_writeLock) { _sessions.Clear(); foreach (var session in sessions) _sessions[session.Id] = session; }
+    }
 
     public Task<ConversationSession?> UpdateAsync(Guid id,
         Func<ConversationSession, ConversationSession> update, CancellationToken ct = default)

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Jarvis.Contracts;
+using Jarvis.Api.Integrations;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,20 +19,36 @@ public sealed class ProviderFactory(Func<HttpRequestMessage, Task<HttpResponseMe
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Testing"); builder.UseSetting("Jarvis:ApiKey", JarvisApiFactory.TestKey);
+        TestBudgetSource.Configure(builder); builder.UseEnvironment("Testing"); builder.UseSetting("Jarvis:ApiKey", JarvisApiFactory.TestKey);
         builder.UseSetting("Jarvis:StorageProvider", "InMemory");
         builder.UseSetting("OpenAI:ApiKey", "fake-provider-key"); builder.UseSetting("OpenAI:Model", "test-model");
         builder.UseSetting("OpenAI:TranscriptionModel", "test-transcription");
+        builder.UseSetting("AI:Chat:Model", "test-model");
+        builder.UseSetting("AI:Chat:RateCardModel", "test-model");
+        builder.UseSetting("AI:Transcription:Model", "test-transcription");
+        builder.UseSetting("AI:Transcription:RateCardModel", "test-transcription");
         builder.UseSetting("Calendar:Google:AccessToken", "fake-google-token");
         builder.UseSetting("Calendar:Microsoft:AccessToken", "fake-microsoft-token");
-        builder.UseSetting("HomeAssistant:BaseUrl", "http://homeassistant.test:8123");
+        builder.UseSetting("HomeAssistant:BaseUrl", "https://homeassistant.test:8123");
         builder.UseSetting("HomeAssistant:Token", "fake-ha-token");
         builder.UseSetting("HomeAssistant:AllowedEntities:0", "light.desk");
         builder.ConfigureServices(s => s.AddHttpClient("providers").ConfigurePrimaryHttpMessageHandler(() => new StubHttpHandler(handle)));
+        builder.ConfigureServices(s => s.AddSingleton<IAudioDurationProbe, FixtureAudioProbe>());
     }
     public HttpClient Client()
     {
-        var client = CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey); return client;
+        var client = CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey); TestOwnerManagement.Authorize(client); return client;
+    }
+}
+
+internal sealed class FixtureAudioProbe : IAudioDurationProbe
+{
+    public Task<double> SecondsAsync(string path, CancellationToken ct) => Task.FromResult(1d);
+    public Task<PreparedAudio> PrepareAsync(string path, CancellationToken ct)
+    {
+        var normalized = Path.Combine(Path.GetTempPath(), "jarvis-fixture-" + Guid.NewGuid() + ".wav");
+        using (var output = File.Create(normalized)) AudioDurationProbe.WriteWave(output, new byte[32000]);
+        return Task.FromResult(new PreparedAudio(normalized, 1d));
     }
 }
 
@@ -65,7 +82,7 @@ public sealed class ProviderIntegrationTests
         {
             Assert.EndsWith("/audio/transcriptions", request.RequestUri!.AbsoluteUri);
             Assert.StartsWith("multipart/form-data", request.Content!.Headers.ContentType!.ToString());
-            var content = await request.Content.ReadAsStringAsync(); Assert.Contains("test-transcription", content); Assert.Contains("recording.webm", content);
+            var content = await request.Content.ReadAsStringAsync(); Assert.Contains("test-transcription", content); Assert.Contains("audio.wav", content); Assert.Contains("RIFF", content);
             return Reply("""{"text":"Bonjour JARVIS"}""");
         });
         using var client = host.Client(); using var form = new MultipartFormDataContent(); form.Add(new ByteArrayContent([1, 2, 3]), "audio", "voice.webm");
@@ -131,7 +148,7 @@ public sealed class ProviderIntegrationTests
         var calls = 0;
         using var host = new ProviderFactory(async request =>
         {
-            calls++; Assert.Equal("http://homeassistant.test:8123/api/services/light/turn_on", request.RequestUri!.AbsoluteUri);
+            calls++; Assert.Equal("https://homeassistant.test:8123/api/services/light/turn_on", request.RequestUri!.AbsoluteUri);
             Assert.Equal("fake-ha-token", request.Headers.Authorization!.Parameter);
             Assert.Equal("light.desk", (await request.Content!.ReadFromJsonAsync<JsonElement>()).GetProperty("entity_id").GetString());
             return Reply("[]");

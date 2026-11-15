@@ -48,7 +48,7 @@ public sealed class ScenarioFactory : WebApplicationFactory<Program>
     public ScenarioConversation Conversation { get; } = new();
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Testing");
+        TestBudgetSource.Configure(builder); builder.UseEnvironment("Testing");
         builder.UseSetting("Jarvis:ApiKey", JarvisApiFactory.TestKey);
         builder.UseSetting("Jarvis:StorageProvider", "InMemory");
         builder.ConfigureServices(s =>
@@ -60,7 +60,7 @@ public sealed class ScenarioFactory : WebApplicationFactory<Program>
     }
     public HttpClient Client()
     {
-        var client = CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey); return client;
+        var client = CreateClient(); client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey); TestOwnerManagement.Authorize(client); return client;
     }
 }
 

@@ -18,6 +18,8 @@ public sealed class DeviceService(IRuntimeStore store, TimeProvider clock)
         return store.UpdateAsync(s =>
         {
             var now = clock.GetUtcNow();
+            Guard.Require(!s.DeviceCredentials.TryGetValue(id, out var credential) || credential.Revoked, 409,
+                "An enrolled device cannot be overwritten. The owner must revoke its credential before changing registration.");
             s.Devices.TryGetValue(id, out var old);
             // Registration cannot self-certify hardware. Re-registering resets verification.
             var device = new RegisteredDevice(new(id, name, request.Kind, request.Capabilities,
@@ -48,6 +50,7 @@ public sealed class DeviceService(IRuntimeStore store, TimeProvider clock)
     private Task<RegisteredDevice> Change(string id, Func<RegisteredDevice, RegisteredDevice> change, CancellationToken ct) =>
         store.UpdateAsync(s =>
         {
+            DeviceCredentialContext.RequireCurrent(s, id);
             Guard.Require(s.Devices.TryGetValue(id, out var device), 404, "Device not registered.");
             var updated = change(device!);
             s.Devices[id] = updated;

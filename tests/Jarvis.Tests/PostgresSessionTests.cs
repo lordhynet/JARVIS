@@ -112,6 +112,7 @@ public sealed partial class PostgresSessionTests
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            TestBudgetSource.Configure(builder);
             builder.UseEnvironment("Testing");
             builder.UseSetting("Jarvis:ApiKey", JarvisApiFactory.TestKey);
             builder.UseSetting("Jarvis:StorageProvider", "Postgres");
@@ -122,6 +123,7 @@ public sealed partial class PostgresSessionTests
         {
             var client = CreateClient();
             client.DefaultRequestHeaders.Add("X-Jarvis-Key", JarvisApiFactory.TestKey);
+            TestOwnerManagement.Authorize(client);
             return client;
         }
     }

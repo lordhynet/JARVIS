@@ -108,6 +108,8 @@ public sealed class ProviderGateway(IHttpClientFactory clients, IConfiguration c
         var root = Required("HomeAssistant:BaseUrl");
         Guard.Require(Uri.TryCreate(root, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" && string.IsNullOrEmpty(uri.UserInfo),
             503, "HomeAssistant:BaseUrl must be an HTTP(S) URL without credentials.");
+        Guard.Require(uri!.Scheme == "https" || uri.IsLoopback || config.GetValue<bool>("HomeAssistant:AllowInsecureLan"),
+            503, "Home Assistant requires HTTPS outside loopback. Explicitly authorize AllowInsecureLan only on a trusted private network.");
         var allowed = config.GetSection("HomeAssistant:AllowedEntities").Get<string[]>() ?? [];
         Guard.Require(allowed.Contains(entityId, StringComparer.Ordinal), 403, "Entity is not in HomeAssistant:AllowedEntities.");
         var token = Required("HomeAssistant:Token");

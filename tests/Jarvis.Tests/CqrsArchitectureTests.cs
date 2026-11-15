@@ -8,6 +8,7 @@ using Jarvis.Orchestrator.Cqrs.Sessions;
 using Jarvis.Orchestrator.Cqrs.Tools;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
+using Jarvis.Orchestrator.Workflows;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -44,7 +45,9 @@ public sealed class CqrsArchitectureTests
         var handlers = typeof(IQuery<>).Assembly.GetTypes().Where(t => t.IsClass && Implements(t, typeof(IQueryHandler<,>))).ToList();
         Assert.NotEmpty(handlers);
         var forbidden = new[] { typeof(ISessionStore), typeof(IRuntimeStore), typeof(SessionService), typeof(DeviceService),
-            typeof(LearningService), typeof(ToolService), typeof(SessionLifecycleService), typeof(ConversationService), typeof(IHomeControl) };
+            typeof(LearningService), typeof(ToolService), typeof(SessionLifecycleService), typeof(ConversationService), typeof(IHomeControl),
+            typeof(IWorkflowStore), typeof(WorkflowService), typeof(Jarvis.Orchestrator.Training.TrainingService),
+            typeof(Jarvis.Orchestrator.Coaching.CoachingService), typeof(Jarvis.Orchestrator.Coaching.ProgrammeService) };
         foreach (var handler in handlers)
             foreach (var dependency in handler.GetConstructors().SelectMany(c => c.GetParameters()).Select(p => p.ParameterType))
             {

@@ -1,13 +1,17 @@
 # JARVIS Milestone 1 smoke test.
 # Start the API first (README step 4), then in a second terminal run:
-#   .\scripts\smoke-test.ps1 -Key "<the key you set with user-secrets>"
+#   .\scripts\smoke-test.ps1 -Key "<Jarvis.ApiKey from appsettings.json>"
 
 param(
-    [Parameter(Mandatory = $true)][string]$Key,
-    [string]$BaseUrl = "http://localhost:5185"
+    [string]$Key = '',
+    [string]$BaseUrl = ''
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'backend-configuration.ps1')
+$configuration = Get-JarvisConfiguration
+if (!$Key) { $Key = $configuration.Jarvis.ApiKey }
+if (!$BaseUrl) { $BaseUrl = 'http://127.0.0.1:' + $configuration.Server.HttpPort }
 $headers = @{ "X-Jarvis-Key" = $Key }
 $passed = 0; $failed = 0
 

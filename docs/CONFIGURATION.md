@@ -1,14 +1,12 @@
 # Connections and devices
 
-Use .NET user secrets for local development, or environment variables for containers.
-Never commit real keys or tokens. `dotnet user-secrets set --project src/Jarvis.Api "Setting:Name" "value"`
-sets a local value; the corresponding environment name is `Setting__Name`.
+Use the private root `appsettings.json` for all backend deployment settings. It is Git-ignored and excluded from Docker images; containers mount it read-only. `appsettings.example.json` is a sanitized template for new installations and isolated tests. Production does not load user-secrets, environment overrides, command-line settings or environment-specific JSON. Never commit real keys or tokens.
 
 | Setting | Purpose |
 |---|---|
 | `Jarvis:ApiKey` | Shared operator credential used by the companion and API clients |
 | `Jarvis:StorageProvider` | `Postgres` or `InMemory`; default is `InMemory` |
-| `ConnectionStrings:Jarvis` | PostgreSQL connection string; required in Postgres mode |
+| `Database` | Host, Port, ExposedPort, Name, Username and Password; Core constructs its PostgreSQL connection from these fields |
 | `OpenAI:ApiKey` | OpenAI API credential, kept on the server |
 | `OpenAI:Model` | A Responses-compatible text model available to your account; choose explicitly |
 | `OpenAI:TranscriptionModel` | File-transcription model available to your account; current documented starting model is `gpt-transcribe` |
@@ -25,8 +23,7 @@ not include an OAuth login/callback UI, token refresh, or calendar writes. Expir
 produce a source error; the briefing still shows healthy sources. Do not use a ChatGPT
 login token as an OpenAI API key.
 
-The container variable names accepted by the supplied Compose file are listed in
-`compose.app.yaml`. Model names are deliberately not guessed. Cloud requests are bounded
+`scripts/start-server.ps1` derives temporary Compose substitutions from that same JSON file and restores the process environment afterwards. Model names and dated rates are configured in the `AI` profiles. Cloud requests are bounded
 to 20 per minute per API process. Input audio is limited to 10 MB and browser recordings
 to one minute. Chat uses the last 20 transcript messages and the last three checkpoints
 as context, with a 1,500-token output limit. No model tool calling is enabled: home actions
@@ -90,3 +87,51 @@ running request becomes **Uncertain**; inspect the physical device before making
 - [Google Calendar events](https://developers.google.com/workspace/calendar/api/v3/reference/events/list)
 - [Microsoft Graph calendar view](https://learn.microsoft.com/en-us/graph/api/user-list-calendarview?view=graph-rest-1.0)
 - [TfL Unified API](https://tfl.gov.uk/info-for/open-data-users/api-documentation)
+
+## Central GBP authority — Slice 1
+
+The new code requires an explicit `Budget` section before any paid dispatch. The example settings deliberately leave it disabled, with no FX quote or billing multipliers. The private root settings and provider credentials are not automatically changed. Existing USD settings remain additional restrictions; `/api/budget/status` explains this and is the authoritative GBP status.
+
+Trusted fields: `Enabled`, opaque stable `ScopeId`, `Environment` (`Development` or `Production`), `Version`, explicit `TaxMultiplier` and `SafetyMultiplier` (each at least 1), and `Fx { Source, UsdToGbp, ObservedAt, ExpiresAt }`. Source must be a public/non-secret evidence identifier. Quotes must be positive, observed no later than now, unexpired, and valid for at most 24 hours. No live rate or tax assumption is supplied by JARVIS. Do not put API keys or credential-bearing URLs in FX evidence. Unknown budget fields are rejected; numeric monthly-limit overrides cannot raise the £10 development, £100 normal production or £200 maximum production authority.
+
+Budget months use UTC. Scope is pinned in durable accounting state after first assignment/dispatch; changing ScopeId cannot reset the allowance. Production increases require an explicit month/policy-bound owner approval, total ceiling above £100 and at most £200, with expiry before the next UTC month. Development cannot receive a production increase. Billing reconciliation is a separate owner operation, not spend approval.
+
+`BudgetManagement { OwnerKey, SubjectId }` is disabled by default. OwnerKey must be a separate secret of at least 32 characters, never the ordinary Core key; SubjectId should be an opaque owner reference. Management requests require both the ordinary Core authentication and `X-Jarvis-Owner-Key` header. Never include the owner key in URLs, Android pairing, browser storage or manifests. This is a personal-server management foundation, not OIDC or general device identity.
+
+No configuration activation, provider-key setup, paid call, deployment or infrastructure change is included in this source implementation. Actual FX/tax inputs and owner credential setup remain explicit operator decisions before activation.
+
+## Review remediation: owner authorization and companion credentials
+
+The separate `BudgetManagement:OwnerKey` / `SubjectId` credential now also protects privacy export/erase/reopen/retention-apply, device verification/enrolment/revocation and home-action confirmation. It is independent of `Budget.Enabled`: sensitive administrative operations fail closed until owner setup exists. The optional browser Owner key field keeps this credential in tab memory and clears it on disconnect. Supply it only on your trusted Core computer, never to Android. Ordinary Core authentication is still required alongside the owner header.
+
+Companion credentials are random `jdv1_` secrets, stored only as SHA-256 hashes in existing runtime persistence and excluded from privacy exports. Owner-authorized `POST /api/devices/{id}/credential` returns a new secret once; calling it again rotates the secret and fences existing audio. `DELETE` on the same route revokes it. Revocation invalidates pending voice tickets and the active device lease; REST checks the database on each request. Voice ticket creation also rejects stale authenticated requests after rotation. Companion authorization is a fixed server-side audio policy, not caller-supplied grants.
+
+Migration before any WAN use:
+
+1. Configure a strong separate owner credential on Core, without enabling paid providers. Keep deployment private.
+2. Register the Android audio-only device from the trusted browser/operator client, test its hardware and confirm it with the owner-authorized verify route. Administrative confirmation itself is not proof of a hardware test.
+3. Issue its device credential using the owner header. Put only that device secret, trusted Core URL and certificate pin in the phone's pairing details. The audio client adopts the credential-bound device ID returned by its filtered device list.
+4. Migrate every phone, then rotate the old shared Core key so previously paired broad credentials cannot continue to act as legacy browsers. Update trusted browsers with the new Core key. Merely deploying scoped-auth code does not remove old shared credentials from phones.
+5. Verify denial of privacy/tools/agents/other-device routes, revoke/re-pair behavior and real-device audio on the intended network before wider access.
+
+The legacy Core key remains a broad browser credential for compatibility. SignalR WebSocket query authentication now requires a one-use, 30-second ticket from `POST /api/hubs/ticket`; raw query keys are rejected. Header credentials remain compatible with .NET callers. No credentials, private settings or running deployment were changed by source remediation.
+
+### Reviewed media and model profiles
+
+Each `AI:{profile}` requires its own `RateCardDate` (not future and no more than 90 days old) and `RateCardModel` equal to its selected `Model`. Text profiles accept `MaxOutputTokens` from 1 to 32768; defaults are 1500 for Chat and 2048 for other text profiles. Legacy Anthropic briefs use `PaidAI:MaxOutputTokens`, default 2048. The reservation uses the requested output cap.
+
+Voice requires explicit `AudioInputUsdPerMillion`, `TextInputUsdPerMillion`, `CachedAudioInputUsdPerMillion`, `CachedTextInputUsdPerMillion`, `AudioOutputUsdPerMillion`, `TextOutputUsdPerMillion`, `TranscriptionUsdPerMinute`, `TranscriptionModel` and matching `TranscriptionRateCardModel`. Audio rates cannot be lower than the corresponding text rate; cached rates must be positive and no greater than uncached rates. No live rates are supplied by this remediation. Keep profiles stable while calls are active; immutable cross-provider attempt routing remains unfinished.
+
+Paid file transcription accepts WebM, MP4/M4A and WAV only, bounds actual input to 10 MB, decodes at most 180 seconds of mono 16 kHz PCM and sends a fresh WAV. Duration metadata does not determine its reservation. Missing granular billed usage retains the full conservative reservation for reconciliation.
+
+### Encrypted Windows database backups
+
+New backups use Windows CurrentUser DPAPI and the `.dump.dpapi` extension, with ACL restricted to that user and SYSTEM. Restore decrypts into a temporary file and removes it afterward; legacy plaintext dumps remain accepted. This implementation has a 128 MB plaintext limit and fails closed for larger dumps or unsupported encryption platforms.
+
+Recovery requires the originating Windows user/profile's DPAPI material. Preserve that recovery access and verify restore before relying on a copied backup on another computer; a copied encrypted dump alone is insufficient. Existing plaintext backups, directory sync settings and Windows profile recovery were not changed. The isolated synthetic deployment test verifies restore on the current account only.
+
+Home Assistant now requires HTTPS outside loopback unless `HomeAssistant:AllowInsecureLan=true` is explicitly set by the operator. The public example defaults this exception to false. This does not encrypt an insecure LAN link; TLS is preferred.
+
+Legacy draft migration precaution: before replacing a phone's existing connection credential, explicitly export any legacy encrypted drafts using the current trusted connection. Legacy cache discovery is keyed by the old URL/credential identity; changing the credential does not delete those files, but the new connection will not automatically discover them. Do not replay or upload them during pairing. This remediation did not alter existing encrypted draft files or their keys.
+
+Draft-preservation follow-up: ordinary 401 credential revocation and malformed/missing privacy metadata stop audio and clear the active credential but preserve encrypted legacy drafts. Confirmed Core erasure or a valid changed privacy generation triggers cleanup for the current legacy identity. A revoked device credential querying an erased Core receives a 401 with the bounded `coreErased` marker and epoch so the phone can distinguish explicit erasure from ordinary key rotation. No personal data or credential material is returned by that error. This does not silently replay, migrate or export any draft.

@@ -30,7 +30,7 @@ public static class IntegrationEndpoints
         app.MapGet("/health/ready", async (IQueryHandler<GetStorageReadiness, StorageReadiness> handler, CancellationToken ct) =>
         {
             var result = await handler.HandleAsync(new GetStorageReadiness(), ct);
-            return result.Ready ? Results.Ok(new { status = "ready", storage = result.Storage }) : Results.StatusCode(503);
+            return result.Ready ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503);
         });
     }
 }

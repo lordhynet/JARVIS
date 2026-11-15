@@ -1,3 +1,12 @@
+import { initModules } from './modules.js';
+import { initLiveVoice } from './live.js';
+import { initIntelligence } from './intelligence.js';
+import { initPrivacy } from './privacy.js';
+import { initPlanning } from './planning.js';
+import { initImports } from './imports.js';
+import { initNotifications } from './notifications.js';
+let liveVoice;
+let connectionGeneration = 0;
 const $ = id => document.getElementById(id);
 const state = { key: '', session: null, devices: [], registered: false, recorder: null, stream: null, recognition: null, recordingTimer: null, pollBusy: false, releaseBusy: false };
 const deviceId = localStorage.getItem('jarvis-device') || `browser-${crypto.randomUUID()}`;
@@ -6,44 +15,93 @@ $('device-id').textContent = `This browser: ${deviceId}`;
 $('today').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; $('notice').hidden = false; }
 async function api(path, body, method) {
+  const generation = connectionGeneration;
   const multipart = body instanceof FormData;
-  const response = await fetch(`/api${path}`, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'X-Jarvis-Key': state.key, ...(!multipart && body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body) });
+  const response = await fetch(`/api${path}`, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'X-Jarvis-Key': state.key, ...($('owner-key').value ? { 'X-Jarvis-Owner-Key': $('owner-key').value } : {}), ...(!multipart && body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body) });
   const data = await response.json().catch(() => ({}));
+  if (generation !== connectionGeneration) throw new Error('This response belongs to a previous Core connection.');
   if (!response.ok) throw new Error(data.error || data.detail || Object.values(data.errors || {}).flat().join(' ') || `Request failed (${response.status}).`);
   return data;
 }
 function on(id, event, fn) { $(id).addEventListener(event, async e => { e.preventDefault(); const button = e.submitter || (e.currentTarget.tagName === 'BUTTON' ? e.currentTarget : null); if (button) button.disabled = true; try { await fn(e); } catch (error) { notice(error.message, true); } finally { if (button) button.disabled = false; } }); }
 function node(tag, text, className) { const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el; }
-function button(text, action) { const el = node('button', text); el.addEventListener('click', async () => { el.disabled = true; try { await action(); } catch (e) { notice(e.message, true); } finally { el.disabled = false; } }); return el; }
+function button(text, action) { const el = node('button', text); el.type = 'button'; el.addEventListener('click', async () => { el.disabled = true; try { await action(); } catch (e) { notice(e.message, true); } finally { el.disabled = false; } }); return el; }
 function selected() { if (!state.session) throw new Error('Open a conversation first.'); return state.session; }
 function ownsAudio() { return state.session?.status === 'Active' && state.session?.activeDeviceId === deviceId; }
+let localAudio = null, localDeadline = 0, audioGeneration = 0, localRelease = Promise.resolve();
+function releaseLocalAudio() {
+  const lease = localAudio; localAudio = null; localDeadline = 0;
+  if (lease) localRelease = localRelease.then(() => api('/voice/local/release', lease)).catch(() => {});
+}
+async function acquireLocalAudio(sessionId, calibration = false) {
+  const generation = audioGeneration; await localRelease; const started = performance.now();
+  const lease = await api(calibration ? '/voice/calibrate' : '/voice/local', { sessionId, deviceId, allowCloudProcessing: false });
+  if (generation !== audioGeneration || performance.now() - started >= 12000) { await api('/voice/local/release', lease).catch(() => {}); throw new Error('Audio start was cancelled or expired.'); }
+  localAudio = lease; localDeadline = started + 12000;
+}
+setInterval(async () => {
+  const lease = localAudio; if (!lease) return;
+  const started = performance.now();
+  try { const renewed = await api('/voice/local/renew', lease); if (localAudio?.fence === lease.fence && performance.now() - started < 12000) { localAudio = renewed; localDeadline = started + 12000; } }
+  catch { if (localAudio?.fence === lease.fence) { stopAudio(); notice('Audio ownership expired. Start again when Core is reachable.', true); } }
+}, 4000);
+setInterval(() => { if (localAudio && performance.now() >= localDeadline) { stopAudio(); notice('Audio lease expired; microphone and playback stopped.', true); } }, 250);
 function stopAudio(discard = true) {
+  audioGeneration++; releaseLocalAudio();
+  liveVoice?.stop();
   if (state.recorder?.state === 'recording') { state.recorder.discard = discard; state.recorder.stop(); }
   clearTimeout(state.recordingTimer); state.stream?.getTracks().forEach(t => t.stop()); state.stream = null;
   if (state.recognition) { state.recognition.onend = null; state.recognition.stop(); state.recognition = null; }
-  window.speechSynthesis?.cancel(); $('wake').textContent = 'Enable “Jarvis”'; $('record').textContent = 'Record voice';
+  window.speechSynthesis?.cancel(); $('wake').textContent = 'Enable cloud keyword listening'; $('record').textContent = 'Record voice';
 }
+const extraModules = initModules({ api, notice, node, button, on, selectedSession: () => state.session,
+  ensureSession: async (activity, title) => { if (state.session && state.session.status !== 'Ended') return state.session; const session = await api('/sessions', { activity, title, deviceId: null }); await openSession(session.id); return state.session; } });
+liveVoice = initLiveVoice({ api, selectedSession: () => state.session, deviceId, notice, beforeStart: async () => { stopAudio(); await localRelease; },
+  claimSession: async id => { state.session = await api(`/sessions/${id}/claim`, { deviceId }); renderSession(); },
+  ensureSession: async (activity, title) => { if (state.session && state.session.status !== 'Ended') return state.session; const session = await api('/sessions', { activity, title, deviceId: null }); await openSession(session.id, true); return state.session; } });
+const intelligence = initIntelligence({ api, node, button, notice });
+const notifications = initNotifications({ api, node, button, notice });
+const imports = initImports({ api, node, button, notice });
+const planning = initPlanning({ api, node, button, notice });
+const privacy = initPrivacy({ api, node, button, notice, onErased: () => {
+  connectionGeneration++;
+  stopAudio(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); imports.clear(); notifications.clear(); state.session = null; state.devices = []; state.registered = false;
+  for (const id of ['session-list', 'device-list', 'learning-list', 'tool-list', 'messages', 'checkpoints', 'briefing-content', 'integration-list']) $(id)?.replaceChildren();
+  for (const field of document.querySelectorAll('[data-panel] input,[data-panel] textarea')) { if (field.type === 'checkbox' || field.type === 'radio') field.checked = false; else field.value = ''; }
+  for (const id of ['selected-title', 'owner', 'handoff-state']) $(id).textContent = '';
+  for (const id of ['session-controls', 'chat-form', 'checkpoint-panel', 'handoff-controls']) $(id).hidden = true;
+  $('session-count').textContent = '0';
+  $('connection').textContent = 'Core erased';
+}, onReopened: async () => { await loadSessions(); await loadDevices(); renderIntegrations(await api('/integrations')); $('connection').textContent = 'Connected'; } });
 document.querySelectorAll('[data-tab]').forEach(tab => tab.addEventListener('click', async () => {
   document.querySelectorAll('[data-tab]').forEach(t => t.classList.toggle('active', t === tab));
   document.querySelectorAll('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== tab.dataset.tab);
   $('page-title').textContent = tab.textContent;
   if (!state.key) return;
-  try { if (tab.dataset.tab === 'sessions') { await loadSessions(); await loadDevices(); } if (tab.dataset.tab === 'devices') await loadDevices(); if (tab.dataset.tab === 'learning') await loadLearning(); if (tab.dataset.tab === 'tools') await loadTools(); } catch (e) { notice(e.message, true); }
+  try { if (tab.dataset.tab === 'sessions') { await loadSessions(); await loadDevices(); } if (tab.dataset.tab === 'devices') await loadDevices(); if (tab.dataset.tab === 'learning') await loadLearning(); if (tab.dataset.tab === 'tools') await loadTools(); if (tab.dataset.tab === 'agents') await intelligence.load(); if (tab.dataset.tab === 'privacy') await privacy.load(); if (tab.dataset.tab === 'planning') await planning.load(); if (tab.dataset.tab === 'imports') await imports.load(); await extraModules.load(tab.dataset.tab); } catch (e) { notice(e.message, true); }
 }));
 on('connect-form', 'submit', async () => {
+  connectionGeneration++;
   state.key = $('api-key').value.trim();
-  try { const integrations = await api('/integrations'); await loadSessions(); await loadDevices(); renderIntegrations(integrations); }
+  try {
+    const control = await api('/privacy/status');
+    if (control.erased) {
+      $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false; $('connection').textContent = 'Core erased'; privacy.show(); return;
+    }
+    const integrations = await api('/integrations'); await loadSessions(); await loadDevices(); renderIntegrations(integrations);
+  }
   catch (error) { state.key = ''; throw error; }
   $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false; $('connection').textContent = 'Connected'; notice('Connected. Your saved sessions are ready.');
+  await liveVoice.refresh();
 });
-on('disconnect', 'click', () => { stopAudio(); state.key = ''; state.session = null; state.registered = false; $('workspace').hidden = true; $('login').hidden = false; $('connection').textContent = 'Disconnected'; $('notice').hidden = true; });
+on('disconnect', 'click', () => { connectionGeneration++; stopAudio(); document.getElementById('verify-device')?.remove(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); imports.clear(); notifications.clear(); privacy.clear(); state.key = ''; $('owner-key').value = ''; state.session = null; state.registered = false; $('workspace').hidden = true; $('login').hidden = false; $('connection').textContent = 'Disconnected'; $('notice').hidden = true; });
 async function loadSessions() {
   const sessions = await api('/sessions'); $('session-count').textContent = sessions.length; $('session-list').replaceChildren();
   for (const s of sessions) { const b = button('', () => openSession(s.id)); b.className = 'session-button list-item' + (state.session?.id === s.id ? ' selected' : ''); b.append(node('strong', s.title), node('small', `${s.activity} · ${s.status}`)); $('session-list').append(b); }
   if (!sessions.length) $('session-list').append(node('p', 'Your conversations will appear here.', 'muted'));
 }
-async function openSession(id) { if (state.session?.id !== id) stopAudio(); state.session = await api(`/sessions/${id}`); renderSession(); await loadSessions(); }
-function renderSession() {
+async function openSession(id, keepLive = false) { if (state.session?.id !== id && !keepLive) stopAudio(); state.session = await api(`/sessions/${id}`); extraModules.sessionChanged(id); renderSession(keepLive); await loadSessions(); }
+function renderSession(keepLive = false) {
   const s = state.session; if (!s) return;
   $('selected-title').textContent = s.title; $('session-activity').textContent = s.activity; $('session-status').textContent = s.status;
   ['session-controls', 'chat-form', 'checkpoint-panel'].forEach(id => $(id).hidden = false);
@@ -64,7 +122,7 @@ function renderSession() {
   $('handoff-ready').hidden = !(h?.state === 'Checkpointed' && h.toDeviceId === deviceId);
   $('handoff-complete').hidden = !(h?.state === 'AudioTransferred' && h.toDeviceId === deviceId);
   $('handoff-cancel').hidden = !h || ['Completed', 'TimedOut', 'Failed'].includes(h.state);
-  if (!ownsAudio()) stopAudio();
+  if (!ownsAudio() && !keepLive) stopAudio();
 }
 on('new-session', 'submit', async () => { const s = await api('/sessions', { activity: $('activity').value, title: $('session-title').value || null, deviceId: null }); $('session-title').value = ''; await openSession(s.id); });
 on('claim', 'click', async () => { state.session = await api(`/sessions/${selected().id}/claim`, { deviceId }); renderSession(); });
@@ -75,10 +133,17 @@ on('chat-form', 'submit', async () => {
   const result = await api(`/sessions/${id}/messages`, { requestId, text });
   if (state.session?.id !== id) return;
   state.session = result; $('message').value = ''; renderSession();
-  if ($('speak').checked && ownsAudio() && 'speechSynthesis' in window) { const utterance = new SpeechSynthesisUtterance(result.messages.at(-1).text); utterance.lang = result.activity === 'French' ? 'fr-FR' : 'en-GB'; window.speechSynthesis.speak(utterance); }
+  if ($('speak').checked && ownsAudio() && 'speechSynthesis' in window) {
+    stopAudio(); await acquireLocalAudio(id); const fence = localAudio.fence;
+    try {
+      const utterance = new SpeechSynthesisUtterance(result.messages.at(-1).text); utterance.lang = result.activity === 'French' ? 'fr-FR' : 'en-GB';
+      utterance.onend = utterance.onerror = () => { if (localAudio?.fence === fence) releaseLocalAudio(); }; window.speechSynthesis.speak(utterance);
+    } catch (error) { if (localAudio?.fence === fence) stopAudio(); throw error; }
+  }
 });
 async function loadDevices() {
   state.devices = await api('/devices'); state.registered = state.devices.some(d => d.device.registration.deviceId === deviceId);
+  $('test-device').disabled = !state.registered;
   $('device-list').replaceChildren(); const oldTarget = $('target-device').value; $('target-device').replaceChildren(node('option', 'Choose target device'));
   $('target-device').firstChild.value = '';
   for (const d of state.devices) { const r = d.device.registration; const div = node('div', '', 'list-item'); div.append(node('strong', r.name), node('p', `${r.deviceId} · ${d.online ? 'Online' : 'Offline'} · ${d.device.capabilitiesVerified ? 'Verified' : 'Needs capability test'}`, 'muted')); $('device-list').append(div);
@@ -89,10 +154,19 @@ on('device-form', 'submit', async () => { await api('/devices', { deviceId, name
 on('test-device', 'click', async () => {
   if (!state.registered) throw new Error('Register this browser first.');
   if (!navigator.mediaDevices?.getUserMedia || !('speechSynthesis' in window)) throw new Error('Microphone and speech output need a supported browser on HTTPS or localhost.');
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); stream.getTracks().forEach(t => t.stop());
-  window.speechSynthesis.speak(new SpeechSynthesisUtterance('JARVIS speaker test. If you can hear me, confirm the test.'));
+  const connectionKey = state.key;
+  stopAudio(); await acquireLocalAudio('00000000-0000-0000-0000-000000000000', true);
+  try { const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); stream.getTracks().forEach(t => t.stop()); }
+  catch (error) { stopAudio(); throw error; }
+  if (!state.key || connectionKey !== state.key) { stopAudio(); return; }
+  const speaker = new SpeechSynthesisUtterance('JARVIS speaker test. If you can hear me, confirm the test.');
+  const speakerFence = localAudio?.fence; speaker.onend = speaker.onerror = () => { if (localAudio?.fence === speakerFence) releaseLocalAudio(); };
+  try { window.speechSynthesis.speak(speaker); } catch (error) { stopAudio(); throw error; }
+  const calibrationFence = localAudio?.fence; setTimeout(() => { if (localAudio?.fence === calibrationFence) releaseLocalAudio(); }, 10000);
   notice('Microphone access passed. After hearing the speaker test, confirm below.');
-  const confirm = button('I heard the speaker test — verify this device', async () => { await api(`/devices/${deviceId}/verify`, {}); confirm.remove(); await loadDevices(); notice('Device verified. You can claim a session or receive a handoff.'); }); $('device-list').prepend(confirm);
+  document.getElementById('verify-device')?.remove();
+  const confirm = button('I heard the speaker test — verify this device', async () => { stopAudio(); await localRelease; await api(`/devices/${deviceId}/verify`, {}); confirm.remove(); await loadDevices(); notice('Device verified. You can claim a session or receive a handoff.'); });
+  confirm.id = 'verify-device'; $('device-form').after(confirm);
 });
 on('handoff', 'click', async () => { const target = $('target-device').value; if (!target) throw new Error('Choose an online, verified target device.'); const summary = $('checkpoint-summary').value || selected().currentTask || 'Continue the current conversation and saved transcript.'; state.session = await api(`/sessions/${selected().id}/handoff`, { fromDeviceId: deviceId, toDeviceId: target, summary }); renderSession(); });
 for (const [id, action] of [['handoff-ready', 'ready'], ['handoff-complete', 'complete'], ['handoff-cancel', 'cancel']]) on(id, 'click', async () => { state.session = await api(`/sessions/${selected().id}/handoff/${action}`, { handoffId: selected().handoff.id, deviceId }); renderSession(); });
@@ -112,23 +186,25 @@ on('record', 'click', async () => {
   if (state.recorder?.state === 'recording') { stopAudio(false); return; }
   if (!ownsAudio()) throw new Error('Verify this device, then choose “Use this device” before recording.');
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error('Recording needs a supported browser on HTTPS or localhost.');
-  stopAudio(); const sessionId = selected().id; state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  if (!ownsAudio() || state.session.id !== sessionId) { stopAudio(); return; }
+  stopAudio(); const sessionId = selected().id; await acquireLocalAudio(sessionId); const recordFence = localAudio.fence;
+  try { state.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (error) { stopAudio(); throw error; }
+  if (!ownsAudio() || state.session.id !== sessionId || localAudio?.fence !== recordFence || performance.now() >= localDeadline) { stopAudio(); return; }
   const chunks = []; const recorder = new MediaRecorder(state.stream); state.recorder = recorder; let size = 0;
   recorder.ondataavailable = e => { size += e.data.size; chunks.push(e.data); if (size > 9_000_000) { stopAudio(); notice('Recording exceeded the size limit.', true); } };
   recorder.onstop = async () => { if (recorder.discard || !ownsAudio() || state.session?.id !== sessionId) return; try { const form = new FormData(); const type = recorder.mimeType; form.append('audio', new Blob(chunks, { type }), type.includes('mp4') ? 'recording.mp4' : 'recording.webm'); notice('Transcribing…'); const transcript = await api('/voice/transcribe', form); if (ownsAudio() && state.session?.id === sessionId) { $('message').value = transcript.text; notice('Transcript ready. Review it, then send.'); } } catch (e) { notice(e.message, true); } };
   recorder.start(1000); $('record').textContent = 'Stop & transcribe'; state.recordingTimer = setTimeout(() => stopAudio(false), 60000); notice('Recording. Stops automatically after one minute.');
 });
 on('stop-voice', 'click', () => { stopAudio(); notice('Microphone and speech output stopped.'); });
-on('wake', 'click', () => {
+on('wake', 'click', async () => {
   if (state.recognition) { stopAudio(); return; }
-  if (!ownsAudio()) throw new Error('Claim this session on a verified device before enabling the wake word.');
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition; if (!Recognition) throw new Error('Wake-word mode is not supported by this browser. Use Record voice.');
-  stopAudio(); const recognition = new Recognition(); state.recognition = recognition; recognition.continuous = true; recognition.lang = 'en-GB';
+  if (!ownsAudio()) throw new Error('Claim this session on a verified device before enabling cloud keyword listening.');
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition; if (!Recognition) throw new Error('Cloud speech recognition is not supported by this browser. Use Record voice.');
+  if (!window.confirm('Enable cloud speech recognition? Your browser may continuously send microphone audio to its speech provider while this page is visible. This is not local Hey JARVIS detection.')) return;
+  stopAudio(); await acquireLocalAudio(selected().id); const recognition = new Recognition(); state.recognition = recognition; recognition.continuous = true; recognition.lang = 'en-GB';
   recognition.onresult = e => { if (!ownsAudio()) { stopAudio(); return; } for (let i = e.resultIndex; i < e.results.length; i++) { if (!e.results[i].isFinal) continue; const text = e.results[i][0].transcript; const match = /\bjarvis\b[,.]?\s*(.*)/i.exec(text); if (match) { $('message').value = match[1]; notice('Heard “Jarvis”. Review your message before sending.'); } } };
   recognition.onerror = e => { stopAudio(); notice(`Speech recognition stopped: ${e.error}`, true); };
-  recognition.onend = () => { state.recognition = null; $('wake').textContent = 'Enable “Jarvis”'; };
-  recognition.start(); $('wake').textContent = 'Disable “Jarvis”'; notice('Listening for “Jarvis” while this page is visible. Your browser may send speech to its recognition provider.');
+  recognition.onend = () => { if (state.recognition !== recognition) return; state.recognition = null; releaseLocalAudio(); $('wake').textContent = 'Enable cloud keyword listening'; };
+  try { recognition.start(); } catch (error) { stopAudio(); throw error; } $('wake').textContent = 'Disable cloud keyword listening'; notice('Cloud keyword listening is active while this page is visible. Your browser may send microphone audio to its speech provider.');
 });
 document.addEventListener('visibilitychange', () => { if (document.hidden) stopAudio(); });
 window.addEventListener('pagehide', () => stopAudio());

@@ -1,27 +1,35 @@
+Current Android direction: audio-only earbuds companion; all features remain on Core. See [audio-only architecture](docs/adr/0002-audio-only-android-core-owned-product.md), [Core voice tools](docs/LIVE_VOICE.md) and [remaining Core work](docs/CORE_BACKLOG.md). Older release evidence below is historical.
+
 # JARVIS — personal companion
 
 JARVIS now includes the seven implementation areas in [the milestone scope](docs/MILESTONES.md): sessions, PostgreSQL persistence, devices and handoff, learning, integrations and tool auditing, conversation and voice, and a browser companion with deployment tooling.
 
-This is a single-user application with a shared API key. The browser runs on desktop and mobile. Native Android/Quest apps and satellite firmware are not included. Real cloud accounts and physical hardware still need to be connected and verified.
+This is a single-user application with a shared API key. The browser runs on desktop and mobile.
+An installable Kotlin/Compose Android personal test build is in the sibling `JARVIS.MOBILE`
+folder; [Android setup](../JARVIS.MOBILE/README.md) describes its scope and release gaps.
+Quest apps and satellite firmware are not included. Cloud accounts and voice hardware still need verification.
 
 ## Run
 
-Requires .NET 10 and Docker Desktop for PostgreSQL. Start Docker Desktop, then:
+For this machine's persistent Docker deployment, see [server operation](docs/SERVER.md).
+
+Requires .NET 11 SDK (11.0.100 or newer within .NET 11) and Docker Desktop for PostgreSQL. The workspace-local SDK is available at `../.tools/dotnet/dotnet.exe`; `scripts/test-backend.ps1` selects it automatically. Start Docker Desktop, then:
 
 ```powershell
-dotnet build
-# Only if you have not already configured a JARVIS API key:
-dotnet user-secrets set --project src/Jarvis.Api "Jarvis:ApiKey" "<your long random key>"
-.\scripts\run-milestone2.ps1
+# New installations only: copy the template, then fill in private values.
+# Do not overwrite an existing appsettings.json.
+Copy-Item appsettings.example.json appsettings.json
+# Set Jarvis.ApiKey and Database.Password in appsettings.json before starting.
+.\scripts\start-server.ps1
 ```
 
-Open [the companion](http://localhost:5185), enter your JARVIS API key, and create a conversation. The script creates a database password in Git-ignored `.env`, starts PostgreSQL, and enables persistent storage. Keep `.env` private; don't change its password after initializing the volume.
+Open [the companion](http://localhost:5185), enter `Jarvis.ApiKey` from the private, Git-ignored root `appsettings.json`, and create a conversation. Preserve `Database.Password` after initializing the database volume. The server reads this JSON file as its sole deployment configuration; `.env`, user-secrets, environment-specific JSON and environment overrides are not runtime configuration sources.
 
-For a quick in-memory session, use `dotnet run --project src/Jarvis.Api`. It warns that data will be lost on restart. Cloud integrations remain unavailable until configured; they never return mock successes in the application.
+For local Windows execution, use the .NET 11 SDK and `dotnet run --no-launch-profile --project src/Jarvis.Api`. It uses the same root settings, including `Server.Windows`, and connects to the configured exposed PostgreSQL port. Cloud integrations remain unavailable until their keys are configured.
 
 Open the HTTP address above, not `index.html` directly from File Explorer: the stylesheet,
 JavaScript and API are served together. PostgreSQL uses local port 15432 to avoid other
-projects on port 5432; override with `run-milestone2.ps1 -DatabasePort <port>` if needed.
+projects on port 5432; change `Database.ExposedPort` in `appsettings.json` if needed.
 
 ## What works
 
@@ -31,7 +39,13 @@ projects on port 5432; override with `run-milestone2.ps1 -DatabasePort <port>` i
 | Persistence | EF Core migrations, PostgreSQL stores, atomic updates and upgrade support |
 | Devices | Registration, heartbeat, capability verification, online status |
 | Handoff | Checkpoint → target ready → source audio release → target ownership; timeout recovery |
-| Learning | Five domains, due queue, four review ratings, persistent history, retry-safe reviews |
+| Learning | Shared due queue, four manual review ratings, persistent history and retry-safe reviews |
+| Technical practice | 16 questions across eight domains, Core-owned authored drills with browser and voice interfaces, saved answers, explicit self assessments, corrections and 1/3/7/14-day review scheduling; [scope](docs/TRAINING.md) |
+| Communication/interview coaching | 24 structured exercises, real-story/CV-claim prompts, versioned answers and explicit text observations; [scope](docs/COACHING.md) |
+| Session reviews & programme | Current cross-module reviews, local browser export, twelve-week focus plans and weekly self check-ins |
+| Browser modules | Story editor, technical practice, coaching, programme, workflow controls and module status; [coverage](docs/IMPLEMENTATION_STATUS.md) |
+| Practice workflows | Durable deterministic plans from due cards/stories, status events, cancellation, leased workers and bounded retries |
+| Paid interview drafts | Claude adapter, explicit cloud consent, budget reservations, validated source references and uncertain-charge protection; disabled until configured |
 | Conversation | OpenAI Responses API, activity coaching, saved transcript and duplicate-message protection |
 | Voice | Browser microphone recording → cloud transcription → reviewed message; browser speech output; opt-in foreground wake word |
 | Home | Allowlisted Home Assistant lights/switches, explicit confirmations, persistent audit and uncertain-outcome recovery |
@@ -40,9 +54,28 @@ projects on port 5432; override with `run-milestone2.ps1 -DatabasePort <port>` i
 
 Follow [configuration and device setup](docs/CONFIGURATION.md) to connect the external services. Calendar adapters currently accept current OAuth access tokens; automatic account linking and token refresh are not implemented. Wake-word support depends on the browser and is not an always-on background service. Speech output uses the browser's voice rather than a cloud TTS model.
 
+Development now follows the [master requirements](docs/JARVIS_MASTER_REQUIREMENTS_SINGLE_PRODUCT_2026-11-13.md).
+Android uses Kotlin/Jetpack Compose; see the [integration ADR](docs/adr/0001-unified-product-and-workflow-foundation.md)
+for the repository map, requirements precedence and pending mobile/agent gates.
+The Story Bank backend adds persistent draft stories with version-checked editing and deletion;
+see the [API reference](docs/API.md). Story editing in the browser and interview-coach integration
+are still pending. The [delivery scope](docs/MILESTONES.md) tracks remaining P0 areas.
+
+Practice workflows execute locally without model calls: Core selects due learning references
+and a saved story, persists the plan and exposes status/events through `/api/workflows`.
+This is an agent-runtime foundation slice, not the full proactive AI interview-brief workflow.
+
+The separate [paid AI workflow](docs/PAID_AI.md) generates a preparation draft and three drills
+when enabled with an API key and owner budgets. Calendar triggers and independent specialist
+coordination remain pending. Android can be paired over a private certificate-pinned debugging
+bridge without typing a link or Core key.
+
 ## Tests
 
-Latest [verification results](docs/VERIFICATION.md): 53 backend tests and 14 browser tests passed after the CQRS refactor. Earlier deployment checks also verified real container restart, backup/restore and live TfL. The verification scripts use PowerShell 7 (`pwsh`).
+Latest [verification results](docs/VERIFICATION.md): 82 backend tests passed with real PostgreSQL,
+14 browser tests passed, and the signed native APK passed four unit tests and lint checks.
+It was installed and connected on the user's Samsung phone. The Production server was upgraded
+after backup; paid calls remain disabled until configured. Scripts use PowerShell 7 (`pwsh`).
 
 ```powershell
 # Fast API, orchestration and simulated provider tests; database tests show as skipped:
@@ -67,10 +100,10 @@ npm run test:browser
 
 ## Deploy and back up
 
-Add `JARVIS_API_KEY` to your private `.env` alongside `JARVIS_POSTGRES_PASSWORD`, then:
+Keep the existing private `appsettings.json`, including its API key and database password, then:
 
 ```powershell
-docker compose -f compose.yaml -f compose.app.yaml up -d --build
+.\scripts\start-server.ps1
 .\scripts\backup-database.ps1
 .\scripts\restore-database.ps1 -BackupPath '<backup.dump>' -NewDatabaseName jarvis_restore_check
 ```

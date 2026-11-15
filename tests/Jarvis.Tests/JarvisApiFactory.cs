@@ -10,7 +10,7 @@ public sealed class JarvisApiFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Testing");
+        TestBudgetSource.Configure(builder); builder.UseEnvironment("Testing");
         builder.UseSetting("Jarvis:ApiKey", TestKey);
         builder.UseSetting("Jarvis:StorageProvider", "InMemory");
     }
@@ -19,6 +19,7 @@ public sealed class JarvisApiFactory : WebApplicationFactory<Program>
     {
         var client = CreateClient();
         client.DefaultRequestHeaders.Add("X-Jarvis-Key", TestKey);
+        TestOwnerManagement.Authorize(client);
         return client;
     }
 }

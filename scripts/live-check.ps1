@@ -1,10 +1,13 @@
 param(
-    [string]$BaseUrl = 'http://localhost:5185',
-    [string]$Key = $env:Jarvis__ApiKey,
+    [string]$BaseUrl = '',
+    [string]$Key = '',
     [switch]$Conversation
 )
 $ErrorActionPreference = 'Stop'
-if ([string]::IsNullOrWhiteSpace($Key)) { throw 'Set Jarvis__ApiKey in this shell or pass -Key.' }
+. (Join-Path $PSScriptRoot 'backend-configuration.ps1')
+$configuration = Get-JarvisConfiguration
+if (!$Key) { $Key = $configuration.Jarvis.ApiKey }
+if (!$BaseUrl) { $BaseUrl = 'http://127.0.0.1:' + $configuration.Server.HttpPort }
 $headers = @{ 'X-Jarvis-Key' = $Key }
 $results = [System.Collections.Generic.List[object]]::new()
 function Check([string]$Name, [scriptblock]$Action) {

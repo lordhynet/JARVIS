@@ -28,6 +28,8 @@ public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IH
 
     public async Task<AuditedTool> RequestAsync(HomeActionRequest request, CancellationToken ct)
     {
+        // JSON can make a request more restrictive, never turn an agent/external origin into a human action.
+        request = request with { TriggeredByExternalContent = request.TriggeredByExternalContent || CoreInvocationContext.Origin != InvocationOrigin.ManualClient };
         Guard.Require(request.RequestId != Guid.Empty, 400, "RequestId is required.");
         Guard.Require(request.EntityId is not null && Regex.IsMatch(request.EntityId, "^(light|switch)\\.[a-z0-9_]{1,100}$"),
             400, "Only light and switch entities are supported.");
@@ -38,6 +40,7 @@ public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IH
         var args = JsonSerializer.Serialize(new { entityId = request.EntityId, action = request.Action });
         return await store.UpdateAsync(s =>
         {
+            Guard.Require(!s.RetiredSessions.Contains(request.SessionId), 409, "This session was retired by retention.");
             if (s.Tools.TryGetValue(request.RequestId, out var existing))
             {
                 Guard.Require(existing.Invocation.SessionId == request.SessionId && existing.Invocation.ArgumentsJson == args &&
@@ -57,6 +60,7 @@ public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IH
 
     public async Task<AuditedTool> ConfirmAsync(Guid id, bool approve, CancellationToken ct)
     {
+        Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.ManualClient, 403, "Agent, voice and external content cannot confirm home actions.");
         var claimed = await store.UpdateAsync(s =>
         {
             Guard.Require(s.Tools.TryGetValue(id, out var tool), 404, "Tool request not found.");
@@ -92,6 +96,7 @@ public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IH
         }
         return await store.UpdateAsync(s =>
         {
+            Guard.Require(!s.RetiredSessions.Contains(claimed.Tool.Invocation.SessionId), 409, "The tool's source session was retired during execution.");
             var updated = s.Tools[id] with { Invocation = s.Tools[id].Invocation with { Status = outcome },
                 Result = result, CompletedAt = clock.GetUtcNow() };
             s.Tools[id] = updated;

@@ -6,7 +6,13 @@ public enum LearningDomain
     SystemDesign,
     French,
     InterviewStory,
-    Communication
+    Communication,
+    CSharpDotNet,
+    DistributedSystems,
+    Databases,
+    ApiSecurity,
+    ProductionDevOps,
+    PaymentsFintech
 }
 
 /// <summary>One thing to remember, scheduled by the spaced-repetition engine.</summary>
@@ -18,7 +24,10 @@ public sealed record LearningItem(
     double Stability,
     double Difficulty,
     DateTimeOffset DueAt,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    double? MasteryScore = null,
+    int StrongStreak = 0,
+    string SchedulingRuleVersion = "manual-interval-v1", string MasterySource = "unknown");
 
 /// <summary>How well a review went, on the standard 4-point scale used by FSRS/Anki.</summary>
 public enum ReviewRating
@@ -34,4 +43,9 @@ public sealed record ReviewEvent(
     Guid LearningItemId,
     ReviewRating Rating,
     TimeSpan ResponseTime,
-    DateTimeOffset ReviewedAt);
+    DateTimeOffset ReviewedAt, string TimingSource = "user_reported");
+
+// Stores references only; captured words remain in the canonical session/voice history.
+public sealed record VoiceRecall(Guid Id, Guid SessionId, Guid CardId, string CardFingerprint, string Status,
+    Guid StartUtteranceId, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+    Guid? AnswerUtteranceId = null, Guid? RatingUtteranceId = null, ReviewRating? Rating = null);

@@ -4,7 +4,7 @@ using Jarvis.Orchestrator.Sessions;
 namespace Jarvis.Orchestrator.Runtime;
 
 public sealed class SessionLifecycleService(ISessionStore store, DeviceService devices,
-    ISessionNotifier notifier, TimeProvider clock)
+    ISessionNotifier notifier, TimeProvider clock, IRuntimeStore runtime)
 {
     public Task<ConversationSession> TransitionAsync(Guid id, SessionStatus status, CancellationToken ct) =>
         Change(id, s =>
@@ -18,6 +18,8 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
     public async Task<ConversationSession> ClaimAsync(Guid id, string deviceId, CancellationToken ct)
     {
         await devices.RequireOnlineAsync(deviceId, false, ct);
+        Guard.Require(await runtime.ReadAsync(s => s.AudioLease is null || s.AudioLease.ExpiresAt <= clock.GetUtcNow() ||
+            s.AudioLease.SessionId == id && s.AudioLease.DeviceId == deviceId, ct), 409, "Another session has an active audio lease.");
         return await Change(id, s =>
         {
             Guard.Require(s.Status == SessionStatus.Active, 409, "Session must be active.");
@@ -99,6 +101,14 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
             return change(s) with { UpdatedAt = clock.GetUtcNow() };
         }, ct);
         Guard.Require(result is not null, 404, "Session not found.");
+        await runtime.UpdateAsync(s =>
+        {
+            if (s.AudioLease?.SessionId == id && (result.Status != SessionStatus.Active || result.ActiveDeviceId != s.AudioLease.DeviceId)) {
+                if (eventType == "handoff.release") s.AudioLease = null; // Source explicitly acknowledges stopped audio.
+                else AudioFencing.Revoke(s);
+            }
+            return true;
+        }, ct);
         await notifier.PublishAsync(new(eventType, id, result!.Status, result.ActiveDeviceId, clock.GetUtcNow()), ct);
         return result;
     }

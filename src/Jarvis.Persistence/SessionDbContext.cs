@@ -8,11 +8,30 @@ namespace Jarvis.Persistence;
 public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options) : DbContext(options)
 {
     public DbSet<SessionRow> Sessions => Set<SessionRow>();
+    public DbSet<PrivacyControlRow> PrivacyControls => Set<PrivacyControlRow>();
+    public DbSet<PrivacyJobRow> PrivacyJobs => Set<PrivacyJobRow>();
     public DbSet<CheckpointRow> Checkpoints => Set<CheckpointRow>();
     public DbSet<RuntimeDocument> RuntimeDocuments => Set<RuntimeDocument>();
+    public DbSet<WorkflowRunRow> WorkflowRuns => Set<WorkflowRunRow>();
+    public DbSet<WorkflowEventRow> WorkflowEvents => Set<WorkflowEventRow>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
+        model.Entity<PrivacyControlRow>(b => { b.HasKey(x => x.Id); b.HasData(new PrivacyControlRow()); });
+        model.Entity<PrivacyJobRow>(b => { b.HasKey(x => x.Id); b.Property(x => x.CountsJson).HasColumnType("jsonb"); b.HasIndex(x => x.CompletedAt); });
+        model.Entity<WorkflowRunRow>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Json).HasColumnType("jsonb");
+            b.HasIndex(x => x.AvailableAt);
+            b.HasIndex(x => x.CreatedAt);
+        });
+        model.Entity<WorkflowEventRow>(b =>
+        {
+            b.HasKey(x => x.EventId);
+            b.HasIndex(x => new { x.RunId, x.Revision }).IsUnique();
+            b.HasOne<WorkflowRunRow>().WithMany().HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.Cascade);
+        });
         model.Entity<RuntimeDocument>(b =>
         {
             b.HasKey(r => r.Id);
