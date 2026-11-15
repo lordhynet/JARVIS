@@ -18,17 +18,37 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         return json is null ? null : JsonSerializer.Deserialize<SessionHandoff>(json);
     }
     public async Task<IReadOnlyList<SessionPreparationState>> ListPreparationAsync(CancellationToken ct = default)
+        => await ListPreparationCoreAsync(null, null, ct);
+    public async Task<IReadOnlyList<SessionPreparationState>> ListPreparationAsync(string deviceId, Guid preferredCheckpointId, CancellationToken ct = default)
+        => await ListPreparationCoreAsync(deviceId, preferredCheckpointId, ct);
+    private async Task<IReadOnlyList<SessionPreparationState>> ListPreparationCoreAsync(string? deviceId, Guid? preferredCheckpointId, CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
         // Count JSON array entries in PostgreSQL; never transfer transcript contents for selection.
-        var rows = await db.Database.SqlQueryRaw<PreparationRow>("""
+        List<PreparationRow> rows;
+        if (deviceId is null)
+            rows = await db.Database.SqlQueryRaw<PreparationRow>("""
             SELECT s."Id", s."Status", s."ActiveDeviceId", s."Title", s."UpdatedAt", s."HandoffJson",
                 jsonb_array_length(s."MessagesJson"::jsonb) AS "MessageCount"
             FROM "Sessions" s
             """).ToListAsync(ct);
-        var checkpoints = await db.Checkpoints.AsNoTracking().Select(c => new { c.Id, c.SessionId }).ToListAsync(ct);
+        else
+            rows = await db.Database.SqlQuery<PreparationRow>($"""
+                SELECT s."Id", s."Status", s."ActiveDeviceId", s."Title", s."UpdatedAt", s."HandoffJson",
+                    jsonb_array_length(s."MessagesJson"::jsonb) AS "MessageCount"
+                FROM "Sessions" s
+                WHERE s."Id" = {preferredCheckpointId}
+                   OR EXISTS (SELECT 1 FROM "Checkpoints" c WHERE c."SessionId" = s."Id" AND c."Id" = {preferredCheckpointId})
+                   OR s."ActiveDeviceId" = {deviceId}
+                   OR (s."Status" = {(int)SessionStatus.Paused} AND s."ActiveDeviceId" IS NULL AND s."Title" = 'JARVIS voice')
+                   OR (s."Status" = {(int)SessionStatus.Active} AND s."HandoffJson" IS NOT NULL
+                       AND s."HandoffJson"::jsonb ->> 'ToDeviceId' = {deviceId})
+                """).ToListAsync(ct);
+        var sessionIds = rows.Select(s => s.Id).ToArray();
+        var checkpoints = await db.Checkpoints.AsNoTracking().Where(c => sessionIds.Contains(c.SessionId))
+            .Select(c => new { c.Id, c.SessionId }).ToListAsync(ct);
         await tx.CommitAsync(ct);
         var ids = checkpoints.ToLookup(c => c.SessionId, c => c.Id);
         return rows.Select(s => new SessionPreparationState(s.Id, s.Status, s.ActiveDeviceId, s.Title, s.UpdatedAt,

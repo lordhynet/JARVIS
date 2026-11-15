@@ -15,10 +15,11 @@ public sealed class CompanionVoiceService(ISessionStore sessions, DeviceService 
         Guard.Require(request.RequestId != Guid.Empty && request.AllowCloudProcessing, 400, "An explicit, consented voice start is required.");
         var deviceId = Guard.Text(request.DeviceId, "DeviceId", 80);
         await devices.RequireOnlineAsync(deviceId, true, ct);
+        var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"companion-voice-v1:{deviceId}:{request.RequestId}"))[..16]);
         await preparation.WaitAsync(ct);
         try
         {
-            var candidates = await sessions.ListPreparationAsync(ct);
+            var candidates = await sessions.ListPreparationAsync(deviceId, id, ct);
             var incoming = candidates.Where(s => s.Status == SessionStatus.Active &&
                 SessionLifecycleService.Pending(s.Handoff) && s.Handoff!.ToDeviceId == deviceId && s.Handoff.ExpiresAt > clock.GetUtcNow()).ToList();
             Guard.Require(incoming.Count <= 1, 409, "More than one incoming conversation is waiting. Select one on the source device.");
@@ -50,7 +51,6 @@ public sealed class CompanionVoiceService(ISessionStore sessions, DeviceService 
             Guard.Require(await runtime.ReadAsync(s => (s.AudioLease is null || s.AudioLease.ExpiresAt <= clock.GetUtcNow()) &&
                 (s.AudioDrainUntil is null || s.AudioDrainUntil <= clock.GetUtcNow()), ct),
                 409, "Another voice connection is active. Stop it before starting this one.");
-            var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"companion-voice-v1:{deviceId}:{request.RequestId}"))[..16]);
             var all = candidates;
             var selected = all.FirstOrDefault(s => s.Id == id || s.CheckpointIds.Contains(id));
             if (selected is null)
