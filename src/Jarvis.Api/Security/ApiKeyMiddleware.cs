@@ -90,7 +90,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
     {
         var path = request.Path.Value?.TrimEnd('/');
         return request.Method == "GET" && path is "/api/privacy/status" or "/api/voice/status" or "/api/devices" ||
-            request.Method == "POST" && (path is "/api/voice/prepare" or "/api/voice/tickets" || path == $"/api/devices/{deviceId}/heartbeat");
+            request.Method == "POST" && (path is "/api/voice/prepare" or "/api/voice/tickets" or "/api/voice/local/release" || path == $"/api/devices/{deviceId}/heartbeat");
     }
     private static string? OwnerScope(HttpRequest request)
     {

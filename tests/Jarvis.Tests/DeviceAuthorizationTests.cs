@@ -9,6 +9,21 @@ namespace Jarvis.Tests;
 
 public sealed class DeviceAuthorizationTests
 {
+    [Fact]
+    public async Task Companion_can_acknowledge_own_stopped_lease_but_not_another_devices_lease()
+    {
+        using var host = new JarvisApiFactory(); var issued = await Enrol(host); using var phone = Companion(host, issued);
+        var services = host.Services; var devices = services.GetRequiredService<DeviceService>();
+        await devices.VerifyAsync("phone"); var now = DateTimeOffset.UtcNow; var id = Guid.NewGuid();
+        await services.GetRequiredService<ISessionStore>().AddAsync(new(id, ActivityType.General, "Fixture", SessionStatus.Active, "phone", null, now, now, []));
+        var audio = services.GetRequiredService<AudioOwnership>(); var ticket = await audio.StartAsync(new(id, "phone", true), default);
+        await services.GetRequiredService<IRuntimeStore>().UpdateAsync(s => { AudioFencing.Revoke(s); return true; });
+        using var wrong = await phone.PostAsJsonAsync("/api/voice/local/release", ticket.Lease with { DeviceId = "another" });
+        Assert.Equal(HttpStatusCode.Forbidden, wrong.StatusCode);
+        using var own = await phone.PostAsJsonAsync("/api/voice/local/release", ticket.Lease); own.EnsureSuccessStatusCode();
+        Assert.True(await own.Content.ReadFromJsonAsync<bool>());
+        Assert.Null(await services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AudioDrainUntil));
+    }
     private static async Task<IssuedDeviceCredential> Enrol(JarvisApiFactory host)
     {
         await host.Services.GetRequiredService<DeviceService>().RegisterAsync(new("phone", "Audio companion", DeviceKind.AndroidCompanion, new(true, true, false, false, ["audio-only"])));
