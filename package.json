@@ -1,0 +1,6 @@
+{
+  "name": "jarvis-browser-modules",
+  "private": true,
+  "type": "module",
+  "scripts": { "check": "node --check modules.js" }
+}
