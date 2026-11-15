@@ -87,6 +87,7 @@ public sealed class CoachingService(IRuntimeStore store, ISessionReader sessions
     {
         state.CoachingAttempts[attempt.Id] = attempt with { Answers = [], DeletedAt = at, Revision = checked(attempt.Revision + 1), AiAssessmentId = null };
         foreach (var id in state.AiCoachAssessments.Where(x => x.Value.AttemptId == attempt.Id).Select(x => x.Key).ToList()) state.AiCoachAssessments.Remove(id);
+        foreach (var id in state.AiCoachAssessmentClaims.Where(x => x.Value.AttemptId == attempt.Id).Select(x => x.Key).ToList()) state.AiCoachAssessmentClaims.Remove(id);
         ReasoningLifecycle.Retire(state, attempt.Id);
     }
     private static CoachingAttempt Current(RuntimeState s, Guid id, int revision)

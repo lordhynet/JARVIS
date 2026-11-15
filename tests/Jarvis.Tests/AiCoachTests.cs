@@ -101,6 +101,36 @@ public sealed class AiCoachTests
         Assert.Equal(409, (await Assert.ThrowsAsync<DomainException>(() => host.Services.GetRequiredService<AiCoach>().CoachingAsync(answer.Attempt.Id, new(Guid.NewGuid(), answer.Attempt.Revision, 1, true), default))).StatusCode);
         Assert.Empty(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AiCoachAssessments));
     }
+
+    [Fact]
+    public async Task Concurrent_coaching_assessments_claim_one_slot_before_provider_dispatch()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        using var host = new ProviderFactory(async _ =>
+        {
+            Interlocked.Increment(ref calls); entered.TrySetResult(); await release.Task;
+            return Response("I owned the migration");
+        });
+        using var client = host.Client(); var answer = await Answer(host); var ai = host.Services.GetRequiredService<AiCoach>();
+        var requests = Enumerable.Range(0, 6).Select(_ => new AiAssessmentRequest(Guid.NewGuid(), answer.Attempt.Revision, 1, true)).ToArray();
+        var tasks = requests.Select(async request =>
+        {
+            try { await ai.CoachingAsync(answer.Attempt.Id, request, default); return 200; }
+            catch (DomainException exception) { return exception.StatusCode; }
+        }).ToArray();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(150);
+        release.TrySetResult();
+        var results = await Task.WhenAll(tasks);
+        Assert.Equal(1, calls);
+        Assert.Equal(1, results.Count(status => status == 200));
+        Assert.Equal(5, results.Count(status => status == 409));
+        var state = await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => (s.AiCoachAssessments.Count, s.AiCoachAssessmentClaims.Count));
+        Assert.Equal((1, 0), state);
+    }
+
     [Fact]
     public async Task Deletion_during_provider_processing_cannot_recreate_private_provider_cache()
     {

@@ -37,6 +37,7 @@ public sealed class RuntimeState
     public Dictionary<Guid, AgentTask> AgentTasks { get; set; } = [];
     public Dictionary<Guid, AgentNotification> AgentOutbox { get; set; } = [];
     public Dictionary<Guid, AiCoachAssessment> AiCoachAssessments { get; set; } = [];
+    public Dictionary<Guid, AiCoachAssessmentClaim> AiCoachAssessmentClaims { get; set; } = [];
     public AudioLease? AudioLease { get; set; }
     public AudioLease? AudioDrainLease { get; set; }
     public DateTimeOffset? AudioDrainUntil { get; set; }
@@ -59,6 +60,9 @@ public sealed class RuntimeState
     public Dictionary<Guid, LearningReview> Reviews { get; set; } = [];
     public Dictionary<Guid, AuditedTool> Tools { get; set; } = [];
 }
+
+public sealed record AiCoachAssessmentClaim(Guid RequestId, Guid AttemptId, Guid ClaimId,
+    int ExpectedRevision, int TextRevision, DateTimeOffset ExpiresAt);
 
 public sealed record TrainingOperation(string Kind, Guid AttemptId, string Fingerprint);
 public sealed record HubAccessTicket(string KeyFingerprint, long Epoch, DateTimeOffset ExpiresAt);

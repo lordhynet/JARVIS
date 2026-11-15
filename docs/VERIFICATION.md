@@ -511,3 +511,9 @@ The updated release APK was then assembled successfully with `:app:assembleRelea
 Added a device-scoped preparation projection. PostgreSQL filters to the requesting device's sessions, matching handoff targets, paused unclaimed `JARVIS voice` sessions, and the deterministic session/checkpoint ID before parsing message counts. Checkpoint IDs are queried only for those candidate sessions. The compatibility default preserves existing non-Postgres readers; no migration or route change was needed.
 
 Fresh validation after the change: the focused PostgreSQL projection test passed (one test) and the Core wake-candidate HTTP arbitration test passed (one test). The former asserts an unrelated active session owned by another device is omitted; the latter verifies one audio-ticket winner and a conflict for a competing device. Both runs built API and test projects successfully.
+
+## TD-19 atomic AI-coaching assessment admission — 15 November 2026
+
+Coaching AI assessment now acquires a five-minute, token-fenced claim in the shared runtime state before dispatch. It atomically rechecks the current answer/source, assessment-history cap, duplicate request ID and any in-flight claim for the same attempt. A successful response consumes its claim in the same update that saves the assessment; failures release it, and stale claims expire. Deleting/retaining the source removes its claims. No database migration or project/dependency change was needed.
+
+Fresh validation: all six `AiCoachTests` passed (zero failures/skips). The new concurrent test submits six distinct assessment requests against one answer while the fake provider is blocked; exactly one provider dispatch and saved assessment succeed, and five requests receive conflict. Existing consent, idempotency, fabricated-evidence, source-change and deletion-race checks also pass. Provider calls use only the local fake HTTP adapter.
