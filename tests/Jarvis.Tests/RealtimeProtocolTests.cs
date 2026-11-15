@@ -166,8 +166,14 @@ public sealed class RealtimeProtocolTests
         Assert.Equal("paid_ai_paused", error.GetProperty("reason").GetString());
         var usage = Assert.Single(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.UsageReservations.Values.ToArray()));
         Assert.NotNull(usage.ActualUsd); Assert.False(usage.ReconciliationRequired);
-        Assert.Null(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AudioLease));
-        Assert.Null(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AudioDrainUntil));
+        var runtime = host.Services.GetRequiredService<IRuntimeStore>(); var ownership = host.Services.GetRequiredService<AudioOwnership>();
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        while (!await runtime.ReadAsync(s => s.AudioLease is null, cleanup.Token)) await Task.Delay(10, cleanup.Token);
+        Assert.Null(await runtime.ReadAsync(s => s.AudioDrainUntil, cleanup.Token));
+        var localAudio = await ownership.StartLocalAsync(id, "pause-phone", cleanup.Token);
+        Assert.True(await ownership.CurrentAsync(localAudio, cleanup.Token));
+        Assert.True(await runtime.ReadAsync(s => s.AgentControls.EffectivePaidAiPaused, cleanup.Token));
+        Assert.True(await ownership.ReleaseAsync(localAudio, cleanup.Token));
     }
 
     [Theory]
