@@ -23,7 +23,8 @@ public sealed class ReviewClosureTests
         var id = Guid.NewGuid(); var now = DateTimeOffset.UtcNow;
         await sessions.AddAsync(new(id, ActivityType.General, "Fixture", SessionStatus.Active, null, null, now, now, []));
         var tools = services.GetRequiredService<ToolService>();
-        foreach (var origin in new[] { InvocationOrigin.Agent, InvocationOrigin.Voice, InvocationOrigin.ExternalContent }) {
+        Assert.Equal(InvocationOrigin.Unknown, CoreInvocationContext.Origin);
+        foreach (var origin in new[] { InvocationOrigin.Unknown, InvocationOrigin.Agent, InvocationOrigin.Voice, InvocationOrigin.ExternalContent }) {
             using var scope = CoreInvocationContext.Enter(origin);
             var action = await tools.RequestAsync(new(Guid.NewGuid(), id, "light.desk", "turn_on", false), default);
             Assert.Equal(ToolInvocationStatus.Rejected, action.Invocation.Status);

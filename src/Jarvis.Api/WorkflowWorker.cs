@@ -12,6 +12,7 @@ public sealed class WorkflowWorker(WorkflowService service, PracticePlanProcesso
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using var invocation = CoreInvocationContext.Enter(InvocationOrigin.Agent);
         if (!configuration.GetValue("Jarvis:WorkflowsEnabled", true)) return;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         while (await timer.WaitForNextTickAsync(stoppingToken))

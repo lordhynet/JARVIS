@@ -77,6 +77,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
         }
         if (OwnerScope(context.Request) is { } scope) owner.Require(context, scope);
         using var credentialScope = DeviceCredentialContext.Enter((CoreActor)context.Items[ActorItem]!);
+        using var invocation = CoreInvocationContext.Enter(actor is null ? InvocationOrigin.ManualClient : InvocationOrigin.ExternalContent);
         await next(context);
     }
 

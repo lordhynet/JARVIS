@@ -11,6 +11,7 @@ public sealed class RuntimeWorker(ICommandHandler<ExpireHandoffs, CommandComplet
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using var invocation = CoreInvocationContext.Enter(InvocationOrigin.Agent);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         var nextPrune = clock.GetUtcNow().AddMinutes(1);
         while (await timer.WaitForNextTickAsync(stoppingToken))

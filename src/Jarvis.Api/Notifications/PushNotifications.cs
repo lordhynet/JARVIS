@@ -106,3 +106,4 @@ public sealed class PushWorker(PushNotifications notifications, IPrivacyReader p
             catch (Exception error) { logger.LogWarning("Browser push delivery failed ({Type}).", error.GetType().Name); }
     }
 }
+        using var invocation = CoreInvocationContext.Enter(InvocationOrigin.Agent);
