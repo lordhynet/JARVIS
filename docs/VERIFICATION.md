@@ -555,3 +555,9 @@ Fresh validation: the API/test build succeeded and 13 focused tests passed (zero
 Domain proposal/draft, activation/rollback, disable and user-state writes now use application command handlers; list/preview/state reads use separate query handlers. Owner step-up remains at the HTTP boundary and the resulting `BudgetActor` is passed into the application command. Routes, confirmation payloads and domain-registry behavior are unchanged.
 
 Fresh validation: API/test build succeeded and 14 focused tests passed (zero failures/skips), covering complete handler registration, draft endpoint delegation, registry approval/risk behavior and PostgreSQL persistence. The architecture test caught and prevented a combined read/write handler; query and command handlers are separate in the final implementation.
+
+## Device credential administration through CQRS — 15 November 2026
+
+Owner-authorized device credential issuance and revocation endpoints now dispatch through the existing device command handler. The credential service still generates the one-time secret, stores only its hash, and invalidates the target device's audio lease/tickets on rotation or revocation. Middleware owner step-up, endpoint paths and response semantics are unchanged.
+
+Fresh validation: API/test build succeeded and 32 focused CQRS/device-authorization tests passed (zero failures/skips), including device credential enrollment, route restrictions, revocation, lease fencing and PostgreSQL restart behavior.

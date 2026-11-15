@@ -108,6 +108,8 @@ public static class CqrsRegistration
         Command<RegisterDevice, RegisteredDevice, DeviceCommandHandlers>(services);
         Command<HeartbeatDevice, RegisteredDevice, DeviceCommandHandlers>(services);
         Command<VerifyDevice, RegisteredDevice, DeviceCommandHandlers>(services);
+        Command<IssueDeviceCredential, IssuedDeviceCredential, DeviceCommandHandlers>(services);
+        Command<RevokeDeviceCredential, bool, DeviceCommandHandlers>(services);
         Command<CreateLearningItem, LearningItem, LearningCommandHandlers>(services);
         Command<ReviewLearningItem, LearningItem, LearningCommandHandlers>(services);
         Command<CreateStory, Story, StoryCommandHandlers>(services);

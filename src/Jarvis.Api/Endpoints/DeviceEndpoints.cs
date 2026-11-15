@@ -16,8 +16,8 @@ public static class DeviceEndpoints
             return context.Items[ApiKeyMiddleware.ActorItem] is CoreActor { DeviceId: { } id }
                 ? devices.Where(d => d.Device.Registration.DeviceId == id).ToArray() : devices;
         });
-        group.MapPost("/{id}/credential", (string id, DeviceCredentials credentials, CancellationToken ct) => credentials.IssueAsync(id, ct));
-        group.MapDelete("/{id}/credential", (string id, DeviceCredentials credentials, CancellationToken ct) => credentials.RevokeAsync(id, ct));
+        group.MapPost("/{id}/credential", (string id, ICommandHandler<IssueDeviceCredential, IssuedDeviceCredential> handler, CancellationToken ct) => handler.HandleAsync(new IssueDeviceCredential(id), ct));
+        group.MapDelete("/{id}/credential", (string id, ICommandHandler<RevokeDeviceCredential, bool> handler, CancellationToken ct) => handler.HandleAsync(new RevokeDeviceCredential(id), ct));
         group.MapPost("/", (RegisterDeviceRequest request, ICommandHandler<RegisterDevice, RegisteredDevice> handler, CancellationToken ct) =>
             handler.HandleAsync(new RegisterDevice(request), ct));
         group.MapPost("/{id}/heartbeat", (string id, ICommandHandler<HeartbeatDevice, RegisteredDevice> handler, CancellationToken ct) =>
