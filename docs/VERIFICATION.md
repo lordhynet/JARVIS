@@ -587,3 +587,9 @@ The first full PostgreSQL-backed run of `.\scripts\test-backend.ps1` found one f
 ## Round 3 Item 0 full verification — 15 November 2026
 
 On source HEAD `aaf4740` (before this verification-only commit), the full backend suite with PostgreSQL passed: `.\scripts\test-backend.ps1` — 325 passed, zero failures/skips. Full desktop and mobile Playwright passed: `npm run test:browser -- --reporter=list` — 50 passed (25 desktop Chrome, 25 Pixel 7) in 4.1 minutes. Android validation passed: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-workers=1` — 23 debug unit tests passed, zero failures/errors/skips; release lint passed. Item 0 is complete. No Round 3 Item 1 implementation has started.
+
+## Round 3 RR3-01 — wake candidate companion authorization
+
+Added `POST /api/voice/wake-candidates` to the scoped companion route allowlist. A device credential can reach wake arbitration only with its bound device ID; a request naming another device receives 403. The integration test issues and uses a real `jdv1_` credential and uses a fake provider transport (wake arbitration does not call it).
+
+Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~DeviceAuthorizationTests"` passed 25/25, zero failures/skips.

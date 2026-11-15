@@ -81,6 +81,32 @@ public sealed class DeviceAuthorizationTests
         Assert.Equal(HttpStatusCode.Conflict, overwrite.StatusCode);
     }
 
+    [Fact]
+    public async Task Scoped_device_credential_can_claim_its_own_wake_candidate_but_not_another_device()
+    {
+        using var factory = new ProviderFactory(_ => throw new InvalidOperationException("Wake arbitration must not call a provider."));
+        var services = factory.Services; var deviceId = "wake-credential-phone";
+        var devices = services.GetRequiredService<DeviceService>();
+        await devices.RegisterAsync(new(deviceId, "Wake fixture", DeviceKind.AndroidCompanion, new(true, true, false, false, ["audio-only"])));
+        await devices.VerifyAsync(deviceId);
+        using var owner = factory.Client();
+        using var issuedResponse = await owner.PostAsJsonAsync($"/api/devices/{deviceId}/credential", new { });
+        issuedResponse.EnsureSuccessStatusCode();
+        var issued = (await issuedResponse.Content.ReadFromJsonAsync<IssuedDeviceCredential>())!;
+        using var companion = factory.CreateClient(); companion.DefaultRequestHeaders.Add("X-Jarvis-Key", issued.Secret);
+
+        using var ownResponse = await companion.PostAsJsonAsync("/api/voice/wake-candidates",
+            new WakeCandidateRequest(Guid.NewGuid(), deviceId, true));
+        ownResponse.EnsureSuccessStatusCode();
+        var winner = (await ownResponse.Content.ReadFromJsonAsync<WakeCandidateResponse>())!;
+        Assert.Equal(deviceId, winner.Voice.Lease.DeviceId);
+        Assert.NotEmpty(winner.Voice.Ticket);
+
+        using var spoofedResponse = await companion.PostAsJsonAsync("/api/voice/wake-candidates",
+            new WakeCandidateRequest(Guid.NewGuid(), "another-device", true));
+        Assert.Equal(HttpStatusCode.Forbidden, spoofedResponse.StatusCode);
+    }
+
     [Theory]
     [InlineData("GET", "/api/privacy/export")]
     [InlineData("POST", "/api/privacy/erase")]
