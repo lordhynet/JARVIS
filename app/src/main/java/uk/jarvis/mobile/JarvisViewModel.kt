@@ -66,7 +66,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                     prefs.edit().putString("id", deviceId).apply()
                 }
                 val existing = devices.firstOrNull { it.device.registration.deviceId == deviceId }
-                if (existing == null || "audio-only" !in existing.device.registration.capabilities.extra) {
+                if (CompanionRegistrationPolicy.shouldRegister(saved.token.startsWith("jdv1_"), existing != null,
+                    existing?.device?.registration?.capabilities?.extra?.contains("audio-only") == true)) {
                     client.send("/api/devices", mapOf("deviceId" to deviceId, "name" to "Android ${Build.MODEL}", "kind" to "AndroidCompanion",
                         "capabilities" to mapOf("canListen" to true, "canSpeak" to true, "hasDisplay" to false, "canControlHome" to false, "extra" to listOf("native-android", "audio-only"))), JsonObject::class.java)
                 } else client.send("/api/devices/$deviceId/heartbeat", emptyMap<String, String>(), JsonObject::class.java)
@@ -78,7 +79,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (client != null && revoked(error)) revoke(client, CompanionAccessPolicy.eraseLegacyFor(error))
-                else mutable.value = ScreenState(pairingOffered = offer != null, notice = "Could not reach Core: ${error.message.orEmpty()}")
+                else mutable.value = ScreenState(pairingOffered = offer != null, notice = if (error is CompanionSetupException) error.message.orEmpty() else "Could not reach Core: ${error.message.orEmpty()}")
             } finally { mutable.update { it.copy(busy = false) } }
         }
     }
