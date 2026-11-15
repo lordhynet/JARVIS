@@ -7,7 +7,7 @@ public sealed record AgentSchedule(Guid Id, string Title, string Workflow, strin
     bool Enabled, bool AllowCloudProcessing, int Revision, DateTimeOffset CreatedAt, string? LastOccurrence = null);
 public sealed record SaveAgentScheduleRequest(Guid RequestId, int? ExpectedRevision, string Title, string Workflow,
     string TimeZone, string LocalTime, bool Enabled, bool AllowCloudProcessing);
-public sealed record WorkflowPolicySnapshot(string Revision, bool RequiresCloud, bool UsesPersonalContext, bool Deterministic, string? DomainContext);
+public sealed record WorkflowPolicySnapshot(string Revision, bool RequiresCloud, bool UsesPersonalContext, bool Deterministic, string? DomainContext, string? DomainKey = null, Guid? DomainVersionId = null, int? DomainVersion = null, DomainPracticeTemplate? PracticeTemplate = null);
 public sealed record AgentRun(Guid Id, Guid? ScheduleId, string Occurrence, string Workflow, int Version, bool AllowCloudProcessing,
     DateTimeOffset CreatedAt, DateTimeOffset Deadline, string Status, IReadOnlyList<Guid> TaskIds, DateTimeOffset? DeletedAt = null,
     WorkflowPolicySnapshot? WorkflowPolicy = null);

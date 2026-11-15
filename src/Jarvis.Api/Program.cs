@@ -98,6 +98,7 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
     builder.Services.AddSingleton<IPrivacyStore, PostgresPrivacyStore>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistryStore, PostgresDomainRegistryStore>();
     builder.Services.AddSingleton<IStorageReadiness, PostgresReadiness>();
 }
 else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
@@ -108,6 +109,7 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
     builder.Services.AddSingleton<IPrivacyStore, InMemoryPrivacyStore>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistryStore, Jarvis.Orchestrator.Domains.MemoryDomainRegistryStore>();
     builder.Services.AddSingleton<IStorageReadiness, InMemoryReadiness>();
 }
 else
@@ -162,7 +164,8 @@ builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();
 builder.Services.AddSingleton<OwnerAuthorization>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IWorkflowCatalog, Jarvis.Orchestrator.Domains.WorkflowCatalog>();
-builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(_ => new Jarvis.Orchestrator.Domains.CapabilityCatalog(Jarvis.Api.Voice.CoreVoiceTools.Capabilities));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(_ => new Jarvis.Orchestrator.Domains.CapabilityCatalog(Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat([new("core_template_practice", "Deliver an authored domain practice template without AI or tools.", Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly)])));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistry, Jarvis.Orchestrator.Domains.DomainRegistryService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis.Orchestrator.Domains.DomainCatalog>();
 builder.Services.AddSingleton<HubTickets>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Coaching.VoiceCoachingService>();
@@ -233,6 +236,7 @@ app.UseMiddleware<Jarvis.Api.Privacy.PrivacyMiddleware>();
 app.UseRateLimiter();
 app.MapVoiceEndpoints();
 app.MapAgentEndpoints();
+app.MapDomainEndpoints();
 app.MapBudgetEndpoints();
 app.MapPrivacyEndpoints();
 app.MapPost("/api/hubs/ticket", (HubTickets tickets, CancellationToken ct) => tickets.IssueAsync(ct));

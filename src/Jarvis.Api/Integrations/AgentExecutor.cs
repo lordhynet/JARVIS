@@ -9,7 +9,7 @@ using Jarvis.Orchestrator.Intelligence;
 namespace Jarvis.Api.Integrations;
 
 public interface IAgentExecutor { Task<string> ExecuteAsync(AgentTask task, CancellationToken ct); }
-public sealed class AgentExecutor(ITextReasoningProvider reasoning, IRuntimeStore reader, TimeProvider clock, IWorkflowCatalog? catalog = null) : IAgentExecutor
+public sealed class AgentExecutor(ITextReasoningProvider reasoning, IRuntimeStore reader, TimeProvider clock, IWorkflowCatalog? catalog = null, IDomainRegistry? registry = null) : IAgentExecutor
 {
     private readonly IWorkflowCatalog workflowCatalog = catalog ?? new WorkflowCatalog();
     public async Task<string> ExecuteAsync(AgentTask task, CancellationToken ct)
@@ -28,11 +28,16 @@ public sealed class AgentExecutor(ITextReasoningProvider reasoning, IRuntimeStor
                 .Concat(task.Role == AgentRole.Review ? run.TaskIds.Where(id => id != task.Id).SelectMany(id => s.AgentTasks[id].SourceRefs ?? []) : []).Distinct().ToList();
             return new { Run = run, Policy = policy, Stories = stories, Due = due, Drafts = drafts, Refs = refs };
         }, ct);
+        using var domainScope = input.Policy.DomainKey is { } domainKey ? DomainExecutionContext.Enter(domainKey) : null;
+        if (input.Policy.DomainKey is { } key)
+            Guard.Require(registry is not null && await registry.ResolveActiveAsync(key, ct) is not null, 409, "Domain is disabled or unavailable.");
         await reader.UpdateAsync(s =>
         {
             Guard.Require(s.AgentTasks.TryGetValue(task.Id, out var current) && current.ClaimToken == task.ClaimToken && current.Status == AgentTaskStatus.Running && input.Refs.All(x => AgentRuntime.SourceCurrent(s, x)), 409, "Agent claim or its source context changed.");
             s.AgentTasks[task.Id] = current with { SourceRefs = input.Refs }; return true;
         }, ct);
+        if (input.Policy.PracticeTemplate is { } template && (!input.Run.AllowCloudProcessing || input.Policy.Deterministic))
+            return JsonSerializer.Serialize(new { schemaVersion = 1, source = "authored-template", domain = input.Policy.DomainKey, versionId = input.Policy.DomainVersionId, summary = template.Title, drills = template.Prompts, assessment = (string?)null });
         if (!input.Run.AllowCloudProcessing || input.Policy.Deterministic)
         {
             return JsonSerializer.Serialize(new { schemaVersion = 1, source = "deterministic", role = task.Role.ToString(),

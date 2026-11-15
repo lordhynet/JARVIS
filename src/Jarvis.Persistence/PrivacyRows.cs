@@ -26,9 +26,11 @@ public sealed class PrivacyJobRow
 }
 internal static class PostgresPrivacyGate
 {
-    public static async Task LockAsync(SessionDbContext db, CancellationToken ct, bool accountingOnly = false)
+    public static async Task<PrivacyStatus> LockAsync(SessionDbContext db, CancellationToken ct, bool accountingOnly = false)
     {
         var rows = await db.PrivacyControls.FromSqlRaw("SELECT * FROM \"PrivacyControls\" WHERE \"Id\"=1 FOR SHARE").AsNoTracking().ToListAsync(ct);
-        if (!accountingOnly) PrivacyContext.RequireWrite(rows.Single().Status());
+        var status = rows.Single().Status();
+        if (!accountingOnly) PrivacyContext.RequireWrite(status);
+        return status;
     }
 }

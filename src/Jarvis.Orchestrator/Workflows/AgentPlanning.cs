@@ -1,20 +1,22 @@
 using System.Text.Json;
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Domains;
 using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Orchestrator.Workflows;
 
 public sealed partial class AgentRuntime
 {
-    public Task<PersonalGoal> SaveGoalAsync(SaveGoalRequest request, CancellationToken ct = default)
+    public async Task<PersonalGoal> SaveGoalAsync(SaveGoalRequest request, CancellationToken ct = default)
     {
         var title = Guard.Text(request.Title, "Goal title", 120);
         var brief = Guard.Text(request.Brief, "Goal brief", 2000);
-        Guard.Require(request.RequestId != Guid.Empty && WorkflowKeys.Contains(request.Workflow), 400, "A goal ID and supported workflow are required.");
+        Guard.Require(request.RequestId != Guid.Empty, 400, "A goal ID and supported workflow are required.");
         Guard.Require(request.Status is "Active" or "Paused" or "Completed" or "Cancelled", 400, "Invalid goal state.");
         Guard.Require(request.Deadline > request.NextReviewAt && request.Deadline <= clock.GetUtcNow().AddYears(5), 400, "Review must precede the goal deadline (within five years).");
-        RequireConsent(request.Workflow, request.AllowCloudProcessing);
-        return store.UpdateAsync(s =>
+        var descriptor = await workflowCatalog.ResolveAsync(request.Workflow, ct);
+        RequireConsent(descriptor, request.AllowCloudProcessing);
+        return await store.UpdateAsync(s =>
         {
             var now = clock.GetUtcNow(); var prior = s.Goals.GetValueOrDefault(request.RequestId);
             Guard.Require(prior?.Status != "Deleted", 409, "Deleted goals cannot be recreated.");
@@ -43,18 +45,19 @@ public sealed partial class AgentRuntime
         return true;
     }, ct);
 
-    public Task<DurableAgentTrigger> IngestTriggerAsync(AgentTriggerRequest request, CancellationToken ct = default)
+    public async Task<DurableAgentTrigger> IngestTriggerAsync(AgentTriggerRequest request, CancellationToken ct = default)
     {
         var source = Guard.Text(request.Source, "Trigger source", 80); var occurrence = Guard.Text(request.OccurrenceId, "Occurrence ID", 200);
         var correlation = Guard.Text(request.CorrelationId, "Correlation ID", 200);
-        Guard.Require(request.Revision > 0 && WorkflowKeys.Contains(request.Workflow), 400, "Positive source revision and supported workflow required.");
+        Guard.Require(request.Revision > 0, 400, "Positive source revision and supported workflow required.");
         Guard.Require(request.ExpiresAt > request.DueAt && request.ExpiresAt - request.DueAt <= TimeSpan.FromDays(31), 400, "Trigger validity must be positive and at most 31 days.");
         var brief = request.Cancelled ? "" : Guard.Text(request.Brief, "Trigger brief", 2000);
-        RequireConsent(request.Workflow, request.AllowCloudProcessing);
+        var descriptor = await workflowCatalog.ResolveAsync(request.Workflow, ct);
+        RequireConsent(descriptor, request.AllowCloudProcessing);
         var normalized = request with { Source = source, OccurrenceId = occurrence, CorrelationId = correlation, Brief = brief,
             DueAt = request.DueAt.ToUniversalTime(), ExpiresAt = request.ExpiresAt.ToUniversalTime() };
         var fingerprint = PrivacyData.Hash(JsonSerializer.Serialize(normalized)); var id = StableId("trigger-v1:" + source + ":" + occurrence);
-        return store.UpdateAsync(s =>
+        return await store.UpdateAsync(s =>
         {
             var prior = s.AgentTriggers.GetValueOrDefault(id);
             if (prior is not null)
@@ -70,24 +73,24 @@ public sealed partial class AgentRuntime
         }, ct);
     }
 
-    private int TickPlanning(RuntimeState s, DateTimeOffset now)
+    private int TickPlanning(RuntimeState s, DateTimeOffset now, IReadOnlyDictionary<string, WorkflowDescriptor> available)
     {
         var count = 0;
         foreach (var goal in s.Goals.Values.Where(x => x.Status == "Active").ToList())
         {
             if (goal.Deadline <= now) { if (goal.LastRunId is Guid expiredRun) Supersede(s, expiredRun, "goal_expired"); s.Goals[goal.Id] = goal with { Status = "Expired", Revision = goal.Revision + 1, UpdatedAt = now }; continue; }
-            if (!WorkflowKeys.Contains(goal.Workflow) || s.AgentControls.Paused || s.AgentControls.PausedWorkflows?.Contains(goal.Workflow) == true || goal.NextReviewAt > now || goal.LastRunId is not null) continue;
+            if (!available.ContainsKey(goal.Workflow) || available[goal.Workflow].RequiresCloud && !goal.AllowCloudProcessing || s.AgentControls.Paused || s.AgentControls.PausedWorkflows?.Contains(goal.Workflow) == true || goal.NextReviewAt > now || goal.LastRunId is not null) continue;
             var id = StableId($"goal-v1:{goal.Id}:{goal.Revision}");
-            Create(s, id, null, $"goal:{goal.Id}:{goal.Revision}", goal.Workflow, goal.AllowCloudProcessing, goal.Title + "\n" + goal.Brief, now);
+            Create(s, id, null, $"goal:{goal.Id}:{goal.Revision}", goal.Workflow, goal.AllowCloudProcessing, goal.Title + "\n" + goal.Brief, now, available[goal.Workflow]);
             s.AgentRuns[id] = s.AgentRuns[id] with { Deadline = s.AgentRuns[id].Deadline < goal.Deadline ? s.AgentRuns[id].Deadline : goal.Deadline };
             s.Goals[goal.Id] = goal with { LastRunId = id, UpdatedAt = now }; count++;
         }
         foreach (var trigger in s.AgentTriggers.Values.Where(x => x.Status is "Pending" or "Dispatched").OrderBy(x => x.DueAt).ToList())
         {
             if (trigger.ExpiresAt <= now) { if (trigger.RunId is Guid expiredRun) Supersede(s, expiredRun, "event_expired"); s.AgentTriggers[trigger.Id] = trigger with { Status = "Expired", Brief = "" }; continue; }
-            if (!WorkflowKeys.Contains(trigger.Workflow) || trigger.Status != "Pending" || s.AgentControls.Paused || s.AgentControls.PausedWorkflows?.Contains(trigger.Workflow) == true || trigger.DueAt > now) continue;
+            if (!available.ContainsKey(trigger.Workflow) || available[trigger.Workflow].RequiresCloud && !trigger.AllowCloudProcessing || trigger.Status != "Pending" || s.AgentControls.Paused || s.AgentControls.PausedWorkflows?.Contains(trigger.Workflow) == true || trigger.DueAt > now) continue;
             var id = StableId($"trigger-run-v1:{trigger.Id}:{trigger.Revision}");
-            Create(s, id, null, $"event:{trigger.Id}:{trigger.Revision}", trigger.Workflow, trigger.AllowCloudProcessing, trigger.Brief, now);
+            Create(s, id, null, $"event:{trigger.Id}:{trigger.Revision}", trigger.Workflow, trigger.AllowCloudProcessing, trigger.Brief, now, available[trigger.Workflow]);
             s.AgentRuns[id] = s.AgentRuns[id] with { Deadline = s.AgentRuns[id].Deadline < trigger.ExpiresAt ? s.AgentRuns[id].Deadline : trigger.ExpiresAt };
             CoreTelemetry.ScheduleDelay.Record(Math.Max(0, (now - trigger.DueAt).TotalSeconds));
             s.AgentTriggers[trigger.Id] = trigger with { Status = "Dispatched", RunId = id }; count++;

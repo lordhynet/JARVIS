@@ -21,6 +21,7 @@ async function api(path, body, method) {
   const ownerCall = verb === 'GET' && path === '/privacy/export' ||
     verb === 'POST' && ['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply'].includes(path) ||
     ['POST', 'DELETE'].includes(verb) && /^\/devices\/[^/]+\/(verify|credential)$/.test(path) ||
+    verb === 'POST' && /^\/domains\/[^/]+\/(activate|disable|rollback)$/.test(path) ||
     verb === 'POST' && /^\/tools\/[^/]+\/confirm$/.test(path) ||
     verb === 'POST' && /^\/budget\/(approvals(?:\/[^/]+\/revoke)?|legacy\/[^/]+\/classify)$/.test(path) ||
     verb === 'GET' && /^\/budget\/legacy\/[^/]+\/preview$/.test(path) ||

@@ -5,7 +5,7 @@ using Jarvis.Orchestrator.Runtime;
 namespace Jarvis.Orchestrator.Domains;
 
 public enum CapabilityRisk { ReadOnly, CoreWrite, ExternalAction }
-public sealed record CapabilityDescriptor(string Key, string Description, CapabilityRisk Risk);
+public sealed record CapabilityDescriptor(string Key, string Description, CapabilityRisk Risk, string Version = "1");
 public interface ICapabilityCatalog
 {
     IReadOnlyList<CapabilityDescriptor> Installed { get; }

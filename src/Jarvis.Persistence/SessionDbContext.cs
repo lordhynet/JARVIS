@@ -14,9 +14,16 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<RuntimeDocument> RuntimeDocuments => Set<RuntimeDocument>();
     public DbSet<WorkflowRunRow> WorkflowRuns => Set<WorkflowRunRow>();
     public DbSet<WorkflowEventRow> WorkflowEvents => Set<WorkflowEventRow>();
+    public DbSet<DomainDefinitionRow> DomainDefinitions => Set<DomainDefinitionRow>();
+    public DbSet<DomainVersionRow> DomainVersions => Set<DomainVersionRow>();
+    public DbSet<DomainCapabilityBindingRow> DomainCapabilityBindings => Set<DomainCapabilityBindingRow>();
+    public DbSet<DomainApprovalRow> DomainApprovals => Set<DomainApprovalRow>();
+    public DbSet<UserDomainStateRow> UserDomainState => Set<UserDomainStateRow>();
+    public DbSet<DomainAuditEventRow> DomainAuditEvents => Set<DomainAuditEventRow>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
+        DomainModel.Configure(model);
         model.Entity<PrivacyControlRow>(b => { b.HasKey(x => x.Id); b.HasData(new PrivacyControlRow()); });
         model.Entity<PrivacyJobRow>(b => { b.HasKey(x => x.Id); b.Property(x => x.CountsJson).HasColumnType("jsonb"); b.HasIndex(x => x.CompletedAt); });
         model.Entity<WorkflowRunRow>(b =>

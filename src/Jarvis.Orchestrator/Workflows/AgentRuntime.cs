@@ -22,12 +22,13 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
         return start != end && (start < end ? local >= start && local < end : local >= start || local < end);
     }
     public static TimeOnly LocalTime(string value) { Guard.Require(TimeOnly.TryParseExact(value, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var time), 400, "Time must be HH:mm."); return time; }
-    public Task<AgentSchedule> SaveScheduleAsync(SaveAgentScheduleRequest request, CancellationToken ct)
+    public async Task<AgentSchedule> SaveScheduleAsync(SaveAgentScheduleRequest request, CancellationToken ct)
     {
-        Guard.Require(request.RequestId != Guid.Empty && WorkflowKeys.Contains(request.Workflow), 400, "Request ID and a supported workflow are required.");
-        RequireConsent(request.Workflow, request.AllowCloudProcessing);
+        Guard.Require(request.RequestId != Guid.Empty, 400, "Request ID is required.");
+        var descriptor = await workflowCatalog.ResolveAsync(request.Workflow, ct);
+        RequireConsent(descriptor, request.AllowCloudProcessing);
         var title = Guard.Text(request.Title, "Schedule title", 120); var zone = TrainingProjection.Zone(request.TimeZone).Id; LocalTime(request.LocalTime);
-        return store.UpdateAsync(s =>
+        return await store.UpdateAsync(s =>
         {
             var prior = s.AgentSchedules.GetValueOrDefault(request.RequestId);
             if (prior is not null && request.ExpectedRevision is null)
@@ -42,37 +43,39 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             s.AgentSchedules[updated.Id] = updated; return updated;
         }, ct);
     }
-    public Task<AgentControls> ControlsAsync(AgentControls controls, CancellationToken ct)
+    public async Task<AgentControls> ControlsAsync(AgentControls controls, CancellationToken ct)
     {
         var paused = controls.PausedWorkflows?.Distinct().ToList() ?? [];
-        Guard.Require(paused.All(WorkflowKeys.Contains), 400, "Unknown workflow pause target."); LocalTime(controls.QuietStart); LocalTime(controls.QuietEnd); TrainingProjection.Zone(controls.TimeZone);
-        return store.UpdateAsync(s =>
+        var keys = (await workflowCatalog.ListAsync(ct)).Select(x => x.Key).ToHashSet(StringComparer.Ordinal);
+        Guard.Require(paused.All(keys.Contains), 400, "Unknown workflow pause target."); LocalTime(controls.QuietStart); LocalTime(controls.QuietEnd); TrainingProjection.Zone(controls.TimeZone);
+        return await store.UpdateAsync(s =>
         {
             s.AgentControls = controls with { PausedWorkflows = paused };
             if (controls.Paused) AudioFencing.Revoke(s);
             return s.AgentControls;
         }, ct);
     }
-    public Task<AgentRunView> StartAsync(StartAgentRunRequest request, CancellationToken ct)
+    public async Task<AgentRunView> StartAsync(StartAgentRunRequest request, CancellationToken ct)
     {
-        Guard.Require(request.RequestId != Guid.Empty && WorkflowKeys.Contains(request.Workflow), 400, "Request ID and supported workflow are required.");
+        Guard.Require(request.RequestId != Guid.Empty, 400, "Request ID is required.");
+        var descriptor = await workflowCatalog.ResolveAsync(request.Workflow, ct);
+        RequireConsent(descriptor, request.AllowCloudProcessing);
         var brief = string.IsNullOrWhiteSpace(request.Brief) ? "" : Guard.Text(request.Brief, "Goal brief", 2000);
-        return store.UpdateAsync(s =>
+        return await store.UpdateAsync(s =>
         {
             if (s.AgentRuns.TryGetValue(request.RequestId, out var existing))
             {
                 Guard.Require(existing.DeletedAt is null && existing.Workflow == request.Workflow && existing.AllowCloudProcessing == request.AllowCloudProcessing &&
                     existing.Occurrence == "manual:" + Hash(brief), 409, "Agent request ID belongs to different or deleted work."); return View(s, existing);
             }
-            return View(s, Create(s, request.RequestId, null, "manual:" + Hash(brief), request.Workflow, request.AllowCloudProcessing, brief, clock.GetUtcNow()));
+            return View(s, Create(s, request.RequestId, null, "manual:" + Hash(brief), request.Workflow, request.AllowCloudProcessing, brief, clock.GetUtcNow(), descriptor));
         }, ct);
     }
-    private AgentRun Create(RuntimeState s, Guid id, Guid? scheduleId, string occurrence, string workflow, bool consent, string brief, DateTimeOffset now)
+    private AgentRun Create(RuntimeState s, Guid id, Guid? scheduleId, string occurrence, string workflow, bool consent, string brief, DateTimeOffset now, WorkflowDescriptor descriptor)
     {
-        RequireConsent(workflow, consent);
+        RequireConsent(descriptor, consent);
         Guard.Require(!s.AgentControls.Paused && !(s.AgentControls.PausedWorkflows?.Contains(workflow) ?? false), 409, "Workflow is paused.");
         Guard.Require(s.AgentRuns.Count < 2000, 409, "Agent history capacity reached.");
-        var descriptor = workflowCatalog.Get(workflow);
         var roles = descriptor.Roles;
         var tasks = roles.Select(role => new AgentTask(StableId(id + ":" + role), id, role == AgentRole.Review ? id : null,
             role, 1, brief, AgentTaskStatus.Queued, 0, now)).ToList();
@@ -83,27 +86,28 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
     public async Task<int> TickAsync(CancellationToken ct)
     {
         var now = clock.GetUtcNow();
+        var available = (await workflowCatalog.ListAsync(ct)).ToDictionary(x => x.Key, StringComparer.Ordinal);
         var due = await store.ReadAsync(s =>
             s.AgentRuns.Values.Any(r => r.DeletedAt is null && r.Status is "Queued" or "Running") ||
             s.Goals.Values.Any(g => g.Status == "Active" && (g.Deadline <= now || !s.AgentControls.Paused && g.LastRunId is null && g.NextReviewAt <= now)) ||
             s.AgentTriggers.Values.Any(t => t.Status is "Pending" or "Dispatched" && (t.ExpiresAt <= now || !s.AgentControls.Paused && t.Status == "Pending" && t.DueAt <= now)) ||
             !s.AgentControls.Paused && (!IsQuiet(s.AgentControls, now) && s.AgentOutbox.Values.Any(n => !n.Delivered && n.DeliverAfter <= now && n.ExpiresAt > now) ||
                 s.AgentSchedules.Values.Any(schedule => {
-                    if (!schedule.Enabled || !WorkflowKeys.Contains(schedule.Workflow) || s.AgentControls.PausedWorkflows?.Contains(schedule.Workflow) == true) return false;
+                    if (!schedule.Enabled || !available.ContainsKey(schedule.Workflow) || s.AgentControls.PausedWorkflows?.Contains(schedule.Workflow) == true) return false;
                     var zone = TrainingProjection.Zone(schedule.TimeZone); var local = TimeZoneInfo.ConvertTime(now, zone);
                     var at = local.Date + LocalTime(schedule.LocalTime).ToTimeSpan(); if (zone.IsInvalidTime(at)) at = at.AddHours(1);
                     var offset = zone.IsAmbiguousTime(at) ? zone.GetAmbiguousTimeOffsets(at).Max() : zone.GetUtcOffset(at);
                     var delta = now - new DateTimeOffset(at, offset).ToUniversalTime();
                     return delta >= TimeSpan.Zero && delta <= TimeSpan.FromMinutes(30) && schedule.LastOccurrence != local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ":" + schedule.LocalTime;
                 })), ct);
-        return due ? await TickCoreAsync(ct) : 0;
+        return due ? await TickCoreAsync(available, ct) : 0;
     }
-    private Task<int> TickCoreAsync(CancellationToken ct) => store.UpdateAsync(s =>
+    private Task<int> TickCoreAsync(IReadOnlyDictionary<string, WorkflowDescriptor> available, CancellationToken ct) => store.UpdateAsync(s =>
     {
-        var now = clock.GetUtcNow(); var count = TickPlanning(s, clock.GetUtcNow());
+        var now = clock.GetUtcNow(); var count = TickPlanning(s, clock.GetUtcNow(), available);
         if (!s.AgentControls.Paused) foreach (var schedule in s.AgentSchedules.Values.Where(x => x.Enabled).ToList())
         {
-            if (!WorkflowKeys.Contains(schedule.Workflow) || s.AgentControls.PausedWorkflows?.Contains(schedule.Workflow) == true) continue;
+            if (!available.ContainsKey(schedule.Workflow) || s.AgentControls.PausedWorkflows?.Contains(schedule.Workflow) == true) continue;
             var zone = TrainingProjection.Zone(schedule.TimeZone); var local = TimeZoneInfo.ConvertTime(now, zone);
             var due = local.Date + LocalTime(schedule.LocalTime).ToTimeSpan();
             if (zone.IsInvalidTime(due)) due = due.AddHours(1);
@@ -111,9 +115,10 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             var at = new DateTimeOffset(due, offset).ToUniversalTime();
             var occurrence = local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ":" + schedule.LocalTime;
             // Skip stale daily occurrences rather than replaying a backlog after sleep.
+            if (available[schedule.Workflow].RequiresCloud && !schedule.AllowCloudProcessing) continue;
             if (now < at || now - at > TimeSpan.FromMinutes(30) || schedule.LastOccurrence == occurrence) continue;
             var id = StableId(schedule.Id + ":" + occurrence);
-            if (!s.AgentRuns.ContainsKey(id)) { Create(s, id, schedule.Id, occurrence, schedule.Workflow, schedule.AllowCloudProcessing, schedule.Title, now); count++; }
+            if (!s.AgentRuns.ContainsKey(id)) { Create(s, id, schedule.Id, occurrence, schedule.Workflow, schedule.AllowCloudProcessing, schedule.Title, now, available[schedule.Workflow]); count++; }
             s.AgentSchedules[schedule.Id] = schedule with { LastOccurrence = occurrence };
         }
         foreach (var run in s.AgentRuns.Values.Where(x => x.DeletedAt is null && x.Status is "Queued" or "Running").ToList())
@@ -207,7 +212,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
     {
         Guard.Require(s.AgentRuns.TryGetValue(id, out var run), 404, "Agent run not found.");
         s.AgentRuns[id] = run with { Status = "Cancelled", DeletedAt = delete ? clock.GetUtcNow() : run.DeletedAt,
-            WorkflowPolicy = delete && run.WorkflowPolicy is { } policy ? policy with { DomainContext = null } : run.WorkflowPolicy };
+            WorkflowPolicy = delete && run.WorkflowPolicy is { } policy ? policy with { DomainContext = null, PracticeTemplate = null } : run.WorkflowPolicy };
         foreach (var taskId in run.TaskIds)
         {
             var task = s.AgentTasks[taskId]; s.AgentTasks[taskId] = task with { Status = AgentTaskStatus.Cancelled, ClaimToken = null, Input = delete ? "" : task.Input, Output = delete ? null : task.Output };
@@ -238,7 +243,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
         }
     }
     public static Guid StableId(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes(value))[..16]);
-    private void RequireConsent(string workflow, bool consent) => Guard.Require(consent || !workflowCatalog.Get(workflow).RequiresCloud,
+    private static void RequireConsent(WorkflowDescriptor descriptor, bool consent) => Guard.Require(consent || !descriptor.RequiresCloud,
         400, "This workflow requires explicit cloud-processing consent. Local practice reminders remain available without it.");
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 }

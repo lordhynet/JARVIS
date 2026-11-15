@@ -6,6 +6,8 @@ namespace Jarvis.Orchestrator.Runtime;
 
 public sealed class RuntimeState
 {
+    // In-memory registry only. PostgreSQL keeps definitions in the dedicated relational tables.
+    public Jarvis.Orchestrator.Domains.DomainRegistryState DomainRegistry { get; set; } = new();
     public Dictionary<Guid, ProviderAttempt> ProviderAttempts { get; set; } = [];
     public HashSet<Guid> RetiredReasoningScopes { get; set; } = [];
     public Dictionary<string, HubAccessTicket> HubTickets { get; set; } = [];

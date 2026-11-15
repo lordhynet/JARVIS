@@ -47,7 +47,7 @@ public static class PrivacyData
         policy.ProviderCacheDays, policy.ArtifactDays }.All(x => x is >= 1 and <= 3650) && policy.SweepMinutes is >= 1 and <= 1440,
         400, "Retention days must be 1–3650 and sweep minutes 1–1440.");
     public static CoreDataExport Export(PrivacyStatus status, RuntimeState state, IReadOnlyList<ConversationSession> sessions,
-        IReadOnlyList<WorkflowRun> workflows, IReadOnlyList<WorkflowEvent> events, IReadOnlyList<PrivacyJob> jobs, DateTimeOffset now) => new(1, now, status,
+        IReadOnlyList<WorkflowRun> workflows, IReadOnlyList<WorkflowEvent> events, IReadOnlyList<PrivacyJob> jobs, DateTimeOffset now, DomainRegistryExport? domains = null) => new(1, now, status,
         sessions, state.Stories.Values.ToList(), state.Learning.Values.ToList(), state.Reviews.Values.ToList(),
         state.TrainingAttempts.Values.Where(x => x.DeletedAt is null).ToList(), state.TrainingDrills.Values.ToList(),
         state.CoachingAttempts.Values.Where(x => x.DeletedAt is null).ToList(), state.AiCoachAssessments.Values.ToList(),
@@ -58,7 +58,7 @@ public static class PrivacyData
         state.AgentSchedules.Values.ToList(), state.AgentControls, state.AgentOutbox.Values.ToList(), state.ProviderResults.Values.ToList(),
         state.UsageReservations.Values.ToList(), jobs, state.Goals.Values.Where(x => x.Status != "Deleted").ToList(),
         state.AgentTriggers.Values.ToList(), state.UsageReconciliations.Values.ToList(), state.ImportedDocuments.Values.Where(x => x.DeletedAt is null).ToList(), state.SourceClaims.Values.ToList(), state.VoiceRecalls.Values.ToList(),
-        state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList());
+        state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList(), domains ?? state.DomainRegistry.Export());
     public static RuntimeState EmptyAfterErase(RuntimeState old) => new()
     {
         UsageReservations = old.UsageReservations, NextAudioFence = checked(old.NextAudioFence + 1), AgentControls = new(Paused: true),
@@ -126,7 +126,7 @@ public static class PrivacyData
         foreach (var run in state.AgentRuns.Values.Where(x => selection.Agents.Contains(x.Id)).ToList())
         {
             state.AgentRuns[run.Id] = run with { DeletedAt = at, Status = "Cancelled",
-                WorkflowPolicy = run.WorkflowPolicy is { } policy ? policy with { DomainContext = null } : null };
+                WorkflowPolicy = run.WorkflowPolicy is { } policy ? policy with { DomainContext = null, PracticeTemplate = null } : null };
             foreach (var id in run.TaskIds)
             {
                 var task = state.AgentTasks[id]; state.AgentTasks[id] = task with { Input = "", Output = null, ClaimToken = null, Status = AgentTaskStatus.Cancelled };

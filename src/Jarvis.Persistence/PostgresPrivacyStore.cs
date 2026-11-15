@@ -34,7 +34,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var events = await db.WorkflowEvents.AsNoTracking().OrderBy(x => x.OccurredAt).Select(x => new WorkflowEvent(x.EventId, x.RunId, x.Revision, x.Status, x.OccurredAt)).ToListAsync(ct);
         var jobs = (await db.PrivacyJobs.AsNoTracking().ToListAsync(ct)).Select(x => x.Contract()).ToList();
-        var export = PrivacyData.Export(control.Status(), state, sessions, runs, events, jobs, now); await tx.CommitAsync(ct); return export;
+        var export = PrivacyData.Export(control.Status(), state, sessions, runs, events, jobs, now, (await PostgresDomainRegistryStore.Snapshot(db, ct)).Export()); await tx.CommitAsync(ct); return export;
     }
     public async Task<RetentionPreview> PreviewAsync(RetentionPolicy policy, DateTimeOffset asOf, CancellationToken ct = default)
     {
@@ -70,6 +70,8 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var counts = AllCounts(state, await db.Sessions.CountAsync(ct), runs);
         row.Json = JsonSerializer.Serialize(PrivacyData.EmptyAfterErase(state));
+        await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
+        await db.DomainDefinitions.ExecuteDeleteAsync(ct);
         await db.Sessions.ExecuteDeleteAsync(ct); await db.WorkflowRuns.ExecuteDeleteAsync(ct); await db.PrivacyJobs.ExecuteDeleteAsync(ct);
         control.Epoch = checked(control.Epoch + 1); control.Revision++; control.Erased = true; control.ErasedAt = now;
         control.ErasureRequestId = request.RequestId; control.ErasureKeyFingerprint = keyFingerprint;
