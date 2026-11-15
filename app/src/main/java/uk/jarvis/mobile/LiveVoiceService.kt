@@ -68,6 +68,7 @@ class LiveVoiceService : Service() {
     private var captureJob: Job? = null
     private var initializationJob: Job? = null
     private var savedConnection: SavedConnection? = null
+    @Volatile private var currentLease: AudioLease? = null
     private val routeChanged = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) { stopVoice("Audio route changed. Reconnect when your headphones are ready.") }
     }
@@ -183,6 +184,7 @@ class LiveVoiceService : Service() {
         val at = SystemClock.elapsedRealtime()
         val ticket = client!!.send("/api/voice/tickets", VoiceStartRequest(sessionId, deviceId, true), VoiceTicket::class.java)
         if (!active || generation != current) return
+        currentLease = ticket.lease
         leaseDeadline.set(at + 15000); pings.clear(); ready = false
         val established = CompletableDeferred<Unit>()
         val queue = soundQueue; val queueBudget = playbackBudget
@@ -313,11 +315,21 @@ class LiveVoiceService : Service() {
     }
     private fun stopVoice(message: String) {
         if (!active && mutable.value.message == message) return
+        val stoppedLease = currentLease; currentLease = null; val stoppedClient = client; val stoppedCapture = captureJob
         active = false; ready = false; generation++; socket?.send("{\"type\":\"stop\"}"); socket?.close(1000, "Stopped"); socket = null
         reconnectJob?.cancel(); reconnectJob = null
         initializationJob?.cancel(); initializationJob = null
         runCatching { capture?.stop() }; captureJob?.cancel(); captureJob = null
         runCatching { playback?.stop() }; playback?.release(); playback = null
+        if (stoppedLease != null && stoppedClient != null) {
+            // Acknowledge only after capture has exited and playback has stopped. One bounded attempt, no replay.
+            val acknowledgement = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            acknowledgement.launch {
+                try { withTimeout(3000) { stoppedCapture?.join(); stoppedClient.send("/api/voice/local/release", stoppedLease, Boolean::class.javaObjectType) } }
+                catch (_: Exception) { /* Core retains the original drain expiry if acknowledgement is lost. */ }
+                finally { acknowledgement.cancel() }
+            }
+        }
         soundQueue.close(); focus?.let { audio.abandonAudioFocusRequest(it) }; focus = null
         if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
         else { @Suppress("DEPRECATION") runCatching { audio.isBluetoothScoOn = false; audio.stopBluetoothSco() } }
