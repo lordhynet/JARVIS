@@ -561,3 +561,9 @@ Fresh validation: API/test build succeeded and 14 focused tests passed (zero fai
 Owner-authorized device credential issuance and revocation endpoints now dispatch through the existing device command handler. The credential service still generates the one-time secret, stores only its hash, and invalidates the target device's audio lease/tickets on rotation or revocation. Middleware owner step-up, endpoint paths and response semantics are unchanged.
 
 Fresh validation: API/test build succeeded and 32 focused CQRS/device-authorization tests passed (zero failures/skips), including device credential enrollment, route restrictions, revocation, lease fencing and PostgreSQL restart behavior.
+
+## Budget management endpoints through CQRS — 15 November 2026
+
+Budget status and legacy-charge preview now dispatch through query handlers; approval, revocation and legacy-charge classification dispatch through command handlers. Existing routes, result contracts, budget service behavior and HTTP owner step-up authorization are preserved.
+
+Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~BudgetApprovalTests|FullyQualifiedName~BudgetPolicyTests|FullyQualifiedName~CqrsArchitectureTests"` succeeded: 27 passed, zero failures or skips. This builds the API/test projects and validates budget authorization and policy behavior plus registered, read/write-separated CQRS handlers.

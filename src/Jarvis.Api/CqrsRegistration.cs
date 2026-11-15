@@ -3,6 +3,7 @@ using Jarvis.Orchestrator.Cqrs;
 using Jarvis.Orchestrator.Cqrs.Agents;
 using Jarvis.Orchestrator.Cqrs.Imports;
 using Jarvis.Orchestrator.Cqrs.Domains;
+using Jarvis.Orchestrator.Cqrs.Budget;
 using Jarvis.Orchestrator.Cqrs.Devices;
 using Jarvis.Orchestrator.Cqrs.Integrations;
 using Jarvis.Orchestrator.Cqrs.Learning;
@@ -44,6 +45,8 @@ public static class CqrsRegistration
         services.AddSingleton<ImportCommandHandlers>();
         services.AddSingleton<DomainCommandHandlers>();
         services.AddSingleton<DomainQueryHandlers>();
+        services.AddSingleton<BudgetCommandHandlers>();
+        services.AddSingleton<BudgetQueryHandlers>();
         services.AddSingleton<TrainingService>();
         services.AddSingleton<TrainingDrillService>();
         services.AddSingleton<DrillCommandHandlers>();
@@ -142,6 +145,11 @@ public static class CqrsRegistration
         Query<ListDomains, IReadOnlyList<DomainPreview>, DomainQueryHandlers>(services);
         Query<PreviewDomain, DomainPreview, DomainQueryHandlers>(services);
         Query<GetUserDomainState, UserDomainState, DomainQueryHandlers>(services);
+        Command<ApproveMonthlyBudget, BudgetApproval, BudgetCommandHandlers>(services);
+        Command<RevokeMonthlyBudgetApproval, BudgetApproval, BudgetCommandHandlers>(services);
+        Command<ClassifyLegacyBudgetCharge, GbpCommitment, BudgetCommandHandlers>(services);
+        Query<GetBudgetStatus, GbpBudgetStatus, BudgetQueryHandlers>(services);
+        Query<PreviewLegacyBudgetCharge, LegacyChargePreview, BudgetQueryHandlers>(services);
 
         Query<GetSession, ConversationSession?, SessionQueryHandlers>(services);
         Query<ListSessions, IReadOnlyList<ConversationSession>, SessionQueryHandlers>(services);
