@@ -23,9 +23,12 @@ public sealed class DomainFactory(IDomainRegistry registry, ICapabilityCatalog c
     public async Task<DomainProposal> ProposeCapturedAsync(Guid sessionId, Guid utteranceId, CancellationToken ct)
     {
         var text = await Captured(sessionId, utteranceId, ct);
-        Guard.Require(System.Text.RegularExpressions.Regex.IsMatch(text, @"\b(add|create|build|make|extend)\b.{0,180}\b(domain|module)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant), 409, "Ask explicitly to create a domain before generating a proposal.");
+        Guard.Require(IsExplicitProposalRequest(text), 409, "Ask explicitly to create a domain before generating a proposal.");
         return await Generate(new(DomainPolicy.StableId("domain-voice-proposal:" + sessionId + ":" + utteranceId), text, true), sessionId, utteranceId, ct);
     }
+    public static bool IsExplicitProposalRequest(string text) =>
+        System.Text.RegularExpressions.Regex.IsMatch(text, @"\b(add|create|build|make|extend|configure|set\s+up|start)\b.{0,180}\b(domain|module|programme|program|course|subject)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     private Task<string> Captured(Guid sessionId, Guid utteranceId, CancellationToken ct) => runtime.ReadAsync(s => {
         Guard.Require(s.VoiceTurns.TryGetValue(utteranceId, out var turn) && turn.SessionId == sessionId && turn.Role == "user" &&
             !s.RetiredSessions.Contains(sessionId), 409, "Use the captured user request from the current session.");

@@ -22,6 +22,23 @@ public sealed class DomainFactoryTests
             return Task.FromResult(new TextReasoningResult(Output, [], new("fixture", "fixture", "Agent", "fixture", "fixture", new(2026, 11, 15), 1, 1, 1200)));
         }
     }
+
+    [Theory]
+    [InlineData("JARVIS, add a Law domain.")]
+    [InlineData("JARVIS, create an Education domain.")]
+    [InlineData("JARVIS, configure a Spanish learning programme.")]
+    [InlineData("Set up a Spanish learning program")]
+    [InlineData("Start a course for interview practice")]
+    [InlineData("Configure a subject module for biology")]
+    public void Explicit_voice_proposal_intent_accepts_requirement_examples_and_supported_wording(string phrase) =>
+        Assert.True(DomainFactory.IsExplicitProposalRequest(phrase));
+
+    [Theory]
+    [InlineData("Configure Spanish pronunciation")]
+    [InlineData("Start speaking practice")]
+    [InlineData("Make me a cup of tea")]
+    public void Voice_proposal_intent_rejects_general_requests(string phrase) =>
+        Assert.False(DomainFactory.IsExplicitProposalRequest(phrase));
     [Fact]
     public async Task Generation_saves_a_provenanced_draft_and_replay_does_not_regenerate_or_activate()
     {

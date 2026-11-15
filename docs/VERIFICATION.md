@@ -479,3 +479,9 @@ Fresh validation: API/test project build and two focused tests passed, zero fail
 Agent tick, task claim and push dispatch now use shared eligibility rules before and inside their write transactions. Rules include expiration/recovery work and honor workflow availability, consent, pause state, quiet hours, delivery lease/retry state and schedule windows. The transactional recheck remains in place for races.
 
 Fresh validation: API/test build succeeded and13 focused tests passed, zero failures/skips (`tests/Jarvis.Tests/TestResults/intelligence.trx`), covering idle write avoidance, goal-deadline transition eligibility, stale task lease recovery, push dispatch, and planning behavior. No new dependencies or migrations.
+
+## RR2-05 voice domain proposal phrases — 15 November 2026
+
+Captured voice proposals now accept explicit `add`, `create`, `build`, `make`, `extend`, `configure`, `set up` and `start` requests that name a domain, module, programme/program, course or subject. General requests still cannot invoke proposal generation.
+
+Fresh validation: API/test build succeeded and13 DomainFactory tests passed, zero failures/skips (`tests/Jarvis.Tests/TestResults/intelligence.trx`). The three exact examples in `CLAUDE.md` and additional supported/rejected phrase cases are covered. No provider request beyond injected fixtures.
