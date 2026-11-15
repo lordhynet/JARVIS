@@ -573,3 +573,9 @@ Fresh validation: `.\scripts\test-backend.ps1 -Filter "FullyQualifiedName~Budget
 Import list/detail, assessment history, source-claim list and interview-review reads now dispatch through Orchestrator query handlers. The list response uses an explicit summary contract with the same fields and JSON shape as the prior projection. Existing missing/deleted-document behavior is preserved.
 
 Fresh validation: workspace-pinned `dotnet build Jarvis.sln --no-restore --verbosity minimal` succeeded with zero warnings and zero errors. Tests were not run for this slice.
+
+## RR2 action list completion and current Android release rebuild — 15 November 2026
+
+The seven required actions in `claude-review/CODEX_NEXT_ACTIONS.md` are present in the current history: TD-17 (`e4f6fbf`), RR2-02 (`ef54799`), RR2-03 (`cd78866`), RR2-05 (`9822ea1`), RR2-04 (`4c22611`), RR2-01 historical build evidence (this file), and R12 (`3020549`). Each implementation commit has its own fresh build/test evidence above. No historical commit was rewritten.
+
+After the latest Core source changes, forced a fresh Android release validation with `:app:testReleaseUnitTest :app:lintRelease :app:assembleRelease --rerun-tasks --no-daemon --max-workers=1`. All 23 unit tests passed with zero failures/errors/skips; release lint passed; all 58 Gradle tasks executed successfully. Rebuilt APK: `JARVIS.MOBILE/app/build/outputs/apk/release/app-release.apk`, 20,867,507 bytes, SHA-256 `59BCF9C1BB0B1DEFB26AC9F6766CF4236647DE9052B754BBF6ABCD6F6BAB7132`. No APK was installed. Device screen-off, Bluetooth and background-survival behavior remain unverified pending owner hardware acceptance.
