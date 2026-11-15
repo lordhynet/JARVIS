@@ -24,5 +24,9 @@ public sealed partial class PostgresSessionTests
         Assert.Equal(lease, await state.ReadAudioLeaseAsync());
         var projection = await host.Services.GetRequiredService<ISessionReader>().ReadAudioStateAsync(session.Id);
         Assert.Equal(session.Status, projection!.Status); Assert.Equal(session.ActiveDeviceId, projection.ActiveDeviceId);
+        var reader = host.Services.GetRequiredService<ISessionReader>();
+        var summary = Assert.Single(await reader.ListPreparationAsync());
+        Assert.Equal(session.Id, summary.Id); Assert.Equal(0, summary.MessageCount);
+        Assert.Null(await reader.ReadHandoffAsync(session.Id));
     }
 }

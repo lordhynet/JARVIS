@@ -8,6 +8,42 @@ namespace Jarvis.Persistence;
 // Each operation owns a context, so the store is safe to share across requests.
 public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> factory) : ISessionStore
 {
+    public async Task<SessionHandoff?> ReadHandoffAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        var json = await db.Sessions.AsNoTracking().Where(s => s.Id == id).Select(s => s.HandoffJson).SingleOrDefaultAsync(ct);
+        await tx.CommitAsync(ct);
+        return json is null ? null : JsonSerializer.Deserialize<SessionHandoff>(json);
+    }
+    public async Task<IReadOnlyList<SessionPreparationState>> ListPreparationAsync(CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        // Count JSON array entries in PostgreSQL; never transfer transcript contents for selection.
+        var rows = await db.Database.SqlQueryRaw<PreparationRow>("""
+            SELECT s."Id", s."Status", s."ActiveDeviceId", s."Title", s."UpdatedAt", s."HandoffJson",
+                jsonb_array_length(s."MessagesJson"::jsonb) AS "MessageCount"
+            FROM "Sessions" s
+            """).ToListAsync(ct);
+        var checkpoints = await db.Checkpoints.AsNoTracking().Select(c => new { c.Id, c.SessionId }).ToListAsync(ct);
+        await tx.CommitAsync(ct);
+        var ids = checkpoints.ToLookup(c => c.SessionId, c => c.Id);
+        return rows.Select(s => new SessionPreparationState(s.Id, s.Status, s.ActiveDeviceId, s.Title, s.UpdatedAt,
+            s.HandoffJson is null ? null : JsonSerializer.Deserialize<SessionHandoff>(s.HandoffJson), ids[s.Id].ToArray(), s.MessageCount)).ToArray();
+    }
+    private sealed class PreparationRow
+    {
+        public Guid Id { get; set; }
+        public SessionStatus Status { get; set; }
+        public string? ActiveDeviceId { get; set; }
+        public string Title { get; set; } = "";
+        public DateTimeOffset UpdatedAt { get; set; }
+        public string? HandoffJson { get; set; }
+        public int MessageCount { get; set; }
+    }
     public async Task<SessionAudioState?> ReadAudioStateAsync(Guid id, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
