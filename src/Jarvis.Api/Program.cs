@@ -98,6 +98,7 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
     builder.Services.AddSingleton<IPrivacyStore, PostgresPrivacyStore>();
+    builder.Services.AddSingleton<IVoiceRepairStore, PostgresVoiceRepairStore>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistryStore, PostgresDomainRegistryStore>();
     builder.Services.AddSingleton<IStorageReadiness, PostgresReadiness>();
 }
@@ -109,6 +110,7 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
     builder.Services.AddSingleton<IPrivacyStore, InMemoryPrivacyStore>();
+    builder.Services.AddSingleton<IVoiceRepairStore, MemoryVoiceRepairStore>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistryStore, Jarvis.Orchestrator.Domains.MemoryDomainRegistryStore>();
     builder.Services.AddSingleton<IStorageReadiness, InMemoryReadiness>();
 }
@@ -118,6 +120,7 @@ else
 }
 builder.Services.AddSingleton<ISessionNotifier, SignalRSessionNotifier>();
 builder.Services.AddSingleton<SessionService>();
+builder.Services.AddSingleton<VoiceTranscriptService>();
 builder.Services.AddSingleton<DeviceService>();
 builder.Services.AddSingleton<SessionLifecycleService>();
 builder.Services.AddSingleton<LearningService>();

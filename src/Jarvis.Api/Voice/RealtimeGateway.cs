@@ -23,7 +23,7 @@ public sealed class RealtimeConnectionFactory(IConfiguration config) : IRealtime
     }
 }
 public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectionFactory connections, ManagedAi ai,
-    UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, IPrivacyReader privacy, TimeProvider clock, CoreVoiceTools tools)
+    UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, IPrivacyReader privacy, TimeProvider clock, CoreVoiceTools tools, VoiceTranscriptService transcripts)
 {
     public async Task RunAsync(HttpContext context)
     {
@@ -178,14 +178,8 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                         {
                             var role = type.StartsWith("conversation", StringComparison.Ordinal) ? "user" : "assistant";
                             var id = ManagedAi.Operation(role + ":" + item, session.Id, reservation.Id); var bounded = text.Length <= 8000 ? text : text[..8000];
-                            await sessions.UpdateAsync(session.Id, current =>
-                            {
-                                if (current.Messages?.Any(x => x.RequestId == id) == true) return current;
-                                Guard.Require((current.Messages?.Count ?? 0) < 2000, 409, "Session transcript is full.");
-                                return current with { UpdatedAt = clock.GetUtcNow(), Messages = [..current.Messages ?? [], new(id, role, bounded, clock.GetUtcNow())] };
-                            }, timeout.Token);
                             var duration = role == "user" && speechDurations.TryGetValue(item, out var seconds) ? (double?)seconds : null;
-                            await runtime.UpdateAsync(s => { s.VoiceTurns[id] = new(id, session.Id, role, bounded, duration, clock.GetUtcNow()); return true; }, timeout.Token);
+                            await transcripts.RecordAsync(session.Id, id, role, bounded, duration, timeout.Token);
                             if (role == "user" && utterances.Count < 32 && utterances.Add(id))
                                 await Provider(new { type = "conversation.item.create", item = new { type = "message", role = "system", content = new[] {
                                     new { type = "input_text", text = $"Core captured the latest user speech. Its utterance_id is {id}. This ID references the user's exact transcript on Core; never read the ID aloud." }

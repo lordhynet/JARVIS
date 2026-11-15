@@ -72,6 +72,16 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
         var current = await store.ReadAudioLeaseAsync(ct);
         return current?.Fence == lease.Fence && current.SessionId == lease.SessionId && current.DeviceId == lease.DeviceId && current.ExpiresAt > clock.GetUtcNow();
     }
+    public async Task<bool> RepairAsync(CancellationToken ct)
+    {
+        var lease = await store.ReadAudioLeaseAsync(ct); if (lease is null || lease.SessionId == Guid.Empty) return false;
+        var session = await sessions.ReadAudioStateAsync(lease.SessionId, ct);
+        if (session is { Status: SessionStatus.Active } && session.ActiveDeviceId == lease.DeviceId) return false;
+        return await store.UpdateAsync(s => {
+            if (s.AudioLease is not { } current || current.Fence != lease.Fence || current.SessionId != lease.SessionId || current.DeviceId != lease.DeviceId) return false;
+            AudioFencing.Revoke(s); return true; // Keep drain TTL; a crashed source never acknowledged stopped audio.
+        }, ct);
+    }
     public Task<bool> ReleaseAsync(AudioLease lease, CancellationToken ct) => store.UpdateAsync(s =>
     {
         if (s.AudioLease?.Fence == lease.Fence && s.AudioLease.SessionId == lease.SessionId && s.AudioLease.DeviceId == lease.DeviceId) { s.AudioLease = null; return true; }
