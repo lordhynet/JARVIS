@@ -40,9 +40,17 @@ public sealed class ReviewClosureTests
             DateOnly.FromDateTime(now.UtcDateTime), 1, 1, 100), id, "Cached", now.AddDays(-8), now);
         state.UsageReservations[id] = new(id, id, "fixture", now, 1);
         var claim = Guid.NewGuid(); state.AiCoachAssessmentClaims[claim] = new(claim, id, Guid.NewGuid(), 1, 1, now.AddSeconds(-1));
-        Assert.Equal(2, RuntimeMaintenance.Prune(state, now)); Assert.Single(state.UsageReservations);
+        var expiredNotice = Guid.NewGuid();
+        state.AgentOutbox[expiredNotice] = new(expiredNotice, Guid.NewGuid(), "expired", now.AddHours(-7), now.AddHours(-7), now.AddHours(-1));
+        var deliveryId = Guid.NewGuid();
+        state.PushDeliveries[deliveryId] = new(deliveryId, expiredNotice, Guid.NewGuid(), 1, "Delivered", now.AddHours(-7));
+        var activeNotice = Guid.NewGuid();
+        state.AgentOutbox[activeNotice] = new(activeNotice, Guid.NewGuid(), "active", now, now, now.AddHours(1));
+        Assert.Equal(4, RuntimeMaintenance.Prune(state, now)); Assert.Single(state.UsageReservations);
         Assert.Empty(state.ProviderResults);
         Assert.Empty(state.AiCoachAssessmentClaims);
+        Assert.Equal(activeNotice, Assert.Single(state.AgentOutbox).Key);
+        Assert.Empty(state.PushDeliveries);
         Assert.Equal("", state.ProviderAttempts[id].Fingerprint);
     }
     [Fact]

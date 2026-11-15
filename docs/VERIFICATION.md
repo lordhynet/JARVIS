@@ -519,3 +519,9 @@ Coaching AI assessment now acquires a five-minute, token-fenced claim in the sha
 Fresh validation: all six `AiCoachTests` passed (zero failures/skips). The new concurrent test submits six distinct assessment requests against one answer while the fake provider is blocked; exactly one provider dispatch and saved assessment succeed, and five requests receive conflict. Existing consent, idempotency, fabricated-evidence, source-change and deletion-race checks also pass. Provider calls use only the local fake HTTP adapter.
 
 Follow-up: expired claims are included in `RuntimeMaintenance`'s read-only expiry precheck and periodic pruning. The combined focused run passed seven tests (six AI-coach cases plus the maintenance test), zero failures/skips; it confirms an expired claim is removed while financial reservations remain untouched.
+
+## TD-27 expired agent notification pruning — 15 November 2026
+
+The periodic runtime maintenance sweep now removes expired agent outbox notifications and their dependent push-delivery records. It leaves active, unexpired notifications and canonical financial reservations intact. This bounds transient outbox growth independently of the operator-controlled privacy-retention setting; no private configuration was edited.
+
+Fresh validation: the focused cache-maintenance test passed (one test, zero failures/skips), asserting expired notification/delivery cleanup, preservation of an active notice, and preservation of the usage reservation.
