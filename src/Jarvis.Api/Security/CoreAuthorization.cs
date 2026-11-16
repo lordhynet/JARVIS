@@ -16,7 +16,7 @@ public static class CorePolicies
     public const string PrivacyManage = "CoreOwnerStepUp:privacy.manage";
     public const string DeviceManage = "CoreOwnerStepUp:device.manage";
     public const string DeviceVerify = "CoreOwnerStepUp:device.verify";
-    public const string DeviceGrants = "CoreOwnerStepUp:device.grants";
+    public const string DeviceGrants = "CoreOwnerStepUp:" + DeviceGrantService.ManageScope;
     public const string ToolConfirm = "CoreOwnerStepUp:tool.confirm";
     public const string DomainManage = "CoreOwnerStepUp:domain.manage";
     public const string BudgetManage = "CoreOwnerStepUp:budget.manage";

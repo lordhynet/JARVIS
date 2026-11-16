@@ -89,6 +89,14 @@ namespace Jarvis.Persistence.Migrations
                     b.Property<DateTimeOffset>("GrantedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("GrantedBy")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<DateTimeOffset?>("RevokedAt")
                         .HasColumnType("timestamp with time zone");
 

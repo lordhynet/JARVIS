@@ -127,7 +127,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
                 db.WorkflowEvents.Add(new() { EventId = Guid.NewGuid(), RunId = purged.Id, Revision = purged.Revision, Status = purged.Status, OccurredAt = purged.UpdatedAt });
             }
         }
-        var grantsPruned = await db.DeviceGrants.Where(x => x.ExpiresAt <= request.AsOf || x.RevokedAt != null).ExecuteDeleteAsync(ct);
+        var grantsPruned = await PostgresDeviceGrantStore.Prunable(db, request.AsOf).ExecuteDeleteAsync(ct);
         row.Json = JsonSerializer.Serialize(state);
         counts = counts with { DeviceGrants = grantsPruned };
         var job = new PrivacyJobRow { Id = request.RequestId, Kind = "retention", Fingerprint = fingerprint, CompletedAt = now, CountsJson = JsonSerializer.Serialize(counts) };

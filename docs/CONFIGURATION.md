@@ -79,6 +79,14 @@ after five minutes. Retrying a confirmation never sends the action twice. Reques
 as originating from external content are rejected. A dropped provider response or abandoned
 running request becomes **Uncertain**; inspect the physical device before making a new request.
 
+### Device capability grants
+
+Use the owner-authorized `POST /api/devices/{id}/grants` for a device with a current credential. Include a new UUID in `requestId`, a reason in `reason`, the installed `capabilityId` and `capabilityVersion`, and a future ISO 8601 `expiresAt` within 365 days. The descriptor from `GET /api/device-capabilities` supplies the constraint schema. For `homeassistant.turn` version `1.0.0`, set `constraintsJson` to a JSON string containing an object such as `{"allowedEntityIds":["light.kitchen","switch.porch"]}`. Each grant can name 1 to 50 distinct entities.
+
+Core records the verified owner subject, reason and request ID. An identical retry returns the existing grant. Use a new request ID to approve different constraints or a newly rotated credential. The owner grant list reports `effective` using the current credential, the stored constraints, expiry and revocation. Grants created before audit metadata was required remain visible with `effective: false`.
+
+Revoked audited grants stay eligible for lookup by request ID through their original expiry to keep retries from reactivating them. Expired grants are eligible for retention pruning. Core erasure removes grant records and their audit data.
+
 ## Primary API references
 
 - [OpenAI text generation](https://developers.openai.com/api/docs/guides/text)

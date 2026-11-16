@@ -65,6 +65,8 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.Property(x => x.CapabilityVersion).HasMaxLength(30);
             b.Property(x => x.ConstraintsJson).HasColumnType("jsonb");
             b.Property(x => x.CredentialHash).HasMaxLength(64);
+            b.Property(x => x.GrantedBy).HasMaxLength(80);
+            b.Property(x => x.Reason).HasMaxLength(1000);
             b.HasIndex(x => new { x.DeviceId, x.CapabilityId, x.CapabilityVersion, x.ExpiresAt });
             b.HasIndex(x => x.CredentialHash);
         });
@@ -128,15 +130,18 @@ public sealed class DeviceGrantRow
     public DateTimeOffset GrantedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? RevokedAt { get; set; }
+    public string? GrantedBy { get; set; }
+    public string? Reason { get; set; }
 
     public Jarvis.Orchestrator.Runtime.DeviceGrant Contract() => new(Id, DeviceId, CapabilityId, CapabilityVersion,
-        ConstraintsJson, CredentialHash, GrantedAt, ExpiresAt, RevokedAt);
+        ConstraintsJson, CredentialHash, GrantedAt, ExpiresAt, RevokedAt, GrantedBy, Reason);
     public static DeviceGrantRow From(Jarvis.Orchestrator.Runtime.DeviceGrant grant) => new()
     {
         Id = grant.Id, DeviceId = grant.DeviceId, CapabilityId = grant.CapabilityId,
         CapabilityVersion = grant.CapabilityVersion, ConstraintsJson = grant.ConstraintsJson,
-        CredentialHash = grant.CredentialHash, GrantedAt = grant.GrantedAt, ExpiresAt = grant.ExpiresAt,
-        RevokedAt = grant.RevokedAt
+        CredentialHash = grant.CredentialHash, GrantedAt = SessionRow.DatabaseTimestamp(grant.GrantedAt),
+        ExpiresAt = SessionRow.DatabaseTimestamp(grant.ExpiresAt), RevokedAt = grant.RevokedAt,
+        GrantedBy = grant.GrantedBy, Reason = grant.Reason
     };
 }
 

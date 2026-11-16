@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Jarvis.Contracts;
 
 namespace Jarvis.Orchestrator.Runtime;
 
@@ -11,7 +12,25 @@ public sealed record DeviceGrant(
     string CredentialHash,
     DateTimeOffset GrantedAt,
     DateTimeOffset ExpiresAt,
-    DateTimeOffset? RevokedAt = null);
+    DateTimeOffset? RevokedAt = null,
+    string? GrantedBy = null,
+    string? Reason = null)
+{
+    public DeviceGrantAudit? Audit => GrantedBy is not null && Reason is not null ? new(Id, GrantedBy, Reason) : null;
+    // Retain revoked audited requests until their original expiry so a retry cannot recreate them.
+    public bool CanPrune(DateTimeOffset now) => ExpiresAt <= now || RevokedAt is not null && (GrantedBy is null || Reason is null);
+
+    public DeviceGrant RequireSameRequest(DeviceGrant proposed)
+    {
+        Guard.Require(Audit is not null && GrantedBy == proposed.GrantedBy && Reason == proposed.Reason &&
+            DeviceId == proposed.DeviceId && CapabilityId == proposed.CapabilityId && CapabilityVersion == proposed.CapabilityVersion &&
+            CredentialHash == proposed.CredentialHash && ExpiresAt == proposed.ExpiresAt &&
+            DeviceJsonSchema.TryReadObject(ConstraintsJson, 16_000, out var existing) &&
+            DeviceJsonSchema.TryReadObject(proposed.ConstraintsJson, 8_000, out var requested) &&
+            JsonElement.DeepEquals(existing, requested), 409, "Grant request ID was already used for different input.");
+        return this;
+    }
+}
 
 public interface IDeviceGrantStore
 {
@@ -26,21 +45,23 @@ public interface IDeviceGrantStore
 
 public sealed class DeviceGrantService(IRuntimeReader runtime, IDeviceCapabilityCatalog capabilities, IDeviceGrantStore grants, TimeProvider clock)
 {
-    public async Task<DeviceGrant> GrantAsync(string deviceId, string capabilityId, string version, string constraintsJson,
-        DateTimeOffset expiresAt, CancellationToken ct = default)
+    public const string ManageScope = "device.grants";
+
+    public async Task<DeviceCapabilityGrantView> GrantAsync(string deviceId, GrantDeviceCapabilityRequest request,
+        BudgetActor actor, CancellationToken ct = default)
     {
+        Guard.Require(actor.SubjectId is { Length: > 0 and <= 80 } && !string.IsNullOrWhiteSpace(actor.SubjectId) &&
+            actor.Scopes.Contains(ManageScope, StringComparer.Ordinal), 403, "Owner grant authorization is required.");
         var now = clock.GetUtcNow();
-        var descriptor = capabilities.Get(capabilityId, version);
+        var descriptor = capabilities.Get(request.CapabilityId, request.CapabilityVersion);
         Guard.Require(deviceId is { Length: > 0 and <= 80 } && deviceId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'),
             400, "Device ID is invalid.");
-        Guard.Require(constraintsJson is { Length: > 0 and <= 8_000 }, 400, "Grant constraints must be bounded JSON.");
-        try
-        {
-            using var constraints = JsonDocument.Parse(constraintsJson);
-            Guard.Require(constraints.RootElement.ValueKind == JsonValueKind.Object, 400, "Grant constraints must be a JSON object.");
-        }
-        catch (JsonException) { throw new DomainException(400, "Grant constraints must be valid JSON."); }
-        expiresAt = expiresAt.ToUniversalTime();
+        Guard.Require(request.RequestId != Guid.Empty, 400, "A grant request ID is required.");
+        var reason = Guard.Text(request.Reason, "Grant reason", 1000);
+        Guard.Require(!reason.Contains('\0') && !actor.SubjectId.Contains('\0'), 400, "Grant audit text contains an invalid character.");
+        Guard.Require(capabilities.HasValidConstraints(descriptor.Id, descriptor.Version, request.ConstraintsJson),
+            400, "Grant constraints must match the installed capability's non-empty allowlist schema.");
+        var expiresAt = new DateTimeOffset(request.ExpiresAt.UtcTicks - request.ExpiresAt.UtcTicks % 10, TimeSpan.Zero);
         Guard.Require(expiresAt > now && expiresAt <= now.AddDays(365), 400, "Grant expiry must be within the next 365 days.");
         if (descriptor.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible)
             Guard.Require(descriptor.ConfirmationPolicy == DeviceConfirmationPolicy.Owner, 409, "This capability has no safe owner-confirmation policy.");
@@ -51,9 +72,29 @@ public sealed class DeviceGrantService(IRuntimeReader runtime, IDeviceCapability
                 "An active device credential is required before granting a capability.");
             return state.DeviceCredentials[deviceId].SecretHash;
         }, ct);
-        return await grants.AddAsync(new(Guid.NewGuid(), deviceId, capabilityId, version, constraintsJson, binding, now, expiresAt), ct);
+        var grant = await grants.AddAsync(new(request.RequestId, deviceId, descriptor.Id, descriptor.Version,
+            request.ConstraintsJson, binding, now, expiresAt, GrantedBy: actor.SubjectId, Reason: reason), ct);
+        return (await ViewsAsync([grant], ct))[0];
     }
 
-    public Task<IReadOnlyList<DeviceGrant>> ListAsync(string? deviceId = null, CancellationToken ct = default) => grants.ListAsync(deviceId, ct);
+    public async Task<IReadOnlyList<DeviceCapabilityGrantView>> ListAsync(string? deviceId = null, CancellationToken ct = default) =>
+        await ViewsAsync(await grants.ListAsync(deviceId, ct), ct);
+
+    private Task<IReadOnlyList<DeviceCapabilityGrantView>> ViewsAsync(IReadOnlyList<DeviceGrant> rows, CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        return runtime.ReadAsync<IReadOnlyList<DeviceCapabilityGrantView>>(state => rows.Select(grant =>
+        {
+            var audit = grant.Audit;
+            var effective = audit is not null && grant.RevokedAt is null && grant.ExpiresAt > now &&
+                state.Devices.ContainsKey(grant.DeviceId) &&
+                state.DeviceCredentials.TryGetValue(grant.DeviceId, out var current) && !current.Revoked &&
+                current.SecretHash == grant.CredentialHash &&
+                capabilities.HasValidConstraints(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson);
+            return new DeviceCapabilityGrantView(grant.Id, grant.DeviceId, grant.CapabilityId, grant.CapabilityVersion,
+                grant.ConstraintsJson, grant.GrantedAt, grant.ExpiresAt, grant.RevokedAt, audit, effective);
+        }).ToArray(), ct);
+    }
+
     public Task<bool> RevokeAsync(Guid id, CancellationToken ct = default) => grants.RevokeAsync(id, clock.GetUtcNow(), ct);
 }

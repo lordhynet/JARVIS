@@ -50,19 +50,25 @@ public sealed class InMemoryDeviceGrantStore(MemoryPrivacyBoundary boundary) : I
     internal void Clear() => boundary.DeviceGrants.Clear();
     internal int PruneCore(DateTimeOffset now)
     {
-        var expired = boundary.DeviceGrants.Values.Where(x => x.ExpiresAt <= now || x.RevokedAt is not null).Select(x => x.Id).ToArray();
+        var expired = boundary.DeviceGrants.Values.Where(x => x.CanPrune(now)).Select(x => x.Id).ToArray();
         foreach (var id in expired) boundary.DeviceGrants.Remove(id);
         return expired.Length;
     }
     public Task<DeviceGrant> AddAsync(DeviceGrant grant, CancellationToken ct = default) => boundary.Run(() =>
-    { boundary.DeviceGrants.Add(grant.Id, grant); return Task.FromResult(grant); });
+    {
+        if (boundary.DeviceGrants.TryGetValue(grant.Id, out var existing))
+            return Task.FromResult(existing.RequireSameRequest(grant));
+        boundary.DeviceGrants.Add(grant.Id, grant);
+        return Task.FromResult(grant);
+    });
     public Task<DeviceGrant?> GetAsync(Guid id, CancellationToken ct = default) => boundary.Run(() => Task.FromResult(boundary.DeviceGrants.GetValueOrDefault(id)));
     public Task<IReadOnlyList<DeviceGrant>> ListAsync(string? deviceId = null, CancellationToken ct = default) => boundary.Run(() =>
         Task.FromResult<IReadOnlyList<DeviceGrant>>(boundary.DeviceGrants.Values.Where(x => deviceId is null || x.DeviceId == deviceId)
             .OrderBy(x => x.DeviceId).ThenBy(x => x.CapabilityId).ToArray()));
     public Task<DeviceGrant?> FindActiveAsync(string deviceId, string capabilityId, string capabilityVersion, string credentialHash, DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
         Task.FromResult(boundary.DeviceGrants.Values.Where(x => x.DeviceId == deviceId && x.CapabilityId == capabilityId &&
-            x.CapabilityVersion == capabilityVersion && x.CredentialHash == credentialHash && x.RevokedAt is null && x.ExpiresAt > now)
+            x.CapabilityVersion == capabilityVersion && x.CredentialHash == credentialHash && x.RevokedAt is null &&
+            x.ExpiresAt > now && x.GrantedBy != null && x.Reason != null)
             .OrderByDescending(x => x.GrantedAt).FirstOrDefault()));
     public Task<bool> RevokeAsync(Guid id, DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
     {

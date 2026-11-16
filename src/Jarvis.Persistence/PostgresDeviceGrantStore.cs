@@ -1,5 +1,6 @@
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Jarvis.Persistence;
 
@@ -9,8 +10,22 @@ public sealed class PostgresDeviceGrantStore(IDbContextFactory<SessionDbContext>
     {
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
-        var row = DeviceGrantRow.From(grant); db.DeviceGrants.Add(row); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
-        return row.Contract();
+        var row = DeviceGrantRow.From(grant);
+        db.DeviceGrants.Add(row);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return row.Contract();
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException
+            { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "PK_DeviceGrants" })
+        {
+            await tx.RollbackAsync(ct);
+            var existing = await GetAsync(grant.Id, ct);
+            Guard.Require(existing is not null, 409, "Grant changed during the request.");
+            return existing.RequireSameRequest(row.Contract());
+        }
     }
     public async Task<DeviceGrant?> GetAsync(Guid id, CancellationToken ct = default)
     {
@@ -34,7 +49,8 @@ public sealed class PostgresDeviceGrantStore(IDbContextFactory<SessionDbContext>
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
         var row = await db.DeviceGrants.AsNoTracking().Where(x => x.DeviceId == deviceId && x.CapabilityId == capabilityId &&
-            x.CapabilityVersion == capabilityVersion && x.CredentialHash == credentialHash && x.RevokedAt == null && x.ExpiresAt > now)
+            x.CapabilityVersion == capabilityVersion && x.CredentialHash == credentialHash && x.RevokedAt == null &&
+            x.ExpiresAt > now && x.GrantedBy != null && x.Reason != null)
             .OrderByDescending(x => x.GrantedAt).FirstOrDefaultAsync(ct);
         await tx.CommitAsync(ct); return row?.Contract();
     }
@@ -58,7 +74,10 @@ public sealed class PostgresDeviceGrantStore(IDbContextFactory<SessionDbContext>
     {
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
-        var removed = await db.DeviceGrants.Where(x => x.ExpiresAt <= now || x.RevokedAt != null).ExecuteDeleteAsync(ct);
+        var removed = await Prunable(db, now).ExecuteDeleteAsync(ct);
         await tx.CommitAsync(ct); return removed;
     }
+
+    internal static IQueryable<DeviceGrantRow> Prunable(SessionDbContext db, DateTimeOffset now) =>
+        db.DeviceGrants.Where(x => x.ExpiresAt <= now || x.RevokedAt != null && (x.GrantedBy == null || x.Reason == null));
 }

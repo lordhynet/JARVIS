@@ -3,6 +3,8 @@ using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
 using Jarvis.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jarvis.Tests;
@@ -10,28 +12,63 @@ namespace Jarvis.Tests;
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
-    public async Task Device_grants_persist_and_erasure_removes_them_with_an_audit_count()
+    public async Task Device_grant_audits_migrate_and_survive_replay_and_restart_until_erasure()
     {
         await using var database = await TestDatabase.CreateAsync(); const string deviceId = "persistent-grant-device";
-        Guid grantId; var now = DateTimeOffset.UtcNow;
+        var now = DateTimeOffset.UtcNow;
+        var legacyId = Guid.NewGuid();
+        await using (var legacy = new SessionDbContext(new DbContextOptionsBuilder<SessionDbContext>()
+            .UseNpgsql(database.ConnectionString).Options))
+        {
+            await legacy.Database.GetService<IMigrator>().MigrateAsync("20261116061743_DeviceGrants");
+            const string emptyConstraints = "{}";
+            await legacy.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "DeviceGrants" ("Id", "DeviceId", "CapabilityId", "CapabilityVersion", "ConstraintsJson",
+                    "CredentialHash", "GrantedAt", "ExpiresAt")
+                VALUES ({legacyId}, 'legacy-fixture', 'homeassistant.turn', '1.0.0', CAST({emptyConstraints} AS jsonb),
+                    'old-hash', {now}, {now.AddDays(1)})
+                """);
+        }
+        var request = DeviceGrantTests.GrantRequest();
+        Guid grantId;
         using (var host = new PostgresApiFactory(database.ConnectionString))
         {
             await host.Services.GetRequiredService<DeviceService>().RegisterAsync(new(deviceId, "Grant fixture", DeviceKind.AndroidCompanion,
                 new(true, true, false, false, [])));
             using var owner = host.AuthorisedClient();
             var credentialResponse = await owner.PostAsJsonAsync($"/api/devices/{deviceId}/credential", new { }); credentialResponse.EnsureSuccessStatusCode();
-            var grantResponse = await owner.PostAsJsonAsync($"/api/devices/{deviceId}/grants",
-                new GrantDeviceCapabilityRequest("homeassistant.turn", "1.0.0", "{}", now.AddDays(20)));
-            grantResponse.EnsureSuccessStatusCode();
-            grantId = (await grantResponse.Content.ReadFromJsonAsync<DeviceCapabilityGrantView>(Json))!.Id;
+            var route = $"/api/devices/{deviceId}/grants";
+            var first = owner.PostAsJsonAsync(route, request);
+            var retry = owner.PostAsJsonAsync(route, request with { ConstraintsJson = """{ "allowedEntityIds": [ "light.kitchen" ] }""" });
+            using var issued = await first;
+            using var replayed = await retry;
+            issued.EnsureSuccessStatusCode();
+            replayed.EnsureSuccessStatusCode();
+            grantId = (await issued.Content.ReadFromJsonAsync<DeviceCapabilityGrantView>(Json))!.Id;
+            Assert.Equal(grantId, (await replayed.Content.ReadFromJsonAsync<DeviceCapabilityGrantView>(Json))!.Id);
+            Assert.Equal(request.RequestId, grantId);
         }
         using var restarted = new PostgresApiFactory(database.ConnectionString);
-        Assert.NotNull(await restarted.Services.GetRequiredService<IDeviceGrantStore>().GetAsync(grantId));
+        var grants = restarted.Services.GetRequiredService<IDeviceGrantStore>();
+        Assert.Equal(new DeviceGrantAudit(request.RequestId, "fixture-owner", request.Reason!), (await grants.GetAsync(grantId))!.Audit);
+        var legacyGrant = await grants.GetAsync(legacyId);
+        Assert.NotNull(legacyGrant);
+        Assert.Null(legacyGrant.Audit);
+        Assert.Null(await grants.FindActiveAsync("legacy-fixture", "homeassistant.turn", "1.0.0", "old-hash", now));
+        var revokedAt = DateTimeOffset.UtcNow;
+        Assert.True(await grants.RevokeAsync(grantId, revokedAt));
+        Assert.Equal(0, await grants.PruneAsync(revokedAt));
+        using var ownerAfterRestart = restarted.AuthorisedClient();
+        using var revoked = await ownerAfterRestart.PostAsJsonAsync($"/api/devices/{deviceId}/grants", request);
+        revoked.EnsureSuccessStatusCode();
+        var replay = (await revoked.Content.ReadFromJsonAsync<DeviceCapabilityGrantView>(Json))!;
+        Assert.False(replay.Effective);
+        Assert.NotNull(replay.RevokedAt);
         var privacy = restarted.Services.GetRequiredService<IPrivacyStore>(); var status = await privacy.StatusAsync();
         var erased = await privacy.EraseAsync(new(Guid.NewGuid(), status.Revision, PrivacyData.ErasePhrase),
             PrivacyData.Hash("fixture-owner-key"), now, default);
         Assert.True(erased.Erased);
-        Assert.Equal(1, (await privacy.JobsAsync()).Single().Removed.DeviceGrants);
+        Assert.Equal(2, (await privacy.JobsAsync()).Single().Removed.DeviceGrants);
         await using var db = await restarted.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>().CreateDbContextAsync();
         Assert.Empty(await db.DeviceGrants.ToArrayAsync());
     }

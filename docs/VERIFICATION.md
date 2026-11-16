@@ -675,3 +675,13 @@ Centralized repeated route, header, and configuration names. The Kotlin contract
 The initial Android build identified the two wake DTOs missing from the generator inputs. The initial backend build identified a syntax error in the goal export filter. Both were corrected before rerunning verification. The standalone frontend's intelligence module now matches the domain risk controls already served by Core, and both workspace parity scripts pass locally.
 
 The full backend suite with disposable PostgreSQL 17 passed 351 tests with zero failures. The opt-in performance harness was skipped. Android passed all 31 JVM tests and release lint. The 15 generated Kotlin DTO declarations match the pre-refactor declarations.
+
+## Round 4 RR4-01 — device grant constraints and audit
+
+Installed capabilities publish a constraint schema and validate closed argument, receipt, and constraint schemas at startup. The Home Assistant policy matches an exact allowlisted entity and a supported action. New grants require an owner reason and a request ID, and Core saves the verified owner subject on the grant row. An identical retry returns the existing grant. Revoked audited grants retain their request ID through the original expiry to prevent reactivation by replay.
+
+The additive `20261116101533_DeviceGrantAudit` migration preserves existing rows. Grants without audit metadata and grants bound to an outdated credential are shown as ineffective. The credential and grant visibility check covers the gap until both can be updated in one transaction.
+
+Focused testing passed 65/65 with disposable PostgreSQL 17. It covered schema validation, exact entity and action matching, owner authorization, concurrent retries, revocation, upgrade of a database with a historical grant, persistence after restart, and privacy erasure. EF reported no pending model changes.
+
+The full backend suite passed 365 tests with zero failures and the opt-in performance harness skipped. The disposable PostgreSQL container was removed after verification.
