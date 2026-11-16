@@ -269,7 +269,7 @@ app.MapGet("/api/operations", (IRuntimeReader reader, TimeProvider clock, Cancel
     queuedTasks = s.AgentTasks.Values.Count(x => x.Status is Jarvis.Contracts.AgentTaskStatus.Queued or Jarvis.Contracts.AgentTaskStatus.RetryScheduled),
     runningTasks = s.AgentTasks.Values.Count(x => x.Status == Jarvis.Contracts.AgentTaskStatus.Running),
     expiredLeases = s.AgentTasks.Values.Count(x => x.Status == Jarvis.Contracts.AgentTaskStatus.Running && x.LeaseExpiresAt <= clock.GetUtcNow()),
-    activeGoals = s.Goals.Values.Count(x => x.Status == GoalStatus.Active), pendingTriggers = s.AgentTriggers.Values.Count(x => x.Status == "Pending"),
+    activeGoals = s.Goals.Values.Count(x => x.Status == GoalStatus.Active), pendingTriggers = s.AgentTriggers.Values.Count(x => x.Status == AgentTriggerStatus.Pending),
     uncertainCharges = s.UsageReservations.Values.Count(x => x.ActualUsd is null || x.ReconciliationRequired),
     monthCommittedUsd = s.UsageReservations.Values.Where(x => x.At.Year == clock.GetUtcNow().Year && x.At.Month == clock.GetUtcNow().Month).Sum(x => x.ActualUsd ?? x.ReservedUsd),
     agentsPaused = s.AgentControls.EffectiveAgentsPaused,

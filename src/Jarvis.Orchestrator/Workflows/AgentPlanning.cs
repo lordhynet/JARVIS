@@ -68,7 +68,7 @@ public sealed partial class AgentRuntime
             }
             Guard.Require(prior is not null || s.AgentTriggers.Count < 5000, 409, "Trigger capacity reached.");
             var trigger = new DurableAgentTrigger(id, source, occurrence, request.Revision, request.Workflow,
-                normalized.DueAt, normalized.ExpiresAt, brief, request.AllowCloudProcessing, correlation, fingerprint, request.Cancelled ? "Cancelled" : "Pending");
+                normalized.DueAt, normalized.ExpiresAt, brief, request.AllowCloudProcessing, correlation, fingerprint, request.Cancelled ? AgentTriggerStatus.Cancelled : AgentTriggerStatus.Pending);
             s.AgentTriggers[id] = trigger; return trigger;
         }, ct);
     }
@@ -85,15 +85,15 @@ public sealed partial class AgentRuntime
             s.AgentRuns[id] = s.AgentRuns[id] with { Deadline = s.AgentRuns[id].Deadline < goal.Deadline ? s.AgentRuns[id].Deadline : goal.Deadline };
             s.Goals[goal.Id] = goal with { LastRunId = id, UpdatedAt = now }; count++;
         }
-        foreach (var trigger in s.AgentTriggers.Values.Where(x => x.Status is "Pending" or "Dispatched").OrderBy(x => x.DueAt).ToList())
+        foreach (var trigger in s.AgentTriggers.Values.Where(x => x.Status is AgentTriggerStatus.Pending or AgentTriggerStatus.Dispatched).OrderBy(x => x.DueAt).ToList())
         {
-            if (trigger.ExpiresAt <= now) { if (trigger.RunId is Guid expiredRun) Supersede(s, expiredRun, "event_expired"); s.AgentTriggers[trigger.Id] = trigger with { Status = "Expired", Brief = "" }; continue; }
-            if (!available.ContainsKey(trigger.Workflow) || available[trigger.Workflow].RequiresCloud && !trigger.AllowCloudProcessing || trigger.Status != "Pending" || s.AgentControls.EffectiveAgentsPaused || s.AgentControls.PausedWorkflows?.Contains(trigger.Workflow) == true || trigger.DueAt > now) continue;
+            if (trigger.ExpiresAt <= now) { if (trigger.RunId is Guid expiredRun) Supersede(s, expiredRun, "event_expired"); s.AgentTriggers[trigger.Id] = trigger with { Status = AgentTriggerStatus.Expired, Brief = "" }; continue; }
+            if (!available.ContainsKey(trigger.Workflow) || available[trigger.Workflow].RequiresCloud && !trigger.AllowCloudProcessing || trigger.Status != AgentTriggerStatus.Pending || s.AgentControls.EffectiveAgentsPaused || s.AgentControls.PausedWorkflows?.Contains(trigger.Workflow) == true || trigger.DueAt > now) continue;
             var id = StableId($"trigger-run-v1:{trigger.Id}:{trigger.Revision}");
             Create(s, id, null, $"event:{trigger.Id}:{trigger.Revision}", trigger.Workflow, trigger.AllowCloudProcessing, trigger.Brief, now, available[trigger.Workflow]);
             s.AgentRuns[id] = s.AgentRuns[id] with { Deadline = s.AgentRuns[id].Deadline < trigger.ExpiresAt ? s.AgentRuns[id].Deadline : trigger.ExpiresAt };
             CoreTelemetry.ScheduleDelay.Record(Math.Max(0, (now - trigger.DueAt).TotalSeconds));
-            s.AgentTriggers[trigger.Id] = trigger with { Status = "Dispatched", RunId = id }; count++;
+            s.AgentTriggers[trigger.Id] = trigger with { Status = AgentTriggerStatus.Dispatched, RunId = id }; count++;
         }
         return count;
     }

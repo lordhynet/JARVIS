@@ -31,12 +31,12 @@ public sealed class CalendarTriggerSync(IIntegrationReader calendar, IRuntimeRea
             var due = start.AddHours(-hours); var consent = config.GetValue("Automation:Calendar:AllowCloudProcessing", false);
             var brief = "Prepare for this interview: " + entry.Title;
             if (brief.Length > 2000) brief = brief[..2000];
-            if (old is not null && old.DueAt == due && old.ExpiresAt == start && old.Brief == brief && old.AllowCloudProcessing == consent && old.Status != "Cancelled") continue;
+            if (old is not null && old.DueAt == due && old.ExpiresAt == start && old.Brief == brief && old.AllowCloudProcessing == consent && old.Status != AgentTriggerStatus.Cancelled) continue;
             await runtime.IngestTriggerAsync(new(source, occurrence, (old?.Revision ?? 0) + 1, "interview-preparation", due, start,
                 brief, consent, occurrence), ct); count++;
         }
         // Missing events are cancelled only after a complete successful provider snapshot.
-        foreach (var old in prior.Where(x => !seen.Contains(x.OccurrenceId) && x.Status is "Pending" or "Dispatched"))
+        foreach (var old in prior.Where(x => !seen.Contains(x.OccurrenceId) && x.Status is AgentTriggerStatus.Pending or AgentTriggerStatus.Dispatched))
         {
             await runtime.IngestTriggerAsync(new(source, old.OccurrenceId, old.Revision + 1, old.Workflow, old.DueAt, old.ExpiresAt,
                 "", old.AllowCloudProcessing, old.CorrelationId, true), ct); count++;

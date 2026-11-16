@@ -16,8 +16,8 @@ public static class AgentEligibility
             !s.AgentControls.EffectiveAgentsPaused && g.LastRunId is null && g.NextReviewAt <= now &&
             available.TryGetValue(g.Workflow, out var goalWorkflow) && (!goalWorkflow.RequiresCloud || g.AllowCloudProcessing) &&
             s.AgentControls.PausedWorkflows?.Contains(g.Workflow) != true))) return true;
-        if (s.AgentTriggers.Values.Any(t => (t.Status is "Pending" or "Dispatched") &&
-            (t.ExpiresAt <= now || !s.AgentControls.EffectiveAgentsPaused && t.Status == "Pending" && t.DueAt <= now &&
+        if (s.AgentTriggers.Values.Any(t => (t.Status is AgentTriggerStatus.Pending or AgentTriggerStatus.Dispatched) &&
+            (t.ExpiresAt <= now || !s.AgentControls.EffectiveAgentsPaused && t.Status == AgentTriggerStatus.Pending && t.DueAt <= now &&
              available.TryGetValue(t.Workflow, out var triggerWorkflow) && (!triggerWorkflow.RequiresCloud || t.AllowCloudProcessing) &&
              s.AgentControls.PausedWorkflows?.Contains(t.Workflow) != true))) return true;
         if (!s.AgentControls.EffectiveAgentsPaused)
