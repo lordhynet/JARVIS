@@ -1,0 +1,13 @@
+**/bin
+**/obj
+.git
+.env
+.https
+appsettings.json
+.claude
+node_modules
+TestResults
+test-results
+playwright-report
+logs
+backups

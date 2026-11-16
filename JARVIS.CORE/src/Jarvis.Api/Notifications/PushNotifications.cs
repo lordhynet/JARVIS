@@ -1,0 +1,128 @@
+using System.Net;
+using System.Text.Json;
+using Jarvis.Api.Security;
+using Jarvis.Contracts;
+using Jarvis.Orchestrator.Runtime;
+using Jarvis.Orchestrator.Workflows;
+using WebPush;
+
+namespace Jarvis.Api.Notifications;
+
+public interface IPushSender { Task SendAsync(BrowserPushSubscription subscription, Guid noticeId, CancellationToken ct); }
+public static class PushEligibility
+{
+    public static bool HasDispatchWork(RuntimeState s, DateTimeOffset now, string fingerprint)
+    {
+        if (s.PushDeliveries.Values.Any(d => !s.AgentOutbox.ContainsKey(d.NotificationId) || !s.PushSubscriptions.ContainsKey(d.SubscriptionId))) return true;
+        return !s.AgentControls.EffectiveAgentsPaused && !AgentRuntime.IsQuiet(s.AgentControls, now) &&
+            s.AgentOutbox.Values.Any(n => n.Delivered && !n.Read && n.ExpiresAt > now &&
+                s.PushSubscriptions.Values.Any(subscription => subscription.KeyFingerprint == fingerprint &&
+                    (!s.PushDeliveries.TryGetValue(AgentRuntime.StableId($"push-v1:{n.Id}:{subscription.Id}"), out var delivery) || IsReady(delivery, now))));
+    }
+
+    public static bool IsReady(PushDelivery delivery, DateTimeOffset now) =>
+        delivery.Attempt < 3 && delivery.AvailableAt <= now &&
+        (delivery.Status == "Pending" || delivery.Status == "Sending" && delivery.LeaseExpiresAt <= now);
+}
+
+public sealed class WebPushSender(IHttpClientFactory clients, IConfiguration config) : IPushSender
+{
+    public async Task SendAsync(BrowserPushSubscription subscription, Guid noticeId, CancellationToken ct)
+    {
+        PushNotifications.ValidateEndpoint(subscription.Endpoint);
+        using var sender = new WebPushClient(clients.CreateClient("push"));
+        var keys = new VapidDetails(config["Push:Subject"], config["Push:PublicKey"], config["Push:PrivateKey"]);
+        await sender.SendNotificationAsync(new PushSubscription(subscription.Endpoint, subscription.P256dh, subscription.Auth),
+            JsonSerializer.Serialize(new { title = "JARVIS update", body = "Open your private JARVIS inbox for a new update.", tag = noticeId.ToString() }),
+            new Dictionary<string, object> { ["vapidDetails"] = keys, ["TTL"] = 300 }, ct);
+    }
+}
+
+public sealed class PushNotifications(IRuntimeStore store, IConfiguration config, IPushSender sender, TimeProvider clock)
+{
+    public bool Ready => config.GetValue("Push:Enabled", false) && !string.IsNullOrWhiteSpace(config["Push:PublicKey"]) && !string.IsNullOrWhiteSpace(config["Push:PrivateKey"]);
+    public static void ValidateEndpoint(string endpoint)
+    {
+        Guard.Require(!string.IsNullOrWhiteSpace(endpoint) && endpoint.Length <= 3000 && Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0 && uri.IsDefaultPort &&
+            (uri.Host is "fcm.googleapis.com" or "updates.push.services.mozilla.com" || uri.Host.EndsWith(".push.apple.com", StringComparison.OrdinalIgnoreCase)),
+            400, "Unsupported browser push destination.");
+    }
+    private static byte[] Decode(string value)
+    {
+        Guard.Require(!string.IsNullOrWhiteSpace(value) && value.Length <= 100 && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'), 400, "Invalid browser subscription key.");
+        try { return Convert.FromBase64String(value.Replace('-', '+').Replace('_', '/') + new string('=', (4 - value.Length % 4) % 4)); }
+        catch (FormatException) { throw new DomainException(400, "Invalid browser subscription key."); }
+    }
+    public Task<Guid> SubscribeAsync(SavePushSubscriptionRequest request, string fingerprint, CancellationToken ct)
+    {
+        Guard.Require(Ready, 503, "Browser push is not configured."); ValidateEndpoint(request.Endpoint);
+        Guard.Require(Decode(request.P256dh).Length == 65 && Decode(request.Auth).Length == 16, 400, "Subscription key lengths are invalid.");
+        var id = AgentRuntime.StableId(request.Endpoint);
+        return store.UpdateAsync(s =>
+        {
+            Guard.Require(s.PushSubscriptions.ContainsKey(id) || s.PushSubscriptions.Count < 50, 409, "Browser notification device limit reached.");
+            s.PushSubscriptions[id] = new(id, request.Endpoint, request.P256dh, request.Auth, fingerprint, clock.GetUtcNow()); return id;
+        }, ct);
+    }
+    public Task<bool> UnsubscribeAsync(Guid id, CancellationToken ct) => store.UpdateAsync(s => s.PushSubscriptions.Remove(id), ct);
+
+    public async Task<bool> DispatchOneAsync(CancellationToken ct)
+    {
+        if (!Ready) return false;
+        var fingerprint = PrivacyData.Hash(config[ConfigKeys.CoreApiKey] ?? "");
+        var nowCheck = clock.GetUtcNow();
+        if (!await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, nowCheck, fingerprint), ct)) return false;
+        var claim = await store.UpdateAsync(s =>
+        {
+            var now = clock.GetUtcNow();
+            foreach (var obsolete in s.PushDeliveries.Values.Where(x => !s.AgentOutbox.ContainsKey(x.NotificationId) || !s.PushSubscriptions.ContainsKey(x.SubscriptionId)).ToList()) s.PushDeliveries.Remove(obsolete.Id);
+            if (!PushEligibility.HasDispatchWork(s, now, fingerprint)) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
+            if (s.AgentControls.EffectiveAgentsPaused) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
+            var local = TimeOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, Jarvis.Orchestrator.Training.TrainingProjection.Zone(s.AgentControls.TimeZone)).DateTime);
+            var start = AgentRuntime.LocalTime(s.AgentControls.QuietStart); var end = AgentRuntime.LocalTime(s.AgentControls.QuietEnd);
+            var quiet = start != end && (start < end ? local >= start && local < end : local >= start || local < end);
+            if (quiet) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
+            // The durable inbox owns freshness and quiet-hour release.
+            foreach (var notice in s.AgentOutbox.Values.Where(x => x.Delivered && !x.Read && x.ExpiresAt > now))
+                foreach (var subscription in s.PushSubscriptions.Values.Where(x => x.KeyFingerprint == fingerprint))
+                {
+                    var id = AgentRuntime.StableId($"push-v1:{notice.Id}:{subscription.Id}");
+                    s.PushDeliveries.TryAdd(id, new(id, notice.Id, subscription.Id, 0, "Pending", now));
+                }
+            var next = s.PushDeliveries.Values.OrderBy(x => x.AvailableAt).FirstOrDefault(x =>
+                PushEligibility.IsReady(x, now) &&
+                s.AgentOutbox.TryGetValue(x.NotificationId, out var note) && !note.Read && note.ExpiresAt > now &&
+                s.PushSubscriptions.TryGetValue(x.SubscriptionId, out var subscription) && subscription.KeyFingerprint == fingerprint);
+            if (next is null) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
+            var owned = next with { Status = "Sending", Attempt = next.Attempt + 1, ClaimToken = Guid.NewGuid(), LeaseExpiresAt = now.AddSeconds(30) };
+            s.PushDeliveries[owned.Id] = owned; return (Delivery: (PushDelivery?)owned, Subscription: (BrowserPushSubscription?)s.PushSubscriptions[owned.SubscriptionId]);
+        }, ct);
+        if (claim.Delivery is null) return false;
+        var succeeded = false; var gone = false;
+        try { await sender.SendAsync(claim.Subscription!, claim.Delivery.NotificationId, ct); succeeded = true; }
+        catch (WebPushException error) { gone = error.StatusCode is HttpStatusCode.Gone or HttpStatusCode.NotFound; }
+        catch (HttpRequestException) { }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+        await store.UpdateAsync(s =>
+        {
+            if (!s.PushDeliveries.TryGetValue(claim.Delivery.Id, out var current) || current.ClaimToken != claim.Delivery.ClaimToken) return false;
+            if (gone) s.PushSubscriptions.Remove(current.SubscriptionId);
+            s.PushDeliveries[current.Id] = current with { Status = succeeded ? "Delivered" : gone || current.Attempt >= 3 ? "Failed" : "Pending", ClaimToken = null, LeaseExpiresAt = null, AvailableAt = clock.GetUtcNow().AddSeconds(Math.Pow(2, current.Attempt) * 10) };
+            return true;
+        }, ct);
+        return true;
+    }
+}
+
+public sealed class PushWorker(PushNotifications notifications, IPrivacyReader privacy, ILogger<PushWorker> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var invocation = CoreInvocationContext.Enter(InvocationOrigin.Agent);
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+            try { var status = await privacy.StatusAsync(stoppingToken); if (status.Erased) continue; using var scope = PrivacyContext.Enter(status.Epoch); await notifications.DispatchOneAsync(stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            catch (Exception error) { logger.LogWarning("Browser push delivery failed ({Type}).", error.GetType().Name); }
+    }
+}

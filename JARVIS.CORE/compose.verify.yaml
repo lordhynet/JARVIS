@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:17@sha256:0d938e975177bef9f1f61f3f9dbcf2e0aa0a139568f66d3415ed8892eb97f6ac
+    environment:
+      POSTGRES_DB: jarvis
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: ${JARVIS_VERIFY_DB_PASSWORD:?Verification password is required}
+    volumes:
+      - verification-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${JARVIS_VERIFY_PORT:-5198}:8080"
+    volumes:
+      - "${JARVIS_VERIFY_SETTINGS_PATH:?Verification appsettings.json is required}:/app/appsettings.json:ro"
+volumes:
+  verification-data:
