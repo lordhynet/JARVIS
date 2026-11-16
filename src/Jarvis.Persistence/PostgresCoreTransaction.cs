@@ -53,6 +53,13 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
 
         public Task<DeviceCommand?> ReadDeviceCommandAsync(Guid id) => PostgresDeviceCommandStore.ReadLockedAsync(db, id, ct);
 
+        public Task<DeviceCommand?> ReadDeviceDispatchAsync(string deviceId, string credentialHash, Guid requestId) =>
+            PostgresDeviceCommandStore.ReadDispatchAsync(db, deviceId, credentialHash, requestId, ct);
+
+        public Task<IReadOnlyList<DeviceCommand>> ReadPendingDeviceCommandsAsync(string deviceId, string credentialHash,
+            DateTimeOffset now, DeviceCommand? after) =>
+            PostgresDeviceCommandStore.ReadPendingAsync(db, deviceId, credentialHash, now, after, ct);
+
         public Task SaveDeviceCommandAsync(DeviceCommand command) => PostgresDeviceCommandStore.SaveAsync(db, command, ct);
     }
 }

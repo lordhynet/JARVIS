@@ -93,7 +93,13 @@ Revoked audited grants stay eligible for lookup by request ID through their orig
 - `GET /api/device-commands/{id}` returns the current command and its exact argument text. The proposal and lookup routes use the ordinary Core owner session.
 - `POST /api/device-commands/{id}/confirm` requires the separate owner key and an explicit `approve` value. Send the returned `argumentHash`, which is the uppercase SHA-256 of the UTF-8 argument text. Core rechecks the grant, credential and allowed arguments before accepting approval. Approval moves an awaiting command to `Pending`. A negative decision cancels an awaiting or pending command. The response retains the verified owner's decision timestamps and subject.
 
-Agent, voice and external-content proposals require manual owner confirmation. The installed Home Assistant descriptor also requires confirmation for manual proposals. The proposal API records commands for subsequent device delivery. Expired commands are eligible for removal under the configured artifact retention period. Core erasure removes all command records.
+Agent, voice and external-content proposals require manual owner confirmation. The installed Home Assistant descriptor also requires confirmation for manual proposals. Expired commands are eligible for removal under the configured artifact retention period. Core erasure removes all command records.
+
+### Device command delivery
+
+An executor polls `POST /api/device-commands/claim` with its paired credential in `X-Jarvis-Key` and a new UUID in `requestId`. Core takes the device identity from the credential, checks its current grant and confirmation, and atomically dispatches the oldest eligible command. An HTTP 200 response includes the command ID, capability version, exact argument text and hash, dispatch time and expiry. HTTP 204 means the poll produced no command.
+
+Reuse the same poll request ID after a lost response. While the command and grant are active, a retry can recover the original dispatch for capabilities marked `CallerKey` or `SafeReplay`. A `NeverReplay` capability returns HTTP 204 on retry. An executor must follow the descriptor's replay policy, use the returned command ID as the action idempotency key when required, and check the expiry before executing. Use a fresh request ID for the next poll after a received response.
 
 ## Primary API references
 

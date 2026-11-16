@@ -10,6 +10,14 @@ public static class DeviceCommandEndpoints
 {
     public static void MapDeviceCommandEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapPost(CoreRoutes.DeviceCommandClaim, async (ClaimDeviceCommandRequest request, HttpContext context,
+            ICommandHandler<ClaimDeviceCommand, DeliveredDeviceCommand?> handler, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var delivery = await handler.HandleAsync(new ClaimDeviceCommand(request), ct);
+            return delivery is null ? Results.NoContent() : Results.Ok(delivery);
+        }).WithTags("Device commands").RequireAuthorization(CorePolicies.Companion);
+
         app.MapPost(CoreRoutes.DeviceCommandProposals, (string id, ProposeDeviceCommandRequest request,
             ICommandHandler<ProposeDeviceCommand, DeviceCommandView> handler, CancellationToken ct) =>
             handler.HandleAsync(new ProposeDeviceCommand(id, request), ct))

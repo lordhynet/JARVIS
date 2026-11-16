@@ -11,6 +11,7 @@ public interface ICoreTransaction
 
 public interface ICoreTransactionWrites
 {
+    const int DeviceCommandBatchSize = 16;
     RuntimeState Runtime { get; }
     Task<SessionAudioState?> ReadAudioStateAsync(Guid sessionId);
     Task<ConversationSession?> UpdateSessionAsync(Guid sessionId, Func<ConversationSession, ConversationSession> update);
@@ -18,6 +19,9 @@ public interface ICoreTransactionWrites
     Task<int> RevokeDeviceGrantsAsync(string deviceId, DateTimeOffset now);
     Task<DeviceGrant?> ReadDeviceGrantAsync(Guid id);
     Task<DeviceCommand?> ReadDeviceCommandAsync(Guid id);
+    Task<DeviceCommand?> ReadDeviceDispatchAsync(string deviceId, string credentialHash, Guid requestId);
+    Task<IReadOnlyList<DeviceCommand>> ReadPendingDeviceCommandsAsync(string deviceId, string credentialHash, DateTimeOffset now,
+        DeviceCommand? after);
     Task SaveDeviceCommandAsync(DeviceCommand command);
 }
 
@@ -71,6 +75,20 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
 
         public Task<DeviceCommand?> ReadDeviceCommandAsync(Guid id) =>
             Task.FromResult(stagedCommands.GetValueOrDefault(id) ?? boundary.DeviceCommands.GetValueOrDefault(id));
+
+        public Task<DeviceCommand?> ReadDeviceDispatchAsync(string deviceId, string credentialHash, Guid requestId) =>
+            Task.FromResult(DeviceCommands().SingleOrDefault(x => x.DeviceId == deviceId && x.CredentialHash == credentialHash &&
+                x.DispatchRequestId == requestId));
+
+        public Task<IReadOnlyList<DeviceCommand>> ReadPendingDeviceCommandsAsync(string deviceId, string credentialHash,
+            DateTimeOffset now, DeviceCommand? after) => Task.FromResult<IReadOnlyList<DeviceCommand>>(DeviceCommands()
+                .Where(x => x.DeviceId == deviceId && x.CredentialHash == credentialHash &&
+                    x.Status == DeviceCommandStatus.Pending && x.ExpiresAt > now &&
+                    (after is null || x.CreatedAt > after.CreatedAt || x.CreatedAt == after.CreatedAt && x.Id.CompareTo(after.Id) > 0))
+                .OrderBy(x => x.CreatedAt).ThenBy(x => x.Id).Take(ICoreTransactionWrites.DeviceCommandBatchSize).ToArray());
+
+        private IEnumerable<DeviceCommand> DeviceCommands() =>
+            stagedCommands.Values.Concat(boundary.DeviceCommands.Values.Where(x => !stagedCommands.ContainsKey(x.Id)));
 
         public Task SaveDeviceCommandAsync(DeviceCommand command)
         {

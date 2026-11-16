@@ -84,6 +84,8 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.Property(x => x.ConfirmedBy).HasMaxLength(80);
             b.Property(x => x.CancelledBy).HasMaxLength(80);
             b.HasIndex(x => x.CreatedAt);
+            b.HasIndex(x => new { x.DeviceId, x.CredentialHash, x.Status, x.CreatedAt, x.Id });
+            b.HasIndex(x => new { x.DeviceId, x.CredentialHash, x.DispatchRequestId }).IsUnique();
         });
         model.Entity<CheckpointRow>(b =>
         {

@@ -53,6 +53,13 @@ public sealed class CqrsArchitectureTests
                 .Select(method => method + " /" + endpoint.RoutePattern.RawText!.Trim('/')));
         Assert.Equal(expected.OrderBy(x => x, StringComparer.Ordinal), scoped.OrderBy(x => x, StringComparer.Ordinal));
 
+        var commandRoutes = endpoints
+            .Where(endpoint => endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().Any(policy => policy.Policy == CorePolicies.Companion))
+            .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
+                .Select(method => method + " /" + endpoint.RoutePattern.RawText!.Trim('/')));
+        Assert.Equal(CoreRoutes.CompanionCommandPost.Select(path => "POST " + path).Order(),
+            commandRoutes.Order());
+
         var bootstrap = Assert.Single(endpoints, endpoint =>
             "/" + endpoint.RoutePattern.RawText!.Trim('/') == CoreRoutes.Devices &&
             endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods.Contains("POST") == true);

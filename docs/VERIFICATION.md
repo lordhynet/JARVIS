@@ -705,3 +705,13 @@ The owner confirms or cancels using the stored hash and separate owner authoriza
 All 59 focused tests passed with disposable PostgreSQL 17 and in-memory fixtures. Coverage includes endpoint authorization, exact argument binding, concurrent retries, rollback of proposal and approval, persistence after restart, expiry, retention and erasure. EF reported no pending model changes. Device delivery and signed receipts are the next protocol steps.
 
 The full backend suite passed 375 tests with zero failures and the opt-in performance harness skipped. The disposable PostgreSQL container was removed after verification.
+
+## Round 4 Item 3 — device command delivery
+
+Paired executors can claim one eligible command through `POST /api/device-commands/claim`. Core compares the authenticated credential with the current device binding and rechecks the grant, expiry, argument hash and confirmation before moving a command from pending to dispatched. Commands use a separate companion route declaration from the Android audio contract.
+
+The additive `20261116121125_DeviceCommandDelivery` migration stores a dispatch time and a request ID scoped to the device and credential. Retrying the same request can recover a dispatch while it and the grant remain active, according to the capability's replay policy. Each distinct claim can dispatch one pending command.
+
+All 64 focused tests passed with disposable PostgreSQL 17 and in-memory fixtures. Coverage includes credential isolation, concurrent competing claims, rollback, restart recovery, revoked grants, expired commands and paging past ineligible commands. EF reported no pending model changes. The Android route, header and DTO parity check passed.
+
+The full backend suite passed 380 tests with zero failures and the opt-in performance harness skipped. The disposable PostgreSQL container was removed after verification.

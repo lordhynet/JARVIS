@@ -6,15 +6,15 @@ namespace Jarvis.Orchestrator.Runtime;
 public sealed record DeviceCommand(Guid Id, Guid GrantId, string DeviceId, string CapabilityId, string CapabilityVersion,
     string CredentialHash, string ArgumentsJson, string ArgumentHash, InvocationOrigin Origin, DeviceCommandStatus Status,
     DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, DateTimeOffset? ConfirmedAt = null, string? ConfirmedBy = null,
-    DateTimeOffset? CancelledAt = null, string? CancelledBy = null)
+    DateTimeOffset? CancelledAt = null, string? CancelledBy = null, Guid? DispatchRequestId = null, DateTimeOffset? DispatchedAt = null)
 {
     public DeviceCommandStatus StatusAt(DateTimeOffset now) =>
-        ExpiresAt <= now && Status is DeviceCommandStatus.Pending or DeviceCommandStatus.AwaitingConfirmation
+        ExpiresAt <= now && Status is DeviceCommandStatus.Pending or DeviceCommandStatus.AwaitingConfirmation or DeviceCommandStatus.Dispatched
             ? DeviceCommandStatus.Expired : Status;
 
     public DeviceCommandView View(DateTimeOffset now) => new(Id, GrantId, DeviceId, CapabilityId, CapabilityVersion,
         ArgumentsJson, ArgumentHash, Origin.ToString(), StatusAt(now), CreatedAt, ExpiresAt, ConfirmedAt, ConfirmedBy,
-        CancelledAt, CancelledBy);
+        CancelledAt, CancelledBy, DispatchedAt);
 }
 
 public interface IDeviceCommandReader
@@ -49,12 +49,12 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             var grant = await writes.ReadDeviceGrantAsync(request.GrantId);
             var now = clock.GetUtcNow();
             Guard.Require(expiresAt > now && expiresAt <= now.Add(MaximumLifetime), 400, "Command expiry must be within the next five minutes.");
-            RequireActiveGrant(writes.Runtime, grant, deviceId, expiresAt, now);
+            Guard.Require(HasActiveGrant(writes.Runtime, grant, deviceId, expiresAt, now), 403,
+                "An active owner grant for this device and command lifetime is required.");
             var descriptor = capabilities.Get(grant.CapabilityId, grant.CapabilityVersion);
             Guard.Require(capabilities.Permits(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson, request.ArgumentsJson),
                 403, "Command arguments are outside the granted capability.");
-            var needsConfirmation = origin != InvocationOrigin.ManualClient || descriptor.ConfirmationPolicy == DeviceConfirmationPolicy.Owner ||
-                descriptor.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible;
+            var needsConfirmation = RequiresConfirmation(origin, descriptor);
             var command = new DeviceCommand(request.RequestId, grant.Id, deviceId, grant.CapabilityId, grant.CapabilityVersion,
                 grant.CredentialHash, request.ArgumentsJson, PrivacyData.Hash(request.ArgumentsJson), origin,
                 needsConfirmation ? DeviceCommandStatus.AwaitingConfirmation : DeviceCommandStatus.Pending, Timestamp(now), expiresAt);
@@ -103,10 +103,8 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
                     await writes.SaveDeviceCommandAsync(command with { Status = DeviceCommandStatus.Expired });
                     return command.View(now);
                 }
-                RequireActiveGrant(writes.Runtime, grant, command.DeviceId, command.ExpiresAt, now);
-                Guard.Require(grant.CredentialHash == command.CredentialHash && grant.CapabilityId == command.CapabilityId &&
-                    grant.CapabilityVersion == command.CapabilityVersion &&
-                    capabilities.Permits(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson, command.ArgumentsJson),
+                Guard.Require(HasActiveGrant(writes.Runtime, grant, command.DeviceId, command.ExpiresAt, now) &&
+                    MatchesGrantedArguments(command, grant),
                     403, "The command's granted capability is no longer valid.");
                 command = command with { Status = DeviceCommandStatus.Pending, ConfirmedAt = Timestamp(now), ConfirmedBy = actor.SubjectId };
             }
@@ -119,15 +117,77 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
         }, ct);
     }
 
-    private static void RequireActiveGrant(RuntimeState state, [NotNull] DeviceGrant? grant,
-        string deviceId, DateTimeOffset expiresAt, DateTimeOffset now)
+    public Task<DeliveredDeviceCommand?> ClaimAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default)
     {
-        Guard.Require(grant is not null && grant.DeviceId == deviceId && grant.Audit is not null &&
-            grant.RevokedAt is null && grant.ExpiresAt > now && expiresAt <= grant.ExpiresAt &&
-            state.Devices.ContainsKey(deviceId) &&
-            state.DeviceCredentials.TryGetValue(deviceId, out var credential) && !credential.Revoked &&
-            credential.SecretHash == grant.CredentialHash, 403, "An active owner grant for this device and command lifetime is required.");
+        var actor = DeviceCredentialContext.CurrentActor;
+        Guard.Require(actor is { DeviceId: not null, CredentialHash: not null }, 403, "A paired device credential is required.");
+        Guard.Require(request.RequestId != Guid.Empty, 400, "A dispatch request ID is required.");
+        return transaction.ExecuteAsync<DeliveredDeviceCommand?>(async writes =>
+        {
+            DeviceCredentialContext.RequireCurrent(writes.Runtime, actor.DeviceId);
+            var previous = await writes.ReadDeviceDispatchAsync(actor.DeviceId, actor.CredentialHash, request.RequestId);
+            if (previous is not null)
+            {
+                if (previous.StatusAt(clock.GetUtcNow()) != DeviceCommandStatus.Dispatched || previous.DispatchedAt is not { } dispatchedAt)
+                    return null;
+                var approved = await ReadDeliveryCapabilityAsync(writes, previous);
+                return approved?.IdempotencyRule is DeviceIdempotencyRule.CallerKey or DeviceIdempotencyRule.SafeReplay
+                    ? Delivery(previous, dispatchedAt) : null;
+            }
+
+            DeviceCommand? after = null;
+            while (true)
+            {
+                var pending = await writes.ReadPendingDeviceCommandsAsync(actor.DeviceId, actor.CredentialHash, clock.GetUtcNow(), after);
+                if (pending.Count == 0) return null;
+                foreach (var command in pending)
+                {
+                    if (await ReadDeliveryCapabilityAsync(writes, command) is null) continue;
+                    var now = clock.GetUtcNow();
+                    if (command.ExpiresAt <= now) continue;
+                    var dispatchedAt = Timestamp(now);
+                    await writes.SaveDeviceCommandAsync(command with
+                    {
+                        Status = DeviceCommandStatus.Dispatched, DispatchRequestId = request.RequestId, DispatchedAt = dispatchedAt
+                    });
+                    return Delivery(command, dispatchedAt);
+                }
+                after = pending[^1];
+            }
+        }, ct);
     }
+
+    private async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
+    {
+        var grant = await writes.ReadDeviceGrantAsync(command.GrantId);
+        var now = clock.GetUtcNow();
+        if (command.ExpiresAt <= now || !HasActiveGrant(writes.Runtime, grant, command.DeviceId, command.ExpiresAt, now) ||
+            !MatchesGrantedArguments(command, grant) || PrivacyData.Hash(command.ArgumentsJson) != command.ArgumentHash)
+            return null;
+        var descriptor = capabilities.Get(command.CapabilityId, command.CapabilityVersion);
+        return !RequiresConfirmation(command.Origin, descriptor) ||
+            command.ConfirmedAt is not null && !string.IsNullOrWhiteSpace(command.ConfirmedBy) ? descriptor : null;
+    }
+
+    private static DeliveredDeviceCommand Delivery(DeviceCommand command, DateTimeOffset dispatchedAt) =>
+        new(command.Id, command.CapabilityId, command.CapabilityVersion, command.ArgumentsJson, command.ArgumentHash, command.ExpiresAt, dispatchedAt);
+
+    private bool MatchesGrantedArguments(DeviceCommand command, DeviceGrant grant) =>
+        grant.CredentialHash == command.CredentialHash && grant.CapabilityId == command.CapabilityId &&
+        grant.CapabilityVersion == command.CapabilityVersion &&
+        capabilities.Permits(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson, command.ArgumentsJson);
+
+    private static bool RequiresConfirmation(InvocationOrigin origin, DeviceCapabilityDescriptor descriptor) =>
+        origin != InvocationOrigin.ManualClient || descriptor.ConfirmationPolicy == DeviceConfirmationPolicy.Owner ||
+        descriptor.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible;
+
+    private static bool HasActiveGrant(RuntimeState state, [NotNullWhen(true)] DeviceGrant? grant,
+        string deviceId, DateTimeOffset expiresAt, DateTimeOffset now) =>
+        grant is not null && grant.DeviceId == deviceId && grant.Audit is not null &&
+        grant.RevokedAt is null && grant.ExpiresAt > now && expiresAt <= grant.ExpiresAt &&
+        state.Devices.ContainsKey(deviceId) &&
+        state.DeviceCredentials.TryGetValue(deviceId, out var credential) && !credential.Revoked &&
+        credential.SecretHash == grant.CredentialHash;
 
     private static DateTimeOffset Timestamp(DateTimeOffset value) =>
         new(value.UtcTicks - value.UtcTicks % 10, TimeSpan.Zero);

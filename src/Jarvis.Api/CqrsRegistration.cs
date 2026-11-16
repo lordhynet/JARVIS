@@ -123,6 +123,7 @@ public static class CqrsRegistration
         Query<ListDeviceCapabilityGrants, IReadOnlyList<DeviceCapabilityGrantView>, DeviceGrantQueryHandlers>(services);
         Command<ProposeDeviceCommand, DeviceCommandView, DeviceCommandLifecycleHandlers>(services);
         Command<ConfirmDeviceCommand, DeviceCommandView, DeviceCommandLifecycleHandlers>(services);
+        Command<ClaimDeviceCommand, DeliveredDeviceCommand?, DeviceCommandLifecycleHandlers>(services);
         Query<GetDeviceCommand, DeviceCommandView, DeviceCommandQueryHandler>(services);
         Command<CreateLearningItem, LearningItem, LearningCommandHandlers>(services);
         Command<ReviewLearningItem, LearningItem, LearningCommandHandlers>(services);

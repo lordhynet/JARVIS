@@ -8,6 +8,7 @@ public static class CoreRoutes
     public const string DeviceCredentialSuffix = "/{id}/credential";
     public const string DeviceGrants = Devices + "/{id}/grants";
     public const string DeviceCommandProposals = Devices + "/{id}/commands";
+    public const string DeviceCommandClaim = "/api/device-commands/claim";
     public const string DeviceCommand = "/api/device-commands/{id:guid}";
     public const string DeviceCommandConfirm = DeviceCommand + "/confirm";
     public const string DeviceCapabilities = "/api/device-capabilities";
@@ -33,4 +34,7 @@ public static class CoreRoutes
     // Device registration is available during owner-key bootstrap. Paired credentials use the other routes.
     public static IReadOnlyList<string> CompanionPost { get; } =
         Array.AsReadOnly(new[] { Devices, VoicePrepare, VoiceWakeCandidates, VoiceTickets, VoiceLocalRelease, DeviceHeartbeat });
+
+    // Command executors use paired credentials. This contract is separate from the Android audio client.
+    public static IReadOnlyList<string> CompanionCommandPost { get; } = Array.AsReadOnly(new[] { DeviceCommandClaim });
 }

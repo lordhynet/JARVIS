@@ -105,6 +105,12 @@ namespace Jarvis.Persistence.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
 
+                    b.Property<Guid?>("DispatchRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("DispatchedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -120,6 +126,11 @@ namespace Jarvis.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedAt");
+
+                    b.HasIndex("DeviceId", "CredentialHash", "DispatchRequestId")
+                        .IsUnique();
+
+                    b.HasIndex("DeviceId", "CredentialHash", "Status", "CreatedAt", "Id");
 
                     b.ToTable("DeviceCommands", (string)null);
                 });
