@@ -68,34 +68,54 @@ public sealed class DeviceCapabilityCatalog : IDeviceCapabilityCatalog
         ? descriptor.Descriptor : throw new DomainException(404, "Device capability version is not installed.");
 
     public bool HasValidConstraints(string id, string version, string? constraintsJson) =>
-        TryReadAllowlist(id, version, constraintsJson, out _, out _);
+        TryReadAllowlist(id, version, constraintsJson, out _, out _, out _);
 
     public bool AcceptsReceipt(string id, string version, DeviceReceiptKind kind, string? payloadJson) =>
         entries.TryGetValue((id, version), out var entry) &&
         DeviceJsonSchema.TryReadObject(payloadJson, 8_000, out var payload) && DeviceJsonSchema.Accepts(entry.Receipt, payload) &&
-        (id != BuiltInDeviceCapabilities.HomeAssistantTurn || version != BuiltInDeviceCapabilities.HomeAssistantTurnVersion ||
+        (!BuiltInDeviceCapabilities.IsHomeAssistant(id, version) ||
             payload.TryGetProperty("accepted", out var accepted) &&
             accepted.ValueKind == (kind == DeviceReceiptKind.Failed ? JsonValueKind.False : JsonValueKind.True));
 
     public bool Permits(string id, string version, string? constraintsJson, string? argumentsJson) =>
-        TryReadAllowlist(id, version, constraintsJson, out var entry, out var allowed) &&
+        TryReadAllowlist(id, version, constraintsJson, out var entry, out var allowed, out var constraints) &&
         DeviceJsonSchema.TryReadObject(argumentsJson, 8_000, out var arguments) &&
         DeviceJsonSchema.Accepts(entry!.Arguments, arguments) &&
         arguments.TryGetProperty("entityId", out var entity) && entity.ValueKind == JsonValueKind.String &&
-        allowed.Contains(entity.GetString()!);
+        allowed.Contains(entity.GetString()!) && WithinConstraints(id, arguments, constraints);
 
-    private bool TryReadAllowlist(string id, string version, string? constraintsJson, out Entry? entry, out HashSet<string> allowed)
+    private static bool WithinConstraints(string id, JsonElement arguments, JsonElement constraints)
+    {
+        if (id == BuiltInDeviceCapabilities.HomeAssistantClimateSet)
+        {
+            var temperature = arguments.GetProperty("temperatureC").GetDecimal();
+            return temperature >= constraints.GetProperty("minC").GetDecimal() &&
+                temperature <= constraints.GetProperty("maxC").GetDecimal();
+        }
+        if (id != BuiltInDeviceCapabilities.HomeAssistantLightSet) return true;
+        var hasBrightness = arguments.TryGetProperty("brightnessPct", out var brightness);
+        var hasKelvin = arguments.TryGetProperty("colorTempKelvin", out _);
+        var hasRgb = arguments.TryGetProperty("rgbColor", out _);
+        return (hasBrightness || hasKelvin || hasRgb) && !(hasKelvin && hasRgb) &&
+            (!(hasKelvin || hasRgb) || !hasBrightness || brightness.GetInt32() > 0);
+    }
+
+    private bool TryReadAllowlist(string id, string version, string? constraintsJson, out Entry? entry, out HashSet<string> allowed,
+        out JsonElement constraints)
     {
         var entityIds = new HashSet<string>(StringComparer.Ordinal);
         allowed = entityIds;
+        constraints = default;
         // A schema alone cannot define how an owner constraint governs executable arguments.
         return entries.TryGetValue((id, version), out entry) &&
-            id == BuiltInDeviceCapabilities.HomeAssistantTurn && version == BuiltInDeviceCapabilities.HomeAssistantTurnVersion &&
-            DeviceJsonSchema.TryReadObject(constraintsJson, 8_000, out var constraints) &&
+            BuiltInDeviceCapabilities.IsHomeAssistant(id, version) &&
+            DeviceJsonSchema.TryReadObject(constraintsJson, 8_000, out constraints) &&
             DeviceJsonSchema.Accepts(entry.Constraints, constraints) &&
             constraints.TryGetProperty("allowedEntityIds", out var entities) && entities.ValueKind == JsonValueKind.Array &&
             entities.EnumerateArray().All(entity => entity.ValueKind == JsonValueKind.String && entity.GetString() is { } entityId &&
-                BuiltInDeviceCapabilities.IsHomeAssistantEntityId(entityId) && entityIds.Add(entityId)) && entityIds.Count > 0;
+                BuiltInDeviceCapabilities.IsEntityFor(id, entityId) && entityIds.Add(entityId)) && entityIds.Count > 0 &&
+            (id != BuiltInDeviceCapabilities.HomeAssistantClimateSet ||
+                constraints.GetProperty("minC").GetDecimal() <= constraints.GetProperty("maxC").GetDecimal());
     }
 }
 
@@ -103,15 +123,44 @@ public static class BuiltInDeviceCapabilities
 {
     public const string HomeAssistantTurn = "homeassistant.turn";
     public const string HomeAssistantTurnVersion = "1.0.0";
-    private static readonly Regex HomeAssistantEntity = new(@"\A(light|switch)\.[a-z0-9_]{1,100}\z", RegexOptions.CultureInvariant);
-    internal static bool IsHomeAssistantEntityId(string? id) => id is not null && HomeAssistantEntity.IsMatch(id);
+    public const string HomeAssistantLightSet = "homeassistant.light.set";
+    public const string HomeAssistantSceneActivate = "homeassistant.scene.activate";
+    public const string HomeAssistantClimateSet = "homeassistant.climate.set";
+
+    private const string Allowlist = """{"type":"object","properties":{"allowedEntityIds":{"type":"array","items":{"type":"string","maxLength":120},"minItems":1,"maxItems":50}},"required":["allowedEntityIds"],"additionalProperties":false}""";
+    private const string Receipt = """{"type":"object","properties":{"accepted":{"type":"boolean"},"detail":{"type":"string","maxLength":1000}},"required":["accepted"],"additionalProperties":false}""";
+
+    public static bool IsHomeAssistant(string id, string version) => version == HomeAssistantTurnVersion &&
+        id is HomeAssistantTurn or HomeAssistantLightSet or HomeAssistantSceneActivate or HomeAssistantClimateSet;
+
+    private static readonly Regex Entity = new(@"\A(light|switch|scene|climate)\.[a-z0-9_]{1,100}\z", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+    internal static bool IsEntityFor(string capability, string entity) => Entity.IsMatch(entity) && (capability switch
+    {
+        HomeAssistantTurn => entity.StartsWith("light.", StringComparison.Ordinal) || entity.StartsWith("switch.", StringComparison.Ordinal),
+        HomeAssistantLightSet => entity.StartsWith("light.", StringComparison.Ordinal),
+        HomeAssistantSceneActivate => entity.StartsWith("scene.", StringComparison.Ordinal),
+        HomeAssistantClimateSet => entity.StartsWith("climate.", StringComparison.Ordinal),
+        _ => false
+    });
 
     public static IReadOnlyList<DeviceCapabilityDescriptor> All { get; } =
     [
         new(HomeAssistantTurn, HomeAssistantTurnVersion, "Control an approved light or switch", "Turn one allowlisted Home Assistant entity on or off.",
             DeviceCapabilityRisk.Reversible, DeviceConfirmationPolicy.Owner, DeviceIdempotencyRule.CallerKey,
             """{"type":"object","properties":{"entityId":{"type":"string","maxLength":120},"action":{"type":"string","enum":["turn_on","turn_off"]}},"required":["entityId","action"],"additionalProperties":false}""",
-            """{"type":"object","properties":{"accepted":{"type":"boolean"},"detail":{"type":"string","maxLength":1000}},"required":["accepted"],"additionalProperties":false}""",
-            """{"type":"object","properties":{"allowedEntityIds":{"type":"array","items":{"type":"string","maxLength":120},"minItems":1,"maxItems":50}},"required":["allowedEntityIds"],"additionalProperties":false}""")
+            Receipt, Allowlist),
+        new(HomeAssistantLightSet, HomeAssistantTurnVersion, "Set light brightness or colour", "Set the brightness, RGB colour or colour temperature of an allowlisted light.",
+            DeviceCapabilityRisk.Reversible, DeviceConfirmationPolicy.Owner, DeviceIdempotencyRule.CallerKey,
+            """{"type":"object","properties":{"entityId":{"type":"string","maxLength":120},"brightnessPct":{"type":"integer","minimum":0,"maximum":100},"colorTempKelvin":{"type":"integer","minimum":1000,"maximum":10000},"rgbColor":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255},"minItems":3,"maxItems":3}},"required":["entityId"],"additionalProperties":false}""",
+            Receipt, Allowlist),
+        new(HomeAssistantSceneActivate, HomeAssistantTurnVersion, "Activate an approved scene", "Activate a named scene that the owner has explicitly granted.",
+            DeviceCapabilityRisk.Reversible, DeviceConfirmationPolicy.Owner, DeviceIdempotencyRule.NeverReplay,
+            """{"type":"object","properties":{"entityId":{"type":"string","maxLength":120}},"required":["entityId"],"additionalProperties":false}""",
+            Receipt, Allowlist),
+        new(HomeAssistantClimateSet, HomeAssistantTurnVersion, "Set an approved target temperature", "Set a climate entity's target temperature inside an owner-defined Celsius range.",
+            DeviceCapabilityRisk.Reversible, DeviceConfirmationPolicy.Owner, DeviceIdempotencyRule.CallerKey,
+            """{"type":"object","properties":{"entityId":{"type":"string","maxLength":120},"temperatureC":{"type":"number","minimum":-273.15,"maximum":1000}},"required":["entityId","temperatureC"],"additionalProperties":false}""",
+            Receipt,
+            """{"type":"object","properties":{"allowedEntityIds":{"type":"array","items":{"type":"string","maxLength":120},"minItems":1,"maxItems":50},"minC":{"type":"number","minimum":-273.15,"maximum":1000},"maxC":{"type":"number","minimum":-273.15,"maximum":1000}},"required":["allowedEntityIds","minC","maxC"],"additionalProperties":false}""")
     ];
 }

@@ -82,13 +82,11 @@ public sealed class HomeAssistantCommandAdapter(ProviderGateway gateway, IConfig
         string result;
         try
         {
-            await commands.EnsureHomeAssistantExecutionAllowedAsync(delivery, ct);
-            using var args = JsonDocument.Parse(delivery.ArgumentsJson);
-            var entityId = args.RootElement.GetProperty("entityId").GetString()!;
-            var action = args.RootElement.GetProperty("action").GetString()!;
-            Guard.Require(currentAudio is null || await currentAudio(ct), 409, "The voice window no longer owns audio.");
-            await ExecuteAsync(entityId, action, ct);
-            result = await gateway.VerifyHomeStateAsync(entityId, action, ct);
+            result = await gateway.ExecuteVerifiedHomeCommandAsync(delivery, async token =>
+            {
+                await commands.EnsureHomeAssistantExecutionAllowedAsync(delivery, token);
+                Guard.Require(currentAudio is null || await currentAudio(token), 409, "The voice window no longer owns audio.");
+            }, ct);
         }
         catch (Exception error) when (error is DomainException or HttpRequestException or OperationCanceledException)
         {

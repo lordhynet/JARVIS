@@ -140,17 +140,17 @@ public sealed class VoiceHomeTests
         return issued.Id;
     }
 
-    private static async Task<Guid> SayAsync(IServiceProvider services, Guid session, string words)
+    internal static async Task<Guid> SayAsync(IServiceProvider services, Guid session, string words)
     {
         var id = Guid.NewGuid();
         await services.GetRequiredService<VoiceTranscriptService>().RecordAsync(session, id, ChatRoles.User, words, null, default);
         return id;
     }
 
-    private static async Task<JsonElement> ToolAsync(IServiceProvider services, Guid session, Guid source, Guid latest,
-        Func<CancellationToken, Task<bool>>? currentAudio = null)
+    internal static async Task<JsonElement> ToolAsync(IServiceProvider services, Guid session, Guid source, Guid latest,
+        Func<CancellationToken, Task<bool>>? currentAudio = null, string action = "turn")
     {
-        var args = JsonSerializer.Serialize(new { action = "turn", utterance_id = source });
+        var args = JsonSerializer.Serialize(new { action, utterance_id = source });
         var json = await services.GetRequiredService<CoreVoiceTools>().ExecuteAsync(CoreHomeVoiceTool.Name, args, session,
             new HashSet<Guid> { source }, default, latest, currentAudio ?? (_ => Task.FromResult(true)));
         using var document = JsonDocument.Parse(json);

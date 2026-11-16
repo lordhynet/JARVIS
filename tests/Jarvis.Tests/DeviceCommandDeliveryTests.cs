@@ -115,7 +115,8 @@ public sealed class DeviceCommandDeliveryTests
         const string deviceId = "single-delivery";
         var (grantId, secret) = await DeviceCommandTests.SetupAsync(host.Services, deviceId);
         var proposal = await ApproveAsync(host.Services, deviceId, grantId);
-        var descriptor = Assert.Single(BuiltInDeviceCapabilities.All) with { IdempotencyRule = DeviceIdempotencyRule.NeverReplay };
+        var descriptor = Assert.Single(BuiltInDeviceCapabilities.All, x => x.Id == BuiltInDeviceCapabilities.HomeAssistantTurn)
+            with { IdempotencyRule = DeviceIdempotencyRule.NeverReplay };
         var service = new DeviceCommandService(new DeviceCapabilityCatalog([descriptor]),
             host.Services.GetRequiredService<ICoreTransaction>(), TimeProvider.System);
         var actor = await host.Services.GetRequiredService<DeviceCredentials>().AuthenticateAsync(secret, default);

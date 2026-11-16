@@ -123,6 +123,18 @@ The voice window can list granted lights and switches and handle direct requests
 
 Set `preApproved` to `true` when the owner issues a reversible capability grant to allow voice and agent commands within its constraints. Existing grants default to `false`. In voice, a matching grant without pre-approval creates a proposal for manual owner confirmation. An automatically approved spoken action dispatches only in the live tool call. It reports success when the signed receipt confirms the requested state. Core limits automatic Home Assistant dispatches to 20 per device and 20 per entity in a rolling minute, and checks the paid-work pause and privacy state before dispatch.
 
+### Voice light settings, scenes and thermostat targets
+
+Issue a separate version `1.0.0` grant for each capability below. Grant constraints take `allowedEntityIds` for the matching entity type, and those entities also need to appear in `HomeAssistant:AllowedEntities`. The existing on/off grant and owner aliases still apply to on/off requests.
+
+| Capability | Example spoken request | Grant and verification |
+| --- | --- | --- |
+| `homeassistant.light.set` | “Set the kitchen light brightness to 40 percent”, “Set the kitchen light colour to blue” or “Set the kitchen light colour temperature to 2700 kelvin” | Allowlist `light.*` entities. The command supports 0–100 percent brightness, RGB triplets and 1000–10000 kelvin. Core verifies the relevant reported light attributes, or the off state for zero brightness. [Home Assistant light integration](https://www.home-assistant.io/integrations/light/) |
+| `homeassistant.scene.activate` | “Activate the movie night” | Allowlist `scene.*` entities. Core verifies a new Home Assistant activation timestamp after the action. Grant scenes by name to authorize the actions they contain. [Home Assistant scene state](https://contributors.home-assistant.io/core/entities/scene/#states) |
+| `homeassistant.climate.set` | “Set the hall thermostat to 21.5 degrees Celsius” | Allowlist `climate.*` entities and specify `minC` and `maxC`, such as 18 and 22. Core converts Celsius when Home Assistant reports Fahrenheit and verifies the reported target. The command sets a target temperature and leaves the HVAC mode alone. [Home Assistant climate integration](https://www.home-assistant.io/integrations/climate/) |
+
+For exact RGB input, say “Set the kitchen light colour to RGB 23 45 67.” For thermostat requests, “degrees” means Celsius. An unavailable or mismatched state produces an unverified outcome, and Core never repeats a scene activation automatically.
+
 ## Primary API references
 
 - [OpenAI text generation](https://developers.openai.com/api/docs/guides/text)

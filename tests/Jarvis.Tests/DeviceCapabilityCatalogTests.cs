@@ -18,7 +18,7 @@ public sealed class DeviceCapabilityCatalogTests
     [Fact]
     public void Sensitive_actions_cannot_be_installed_without_owner_confirmation()
     {
-        var descriptor = BuiltInDeviceCapabilities.All.Single() with
+        var descriptor = BuiltInDeviceCapabilities.All.Single(x => x.Id == BuiltInDeviceCapabilities.HomeAssistantTurn) with
         {
             Risk = DeviceCapabilityRisk.Sensitive,
             ConfirmationPolicy = DeviceConfirmationPolicy.None
@@ -31,7 +31,7 @@ public sealed class DeviceCapabilityCatalogTests
     {
         var catalog = new DeviceCapabilityCatalog(BuiltInDeviceCapabilities.All);
         Assert.Throws<DomainException>(() => catalog.Get("homeassistant.turn", "2.0.0"));
-        var invalid = catalog.Installed.Single() with { ArgumentSchemaJson = "[]" };
+        var invalid = catalog.Get(BuiltInDeviceCapabilities.HomeAssistantTurn, "1.0.0") with { ArgumentSchemaJson = "[]" };
         Assert.Throws<DomainException>(() => new DeviceCapabilityCatalog([invalid]));
     }
 
@@ -79,10 +79,38 @@ public sealed class DeviceCapabilityCatalogTests
         Assert.False(catalog.HasValidConstraints("homeassistant.turn", "1.0.0",
             System.Text.Json.JsonSerializer.Serialize(new { allowedEntityIds = ids })));
 
-        var invalid = catalog.Installed.Single() with
+        var invalid = catalog.Get(BuiltInDeviceCapabilities.HomeAssistantTurn, "1.0.0") with
         {
             ConstraintSchemaJson = """{"type":"object","properties":{"allow":{"type":"string","pattern":"anything"}},"additionalProperties":false}"""
         };
         Assert.Throws<DomainException>(() => new DeviceCapabilityCatalog([invalid]));
+    }
+
+    [Fact]
+    public void Home_light_settings_require_valid_bounds_and_one_colour_mode()
+    {
+        var catalog = new DeviceCapabilityCatalog(BuiltInDeviceCapabilities.All);
+        const string id = BuiltInDeviceCapabilities.HomeAssistantLightSet;
+        const string allow = """{"allowedEntityIds":["light.kitchen"]}""";
+        Assert.False(catalog.HasValidConstraints(id, "1.0.0", """{"allowedEntityIds":["switch.porch"]}"""));
+        Assert.True(catalog.Permits(id, "1.0.0", allow,
+            """{"entityId":"light.kitchen","brightnessPct":25,"rgbColor":[125,0,255]}"""));
+        Assert.False(catalog.Permits(id, "1.0.0", allow, """{"entityId":"light.kitchen"}"""));
+        Assert.False(catalog.Permits(id, "1.0.0", allow, """{"entityId":"light.kitchen","brightnessPct":101}"""));
+        Assert.False(catalog.Permits(id, "1.0.0", allow, """{"entityId":"light.kitchen","rgbColor":[256,1,2]}"""));
+        Assert.False(catalog.Permits(id, "1.0.0", allow, """{"entityId":"light.kitchen","rgbColor":[4,1,2],"colorTempKelvin":2700}"""));
+    }
+
+    [Fact]
+    public void Home_temperature_constraints_require_ordered_numeric_bounds_and_limit_the_exact_setpoint()
+    {
+        var catalog = new DeviceCapabilityCatalog(BuiltInDeviceCapabilities.All);
+        const string id = BuiltInDeviceCapabilities.HomeAssistantClimateSet;
+        const string allow = """{"allowedEntityIds":["climate.hall"],"minC":18,"maxC":22}""";
+        Assert.False(catalog.HasValidConstraints(id, "1.0.0", """{"allowedEntityIds":["climate.hall"],"minC":18}"""));
+        Assert.False(catalog.HasValidConstraints(id, "1.0.0", """{"allowedEntityIds":["climate.hall"],"minC":22,"maxC":18}"""));
+        Assert.True(catalog.Permits(id, "1.0.0", allow, """{"entityId":"climate.hall","temperatureC":21.5}"""));
+        Assert.False(catalog.Permits(id, "1.0.0", allow, """{"entityId":"climate.hall","temperatureC":22.01}"""));
+        Assert.False(catalog.Permits(id, "1.0.0", allow, """{"entityId":"climate.hall","temperatureC":"21.5"}"""));
     }
 }

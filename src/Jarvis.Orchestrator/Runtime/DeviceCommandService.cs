@@ -58,7 +58,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             var descriptor = capabilities.Get(grant.CapabilityId, grant.CapabilityVersion);
             Guard.Require(capabilities.Permits(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson, request.ArgumentsJson),
                 403, "Command arguments are outside the granted capability.");
-            var homeEntity = descriptor.Id == BuiltInDeviceCapabilities.HomeAssistantTurn ? HomeEntity(request.ArgumentsJson) : null;
+            var homeEntity = BuiltInDeviceCapabilities.IsHomeAssistant(descriptor.Id, descriptor.Version) ? HomeEntity(request.ArgumentsJson) : null;
             Guard.Require(homeEntity is null || !AutomaticOrigin(origin) || !writes.Runtime.AgentControls.EffectivePaidAiPaused,
                 409, "Home actions from voice and agents are paused.");
             var needsConfirmation = RequiresConfirmation(origin, descriptor, grant.PreApproved);
@@ -144,7 +144,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             if (previous is not null)
             {
                 if (previous.StatusAt(clock.GetUtcNow()) != DeviceCommandStatus.Dispatched || previous.DispatchedAt is null ||
-                    (homeAssistantOnly && !IsHomeAssistantTurn(previous)))
+                    (homeAssistantOnly && !IsHomeAssistant(previous)))
                     return null;
                 var approved = await ReadDeliveryCapabilityAsync(writes, previous);
                 return approved?.IdempotencyRule is DeviceIdempotencyRule.CallerKey or DeviceIdempotencyRule.SafeReplay
@@ -158,9 +158,9 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
                 if (pending.Count == 0) return null;
                 foreach (var command in pending)
                 {
-                    if (homeAssistantOnly && !IsHomeAssistantTurn(command)) continue;
+                    if (homeAssistantOnly && !IsHomeAssistant(command)) continue;
                     // Spoken actions without per-command confirmation are dispatched within the live tool call.
-                    if (IsHomeAssistantTurn(command) && command.Origin == InvocationOrigin.Voice && command.ConfirmedAt is null) continue;
+                    if (IsHomeAssistant(command) && command.Origin == InvocationOrigin.Voice && command.ConfirmedAt is null) continue;
                     var (delivery, _) = await TryDispatchAsync(writes, command, request.RequestId);
                     if (delivery is not null) return delivery;
                 }
@@ -178,7 +178,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             DeviceCredentialContext.RequireCurrent(writes.Runtime, actor.DeviceId!);
             var command = await writes.ReadDeviceCommandAsync(id);
             if (command is null || command.Status != DeviceCommandStatus.Pending || command.Origin != InvocationOrigin.Voice ||
-                command.DeviceId != actor.DeviceId || command.CredentialHash != actor.CredentialHash || !IsHomeAssistantTurn(command))
+                command.DeviceId != actor.DeviceId || command.CredentialHash != actor.CredentialHash || !IsHomeAssistant(command))
                 return (null, false);
             var attempted = await TryDispatchAsync(writes, command, Guid.NewGuid());
             if (attempted.Limited)
@@ -196,7 +196,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
         DeviceCommand command, Guid requestId)
     {
         if (await ReadDeliveryCapabilityAsync(writes, command) is null) return (null, false);
-        if (IsHomeAssistantTurn(command) && AutomaticOrigin(command.Origin) &&
+        if (IsHomeAssistant(command) && AutomaticOrigin(command.Origin) &&
             !await writes.HasHomeDispatchCapacityAsync(command.DeviceId, HomeEntity(command.ArgumentsJson),
                 clock.GetUtcNow().AddMinutes(-1), HomeActionsPerMinute))
             return (null, true);
@@ -262,7 +262,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             var command = await writes.ReadDeviceCommandAsync(delivery.Id);
             Guard.Require(command is not null && command.DeviceId == actor.DeviceId && command.CredentialHash == actor.CredentialHash &&
                 command.DispatchRequestId == delivery.DispatchRequestId && command.Status == DeviceCommandStatus.Acknowledged &&
-                command.ArgumentsJson == delivery.ArgumentsJson && IsHomeAssistantTurn(command),
+                command.ArgumentsJson == delivery.ArgumentsJson && IsHomeAssistant(command),
                 409, "The Home Assistant dispatch is no longer available for execution.");
             Guard.Require(await ReadDeliveryCapabilityAsync(writes, command) is not null,
                 403, "The Home Assistant dispatch expired or lost its owner grant.");
@@ -272,7 +272,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
 
     private async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
     {
-        if (IsHomeAssistantTurn(command) && AutomaticOrigin(command.Origin) && writes.Runtime.AgentControls.EffectivePaidAiPaused)
+        if (IsHomeAssistant(command) && AutomaticOrigin(command.Origin) && writes.Runtime.AgentControls.EffectivePaidAiPaused)
             return null;
         var grant = await writes.ReadDeviceGrantAsync(command.GrantId);
         var now = clock.GetUtcNow();
@@ -284,9 +284,8 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             command.ConfirmedAt is not null && !string.IsNullOrWhiteSpace(command.ConfirmedBy) ? descriptor : null;
     }
 
-    private static bool IsHomeAssistantTurn(DeviceCommand command) =>
-        command.CapabilityId == BuiltInDeviceCapabilities.HomeAssistantTurn &&
-        command.CapabilityVersion == BuiltInDeviceCapabilities.HomeAssistantTurnVersion;
+    private static bool IsHomeAssistant(DeviceCommand command) =>
+        BuiltInDeviceCapabilities.IsHomeAssistant(command.CapabilityId, command.CapabilityVersion);
 
     private static string HomeEntity(string arguments)
     {

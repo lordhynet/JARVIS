@@ -113,7 +113,7 @@ public sealed class DeviceCommandTests
     {
         using var host = new JarvisApiFactory();
         var (grantId, _) = await SetupAsync(host.Services, DeviceId);
-        var descriptor = Assert.Single(BuiltInDeviceCapabilities.All) with
+        var descriptor = Assert.Single(BuiltInDeviceCapabilities.All, x => x.Id == BuiltInDeviceCapabilities.HomeAssistantTurn) with
         {
             Risk = DeviceCapabilityRisk.ReadOnly, ConfirmationPolicy = DeviceConfirmationPolicy.None
         };

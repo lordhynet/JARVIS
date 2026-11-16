@@ -61,6 +61,9 @@ internal static class DeviceJsonSchema
                 (!schema.TryGetProperty("enum", out var values) ||
                     UniqueStrings(values, value => value.Length <= length) && values.GetArrayLength() > 0),
             "boolean" => HasOnly(schema, "type"),
+            "number" or "integer" => HasOnly(schema, "type", "minimum", "maximum") &&
+                TryNumericBound(schema, "minimum", decimal.MinValue, out var lower) &&
+                TryNumericBound(schema, "maximum", decimal.MaxValue, out var upper) && lower <= upper,
             _ => false
         };
     }
@@ -96,6 +99,18 @@ internal static class DeviceJsonSchema
     private static int Bound(JsonElement schema, string name, int fallback) =>
         schema.TryGetProperty(name, out var value) ? value.GetInt32() : fallback;
 
+    private static bool TryNumericBound(JsonElement schema, string name, decimal fallback, out decimal bound)
+    {
+        bound = fallback;
+        return !schema.TryGetProperty(name, out var value) ||
+            value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out bound);
+    }
+
+    private static bool AcceptsNumber(JsonElement schema, JsonElement value, bool integer) =>
+        value.ValueKind == JsonValueKind.Number && (!integer || value.TryGetInt32(out _)) && value.TryGetDecimal(out var number) &&
+        TryNumericBound(schema, "minimum", decimal.MinValue, out var min) && number >= min &&
+        TryNumericBound(schema, "maximum", decimal.MaxValue, out var max) && number <= max;
+
     public static bool Accepts(JsonElement schema, JsonElement value) => schema.GetProperty("type").GetString() switch
     {
         "object" => AcceptsObject(schema, value),
@@ -107,6 +122,8 @@ internal static class DeviceJsonSchema
             text.Length <= Bound(schema, "maxLength", int.MaxValue) &&
             (!schema.TryGetProperty("enum", out var allowed) || allowed.EnumerateArray().Any(item => item.ValueEquals(text))),
         "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
+        "number" => AcceptsNumber(schema, value, integer: false),
+        "integer" => AcceptsNumber(schema, value, integer: true),
         _ => false
     };
 

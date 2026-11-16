@@ -9,7 +9,7 @@ using Jarvis.Orchestrator.Cqrs.Integrations;
 
 namespace Jarvis.Api.Integrations;
 
-public sealed class ProviderGateway(IHttpClientFactory clients, IConfiguration config) : IHomeControl, IIntegrationReader
+public sealed partial class ProviderGateway(IHttpClientFactory clients, IConfiguration config) : IHomeControl, IIntegrationReader
 {
     public IReadOnlyList<IntegrationStatus> Status() =>
     [

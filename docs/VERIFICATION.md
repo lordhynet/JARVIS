@@ -753,3 +753,11 @@ The first 39-check focused run found a regex timeout. Core now uses bounded word
 Core rechecks live audio ownership after name lookup and again before Home Assistant execution. The final focused run passed 40 checks with disposable PostgreSQL 17 and in-memory fixtures. The Home Assistant transport was mocked. Coverage includes captured speech, lost audio ownership, the upgrade fixture, ambiguous names, missing authorization, replay, paid pause, state mismatch and the per-device and per-entity dispatch limits. EF reported no pending model changes. The Android route, header and DTO parity check passed.
 
 The final full backend suite passed 391 tests with zero failures and the opt-in measurement harness skipped. The disposable PostgreSQL instances were removed after verification.
+
+## Item 3b — light settings, scenes and thermostat targets
+
+The new versioned Home Assistant descriptors share the existing grant, dispatch and signed receipt path. Light settings support brightness, RGB and colour temperature. Scene activation requires a newer reported activation timestamp. Thermostat commands require an owner-defined Celsius range, use the Home Assistant temperature unit when sending a setpoint, and verify the exact reported target within numeric conversion tolerance. Voice derives each action from the latest captured request and rechecks the live audio lease immediately before sending the action.
+
+All 90 focused checks passed with mocked Home Assistant, disposable PostgreSQL 17 and in-memory fixtures. Coverage includes actual serialized service requests, state verification, unchanged scene timestamps, zero brightness, out-of-range thermostat targets, and older Home Assistant temperature-unit metadata. EF reported no pending model changes.
+
+The full backend suite passed 401 tests with zero failures and the opt-in measurement harness skipped. The Android route, header and DTO parity check passed. The disposable PostgreSQL container was removed after verification.
