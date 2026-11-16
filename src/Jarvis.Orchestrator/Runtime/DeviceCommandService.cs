@@ -118,7 +118,13 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
         }, ct);
     }
 
-    public Task<DeliveredDeviceCommand?> ClaimAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default)
+    public Task<DeliveredDeviceCommand?> ClaimAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default) =>
+        ClaimAsync(request, homeAssistantOnly: false, ct);
+
+    public Task<DeliveredDeviceCommand?> ClaimHomeAssistantAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default) =>
+        ClaimAsync(request, homeAssistantOnly: true, ct);
+
+    private Task<DeliveredDeviceCommand?> ClaimAsync(ClaimDeviceCommandRequest request, bool homeAssistantOnly, CancellationToken ct)
     {
         var actor = DeviceCredentialContext.RequirePairedActor();
         var deviceId = actor.DeviceId!;
@@ -130,11 +136,12 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             var previous = await writes.ReadDeviceDispatchAsync(deviceId, credentialHash, request.RequestId);
             if (previous is not null)
             {
-                if (previous.StatusAt(clock.GetUtcNow()) != DeviceCommandStatus.Dispatched || previous.DispatchedAt is not { } dispatchedAt)
+                if (previous.StatusAt(clock.GetUtcNow()) != DeviceCommandStatus.Dispatched || previous.DispatchedAt is null ||
+                    (homeAssistantOnly && !IsHomeAssistantTurn(previous)))
                     return null;
                 var approved = await ReadDeliveryCapabilityAsync(writes, previous);
                 return approved?.IdempotencyRule is DeviceIdempotencyRule.CallerKey or DeviceIdempotencyRule.SafeReplay
-                    ? Delivery(previous, dispatchedAt) : null;
+                    ? Delivery(previous) : null;
             }
 
             DeviceCommand? after = null;
@@ -144,18 +151,78 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
                 if (pending.Count == 0) return null;
                 foreach (var command in pending)
                 {
+                    if (homeAssistantOnly && !IsHomeAssistantTurn(command)) continue;
                     if (await ReadDeliveryCapabilityAsync(writes, command) is null) continue;
                     var now = clock.GetUtcNow();
                     if (command.ExpiresAt <= now) continue;
-                    var dispatchedAt = Timestamp(now);
-                    await writes.SaveDeviceCommandAsync(command with
-                    {
-                        Status = DeviceCommandStatus.Dispatched, DispatchRequestId = request.RequestId, DispatchedAt = dispatchedAt
-                    });
-                    return Delivery(command, dispatchedAt);
+                    var dispatched = Dispatch(command, request.RequestId, now);
+                    await writes.SaveDeviceCommandAsync(dispatched);
+                    return Delivery(dispatched);
                 }
                 after = pending[^1];
             }
+        }, ct);
+    }
+
+    public Task<DeliveredDeviceCommand> DispatchConfirmedHomeToolAsync(Guid toolId, BudgetActor? owner,
+        IReadOnlyList<Guid> grantIds, CancellationToken ct = default)
+    {
+        Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.ManualClient &&
+            owner?.SubjectId is { Length: > 0 and <= 80 } subject && !string.IsNullOrWhiteSpace(subject) &&
+            !subject.Contains('\0') && owner.Scopes.Contains(ToolService.ConfirmScope, StringComparer.Ordinal),
+            403, "Manual owner authorization is required for the Home Assistant tool.");
+        var actor = DeviceCredentialContext.RequirePairedActor();
+        var deviceId = actor.DeviceId!;
+        return transaction.ExecuteAsync(async writes =>
+        {
+            var state = writes.Runtime;
+            DeviceCredentialContext.RequireCurrent(state, deviceId);
+            Guard.Require(state.Tools.TryGetValue(toolId, out var tool) && tool.Invocation.ToolName == ToolService.HomeToolName &&
+                tool.Invocation.Status == ToolInvocationStatus.Running && !tool.Invocation.TriggeredByExternalContent,
+                409, "The Home Assistant tool is no longer approved for execution.");
+            var sessionId = tool.Invocation.SessionId;
+            var session = await writes.ReadAudioStateAsync(sessionId);
+            Guard.Require(session?.Status == SessionStatus.Active && !state.RetiredSessions.Contains(sessionId),
+                409, "Session is no longer active.");
+            Guard.Require(await writes.ReadDeviceCommandAsync(toolId) is null, 409, "A device command already uses this tool ID.");
+
+            var arguments = tool.Invocation.ArgumentsJson;
+            foreach (var grantId in grantIds)
+            {
+                var grant = await writes.ReadDeviceGrantAsync(grantId);
+                var now = clock.GetUtcNow();
+                if (!HasActiveGrant(state, grant, deviceId, now, now) ||
+                    grant.CapabilityId != BuiltInDeviceCapabilities.HomeAssistantTurn ||
+                    grant.CapabilityVersion != BuiltInDeviceCapabilities.HomeAssistantTurnVersion ||
+                    !capabilities.Permits(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson, arguments))
+                    continue;
+                var expiresAt = Timestamp(grant.ExpiresAt < now.Add(MaximumLifetime) ? grant.ExpiresAt : now.Add(MaximumLifetime));
+                if (expiresAt <= now) continue;
+                var command = new DeviceCommand(toolId, grant.Id, deviceId, grant.CapabilityId, grant.CapabilityVersion,
+                    grant.CredentialHash, arguments, PrivacyData.Hash(arguments), InvocationOrigin.ManualClient,
+                    DeviceCommandStatus.Pending, Timestamp(now), expiresAt, Timestamp(now), owner!.SubjectId);
+                var dispatched = Dispatch(command, Guid.NewGuid(), now);
+                await writes.SaveDeviceCommandAsync(dispatched);
+                return Delivery(dispatched);
+            }
+            throw new DomainException(403, "The Home Assistant executor needs an active owner grant for this entity.");
+        }, ct);
+    }
+
+    public Task EnsureHomeAssistantExecutionAllowedAsync(DeliveredDeviceCommand delivery, CancellationToken ct = default)
+    {
+        var actor = DeviceCredentialContext.RequirePairedActor();
+        return transaction.ExecuteAsync(async writes =>
+        {
+            DeviceCredentialContext.RequireCurrent(writes.Runtime, actor.DeviceId!);
+            var command = await writes.ReadDeviceCommandAsync(delivery.Id);
+            Guard.Require(command is not null && command.DeviceId == actor.DeviceId && command.CredentialHash == actor.CredentialHash &&
+                command.DispatchRequestId == delivery.DispatchRequestId && command.Status == DeviceCommandStatus.Acknowledged &&
+                command.ArgumentsJson == delivery.ArgumentsJson && IsHomeAssistantTurn(command),
+                409, "The Home Assistant dispatch is no longer available for execution.");
+            Guard.Require(await ReadDeliveryCapabilityAsync(writes, command) is not null,
+                403, "The Home Assistant dispatch expired or lost its owner grant.");
+            return true;
         }, ct);
     }
 
@@ -171,8 +238,16 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             command.ConfirmedAt is not null && !string.IsNullOrWhiteSpace(command.ConfirmedBy) ? descriptor : null;
     }
 
-    private static DeliveredDeviceCommand Delivery(DeviceCommand command, DateTimeOffset dispatchedAt) =>
-        new(command.Id, command.CapabilityId, command.CapabilityVersion, command.ArgumentsJson, command.ArgumentHash, command.ExpiresAt, dispatchedAt);
+    private static bool IsHomeAssistantTurn(DeviceCommand command) =>
+        command.CapabilityId == BuiltInDeviceCapabilities.HomeAssistantTurn &&
+        command.CapabilityVersion == BuiltInDeviceCapabilities.HomeAssistantTurnVersion;
+
+    private static DeviceCommand Dispatch(DeviceCommand command, Guid requestId, DateTimeOffset now) =>
+        command with { Status = DeviceCommandStatus.Dispatched, DispatchRequestId = requestId, DispatchedAt = Timestamp(now) };
+
+    private static DeliveredDeviceCommand Delivery(DeviceCommand command) =>
+        new(command.Id, command.CapabilityId, command.CapabilityVersion, command.ArgumentsJson, command.ArgumentHash,
+            command.ExpiresAt, command.DispatchedAt!.Value, command.DispatchRequestId!.Value);
 
     private bool MatchesGrantedArguments(DeviceCommand command, DeviceGrant grant) =>
         grant.CredentialHash == command.CredentialHash && grant.CapabilityId == command.CapabilityId &&

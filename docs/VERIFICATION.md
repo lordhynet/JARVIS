@@ -718,6 +718,16 @@ The full backend suite passed 380 tests with zero failures and the opt-in perfor
 
 ## Round 4 Item 3 — signed device receipts
 
-Core validates an HMAC-SHA256 signature over the exact receipt payload, command ID, dispatch ID, receipt request ID and outcome. The paired credential must match the command's original binding. The installed capability schema validates receipt data. The additive `20261116123244_DeviceReceipts` migration commits a receipt and its command transition together and cascades removal when the command is erased or retained out.
+Core validates an HMAC-SHA256 signature over the exact receipt payload, command ID, dispatch ID, receipt request ID and outcome. The paired credential must match the command's original binding. The installed capability schema validates receipt data. The additive `20261116123244_DeviceReceipts` migration lets Core commit a receipt and its command transition together. The receipt is removed when its command is deleted through retention or erasure.
 
 All 12 focused checks passed with disposable PostgreSQL 17 and in-memory fixtures. They cover cross-device denial, payload and signature tampering, late receipts, credential rotation, concurrent and conflicting retries, rollback, restart, retention and erasure. EF reported no pending model changes.
+
+## Round 4 Item 3 — Home Assistant command adapter
+
+The in-process adapter runs `homeassistant.turn` for an explicitly paired executor. It checks the active credential, owner grant, argument hash and expiry before execution. It signs the acknowledgement and outcome and verifies the requested entity state through Home Assistant before recording success. A state mismatch records a failed receipt and keeps the legacy tool outcome uncertain. Interrupted dispatches remain durable and are never automatically executed again.
+
+The existing tool routes and audit fields work with the adapter. An owner-confirmed legacy tool shares its UUID and exact arguments with the linked command. Installations with both executor settings absent can use the existing provider path.
+
+All 34 focused checks passed with disposable PostgreSQL 17 and in-memory fixtures. Home Assistant tests use a fake HTTP transport and fixture credentials. They cover owner approval, command and tool audit linkage, duplicate confirmation, absent grants, partial configuration, state verification and state mismatch. EF reported no pending model changes. The Android route, header and DTO parity check passed.
+
+The full backend suite passed 387 tests with zero failures and the opt-in performance harness skipped. The disposable PostgreSQL containers were removed after verification.

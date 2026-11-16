@@ -97,7 +97,7 @@ Agent, voice and external-content proposals require manual owner confirmation. T
 
 ### Device command delivery
 
-An executor polls `POST /api/device-commands/claim` with its paired credential in `X-Jarvis-Key` and a new UUID in `requestId`. Core takes the device identity from the credential, checks its current grant and confirmation, and atomically dispatches the oldest eligible command. An HTTP 200 response includes the command ID, capability version, exact argument text and hash, dispatch time and expiry. HTTP 204 means the poll produced no command.
+An executor polls `POST /api/device-commands/claim` with its paired credential in `X-Jarvis-Key` and a new UUID in `requestId`. Core takes the device identity from the credential, checks its current grant and confirmation, and atomically dispatches the oldest eligible command. An HTTP 200 response includes the command and dispatch request IDs, capability version, exact argument text and hash, dispatch time and expiry. HTTP 204 means the poll produced no command.
 
 Reuse the same poll request ID after a lost response. While the command and grant are active, a retry can recover the original dispatch for capabilities marked `CallerKey` or `SafeReplay`. A `NeverReplay` capability returns HTTP 204 on retry. An executor must follow the descriptor's replay policy, use the returned command ID as the action idempotency key when required, and check the expiry before executing. Use a fresh request ID for the next poll after a received response.
 
@@ -108,6 +108,14 @@ The paired executor posts to `POST /api/device-commands/{id}/receipts` with the 
 Sign with HMAC-SHA256 using the UTF-8 paired credential as the key. The message is UTF-8 with six LF-separated lines and no trailing newline. Write `jarvis-device-receipt-v1`, the command ID, the dispatch request ID, the receipt request ID, the case-sensitive kind above, and the uppercase SHA-256 of the exact UTF-8 payload string. Format UUIDs in lowercase with hyphens.
 
 Core accepts one acknowledgement and one terminal receipt per command. A terminal receipt can arrive directly after dispatch. Retrying the same receipt ID and payload returns the original receipt. A receipt received after expiry is marked `late` and cannot change the expired outcome. The owner can list receipts with `GET /api/device-commands/{id}/receipts`. Command retention and erasure remove their receipts.
+
+### Home Assistant command adapter
+
+To enable the adapter inside Core, register a dedicated device, issue its paired credential and grant it `homeassistant.turn` version `1.0.0` for specific lights or switches. Configure `HomeAssistant:ExecutorDeviceId` and the secret `HomeAssistant:ExecutorCredential` in the owner's deployment configuration. The entity also needs to be in `HomeAssistant:AllowedEntities`, and Core uses the configured Home Assistant URL and token.
+
+The adapter polls for that device's approved commands. The existing `/api/tools/home`, `/api/tools/{id}/confirm` and `/api/tools` routes keep their confirmation and audit behavior. In adapter mode, a legacy confirmation uses the same ID in the tool audit and the device command. Core acknowledges the dispatch, calls the Home Assistant action and checks the returned entity state with a separate read before recording success. An interrupted or ambiguous action is never automatically repeated. [Home Assistant REST API](https://contributors.home-assistant.io/core/internals/rest-api/#actions)
+
+Existing installations may continue using the legacy integration with both executor settings absent. Once either executor setting is supplied, legacy confirmations require both valid settings and an active grant. Rotate the dedicated paired credential and renew its owner grants together when changing the binding.
 
 ## Primary API references
 

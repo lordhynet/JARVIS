@@ -1,6 +1,8 @@
+using Jarvis.Api.Security;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Cqrs;
 using Jarvis.Orchestrator.Cqrs.Tools;
+using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Api.Endpoints;
 
@@ -13,8 +15,10 @@ public static class ToolEndpoints
             handler.HandleAsync(new ListToolActions(), ct));
         group.MapPost("/home", (HomeActionRequest request, ICommandHandler<RequestHomeAction, AuditedTool> handler, CancellationToken ct) =>
             handler.HandleAsync(new RequestHomeAction(request), ct));
-        group.MapPost("/{id:guid}/confirm", (Guid id, ConfirmRequest request, ICommandHandler<ConfirmToolAction, AuditedTool> handler, CancellationToken ct) =>
-            handler.HandleAsync(new ConfirmToolAction(id, request.Approve), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.ToolConfirm);
+        group.MapPost("/{id:guid}/confirm", (Guid id, ConfirmRequest request, HttpContext context, OwnerAuthorization owner,
+            ICommandHandler<ConfirmToolAction, AuditedTool> handler, CancellationToken ct) =>
+            handler.HandleAsync(new ConfirmToolAction(id, request.Approve, owner.Require(context, ToolService.ConfirmScope)), ct))
+            .RequireAuthorization(CorePolicies.ToolConfirm);
     }
     public sealed record ConfirmRequest(bool Approve);
 }

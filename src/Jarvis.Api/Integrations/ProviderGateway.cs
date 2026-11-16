@@ -105,6 +105,31 @@ public sealed class ProviderGateway(IHttpClientFactory clients, IConfiguration c
 
     public async Task<string> ExecuteAsync(string entityId, string action, CancellationToken ct)
     {
+        var (root, token) = HomeTarget(entityId);
+        var domain = entityId.Split('.')[0];
+        using var request = new HttpRequestMessage(HttpMethod.Post, root + $"/api/services/{domain}/{action}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { entity_id = entityId });
+        await JsonAsync(request, ct);
+        return "Home Assistant accepted the service call. Verify the physical device if needed.";
+    }
+
+    internal async Task<string> VerifyHomeStateAsync(string entityId, string action, CancellationToken ct)
+    {
+        var (root, token) = HomeTarget(entityId);
+        using var request = new HttpRequestMessage(HttpMethod.Get, root + "/api/states/" + Uri.EscapeDataString(entityId));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var reply = await JsonAsync(request, ct);
+        var expected = action == "turn_on" ? "on" : "off";
+        Guard.Require(reply.ValueKind == JsonValueKind.Object &&
+            reply.TryGetProperty("entity_id", out var entity) && entity.ValueKind == JsonValueKind.String && entity.GetString() == entityId &&
+            reply.TryGetProperty("state", out var state) && state.ValueKind == JsonValueKind.String && state.GetString() == expected,
+            502, "Home Assistant did not report the requested entity state.");
+        return $"Home Assistant reports the entity is {expected}.";
+    }
+
+    private (string Root, string Token) HomeTarget(string entityId)
+    {
         var root = Required("HomeAssistant:BaseUrl");
         Guard.Require(Uri.TryCreate(root, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" && string.IsNullOrEmpty(uri.UserInfo),
             503, "HomeAssistant:BaseUrl must be an HTTP(S) URL without credentials.");
@@ -112,12 +137,6 @@ public sealed class ProviderGateway(IHttpClientFactory clients, IConfiguration c
             503, "Home Assistant requires HTTPS outside loopback. Explicitly authorize AllowInsecureLan only on a trusted private network.");
         var allowed = config.GetSection("HomeAssistant:AllowedEntities").Get<string[]>() ?? [];
         Guard.Require(allowed.Contains(entityId, StringComparer.Ordinal), 403, "Entity is not in HomeAssistant:AllowedEntities.");
-        var token = Required("HomeAssistant:Token");
-        var domain = entityId.Split('.')[0];
-        using var request = new HttpRequestMessage(HttpMethod.Post, root.TrimEnd('/') + $"/api/services/{domain}/{action}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Content = JsonContent.Create(new { entity_id = entityId });
-        await JsonAsync(request, ct);
-        return "Home Assistant accepted the service call. Verify the physical device if needed.";
+        return (root.TrimEnd('/'), Required("HomeAssistant:Token"));
     }
 }

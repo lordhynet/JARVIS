@@ -8,10 +8,15 @@ namespace Jarvis.Orchestrator.Runtime;
 public interface IHomeControl
 {
     Task<string> ExecuteAsync(string entityId, string action, CancellationToken ct);
+
+    Task<string> ExecuteConfirmedAsync(Guid toolId, string entityId, string action, BudgetActor? owner, CancellationToken ct) =>
+        ExecuteAsync(entityId, action, ct);
 }
 
 public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IHomeControl home, TimeProvider clock)
 {
+    public const string ConfirmScope = "tool.confirm";
+    internal const string HomeToolName = "home.assistant";
     public async Task<int> RecoverInterruptedAsync(CancellationToken ct)
     {
         if (!await store.ReadAsync(s => s.Tools.Values.Any(t => t.Invocation.Status == ToolInvocationStatus.Running &&
@@ -55,7 +60,7 @@ public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IH
                 return existing;
             }
             var rejected = request.TriggeredByExternalContent;
-            var tool = new AuditedTool(new(request.RequestId, request.SessionId, "home.assistant", args,
+            var tool = new AuditedTool(new(request.RequestId, request.SessionId, HomeToolName, args,
                 rejected ? ToolPermission.Denied : ToolPermission.RequiresConfirmation,
                 rejected ? ToolInvocationStatus.Rejected : ToolInvocationStatus.AwaitingConfirmation,
                 rejected, clock.GetUtcNow()), rejected ? "External content cannot trigger home actions." : null, null);
@@ -64,7 +69,7 @@ public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IH
         }, ct);
     }
 
-    public async Task<AuditedTool> ConfirmAsync(Guid id, bool approve, CancellationToken ct)
+    public async Task<AuditedTool> ConfirmAsync(Guid id, bool approve, CancellationToken ct, BudgetActor? owner = null)
     {
         Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.ManualClient, 403, "Agent, voice and external content cannot confirm home actions.");
         var claimed = await store.UpdateAsync(s =>
@@ -86,7 +91,8 @@ public sealed class ToolService(IRuntimeStore store, ISessionReader sessions, IH
             var session = await sessions.GetAsync(claimed.Tool.Invocation.SessionId, ct);
             Guard.Require(session?.Status == SessionStatus.Active, 409, "Session is no longer active.");
             var args = JsonSerializer.Deserialize<JsonElement>(claimed.Tool.Invocation.ArgumentsJson);
-            result = await home.ExecuteAsync(args.GetProperty("entityId").GetString()!, args.GetProperty("action").GetString()!, ct);
+            result = await home.ExecuteConfirmedAsync(id, args.GetProperty("entityId").GetString()!,
+                args.GetProperty("action").GetString()!, owner, ct);
             outcome = ToolInvocationStatus.Succeeded;
         }
         catch (DomainException ex)

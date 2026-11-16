@@ -18,7 +18,7 @@ public static class CorePolicies
     public const string DeviceVerify = "CoreOwnerStepUp:device.verify";
     public const string DeviceGrants = "CoreOwnerStepUp:" + DeviceGrantService.ManageScope;
     public const string DeviceCommandConfirm = "CoreOwnerStepUp:" + DeviceCommandService.ConfirmScope;
-    public const string ToolConfirm = "CoreOwnerStepUp:tool.confirm";
+    public const string ToolConfirm = "CoreOwnerStepUp:" + ToolService.ConfirmScope;
     public const string DomainManage = "CoreOwnerStepUp:domain.manage";
     public const string BudgetManage = "CoreOwnerStepUp:budget.manage";
 }
