@@ -171,12 +171,12 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
     }
     private Task<object> Context(string section, CancellationToken ct) => runtime.ReadAsync<object>(s => section switch {
         "overview" => new { DueCards = s.Learning.Values.Count(c => c.DueAt <= clock.GetUtcNow()),
-            StoryCount = s.Stories.Count, CloudConsentedActiveGoals = s.Goals.Values.Count(g => g.AllowCloudProcessing && g.Status == "Active"),
+            StoryCount = s.Stories.Count, CloudConsentedActiveGoals = s.Goals.Values.Count(g => g.AllowCloudProcessing && g.Status == GoalStatus.Active),
             modes = Enum.GetNames<TrainingMode>() },
         "stories" => s.Stories.Values.OrderByDescending(x => x.UpdatedAt).Take(2).Select(x => new { x.Id, x.Version, Title = Clip(x.Content.Title, 120),
             Claims = (x.Content.CvClaims ?? []).Take(3).Select((text, index) => new { Index = index, Text = Clip(text, 300) }).ToArray(),
             Ownership = Clip(x.Content.PersonalOwnership, 400), Decision = Clip(x.Content.TechnicalDecisions, 400), Result = Clip(x.Content.Result, 300), verified = false }).ToArray(),
-        "goals" => s.Goals.Values.Where(g => g.AllowCloudProcessing && g.Status == "Active").OrderBy(g => g.NextReviewAt).Take(3)
+        "goals" => s.Goals.Values.Where(g => g.AllowCloudProcessing && g.Status == GoalStatus.Active).OrderBy(g => g.NextReviewAt).Take(3)
             .Select(g => new { g.Id, Title = Clip(g.Title, 120), Brief = Clip(g.Brief, 400), g.NextReviewAt, g.Deadline }).ToArray(),
         "due" => s.Learning.Values.Where(c => c.DueAt <= clock.GetUtcNow()).OrderBy(c => c.DueAt).Take(3)
             .Select(c => new { c.Id, Domain = c.Domain.ToString(), Prompt = Clip(c.Prompt, 700), c.DueAt }).ToArray(),

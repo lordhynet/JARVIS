@@ -12,14 +12,14 @@ public sealed partial class AgentRuntime
         var title = Guard.Text(request.Title, "Goal title", 120);
         var brief = Guard.Text(request.Brief, "Goal brief", 2000);
         Guard.Require(request.RequestId != Guid.Empty, 400, "A goal ID and supported workflow are required.");
-        Guard.Require(request.Status is "Active" or "Paused" or "Completed" or "Cancelled", 400, "Invalid goal state.");
+        Guard.Require(request.Status is GoalStatus.Active or GoalStatus.Paused or GoalStatus.Completed or GoalStatus.Cancelled, 400, "Invalid goal state.");
         Guard.Require(request.Deadline > request.NextReviewAt && request.Deadline <= clock.GetUtcNow().AddYears(5), 400, "Review must precede the goal deadline (within five years).");
         var descriptor = await workflowCatalog.ResolveAsync(request.Workflow, ct);
         RequireConsent(descriptor, request.AllowCloudProcessing);
         return await store.UpdateAsync(s =>
         {
             var now = clock.GetUtcNow(); var prior = s.Goals.GetValueOrDefault(request.RequestId);
-            Guard.Require(prior?.Status != "Deleted", 409, "Deleted goals cannot be recreated.");
+            Guard.Require(prior?.Status != GoalStatus.Deleted, 409, "Deleted goals cannot be recreated.");
             if (prior is not null && request.ExpectedRevision is null)
             {
                 Guard.Require(prior.Title == title && prior.Brief == brief && prior.Workflow == request.Workflow && prior.AllowCloudProcessing == request.AllowCloudProcessing &&
@@ -41,7 +41,7 @@ public sealed partial class AgentRuntime
         Guard.Require(goal.Revision == revision, 409, "Goal changed. Reload before deleting.");
         if (goal.LastRunId is Guid runId) Supersede(s, runId, "goal_deleted");
         // Retain a content-free tombstone so stale clients cannot recreate the goal.
-        s.Goals[id] = goal with { Title = "", Brief = "", Status = "Deleted", Revision = goal.Revision + 1, UpdatedAt = clock.GetUtcNow() };
+        s.Goals[id] = goal with { Title = "", Brief = "", Status = GoalStatus.Deleted, Revision = goal.Revision + 1, UpdatedAt = clock.GetUtcNow() };
         return true;
     }, ct);
 
@@ -76,9 +76,9 @@ public sealed partial class AgentRuntime
     private int TickPlanning(RuntimeState s, DateTimeOffset now, IReadOnlyDictionary<string, WorkflowDescriptor> available)
     {
         var count = 0;
-        foreach (var goal in s.Goals.Values.Where(x => x.Status == "Active").ToList())
+        foreach (var goal in s.Goals.Values.Where(x => x.Status == GoalStatus.Active).ToList())
         {
-            if (goal.Deadline <= now) { if (goal.LastRunId is Guid expiredRun) Supersede(s, expiredRun, "goal_expired"); s.Goals[goal.Id] = goal with { Status = "Expired", Revision = goal.Revision + 1, UpdatedAt = now }; continue; }
+            if (goal.Deadline <= now) { if (goal.LastRunId is Guid expiredRun) Supersede(s, expiredRun, "goal_expired"); s.Goals[goal.Id] = goal with { Status = GoalStatus.Expired, Revision = goal.Revision + 1, UpdatedAt = now }; continue; }
             if (!available.ContainsKey(goal.Workflow) || available[goal.Workflow].RequiresCloud && !goal.AllowCloudProcessing || s.AgentControls.EffectiveAgentsPaused || s.AgentControls.PausedWorkflows?.Contains(goal.Workflow) == true || goal.NextReviewAt > now || goal.LastRunId is not null) continue;
             var id = StableId($"goal-v1:{goal.Id}:{goal.Revision}");
             Create(s, id, null, $"goal:{goal.Id}:{goal.Revision}", goal.Workflow, goal.AllowCloudProcessing, goal.Title + "\n" + goal.Brief, now, available[goal.Workflow]);

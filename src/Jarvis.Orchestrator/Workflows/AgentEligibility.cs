@@ -12,7 +12,7 @@ public static class AgentEligibility
     public static bool HasTickWork(RuntimeState s, DateTimeOffset now, IReadOnlyDictionary<string, WorkflowDescriptor> available)
     {
         if (s.AgentRuns.Values.Any(r => r.DeletedAt is null && r.Status is AgentRunStatus.Queued or AgentRunStatus.Running)) return true;
-        if (s.Goals.Values.Any(g => g.Status == "Active" && (g.Deadline <= now ||
+        if (s.Goals.Values.Any(g => g.Status == GoalStatus.Active && (g.Deadline <= now ||
             !s.AgentControls.EffectiveAgentsPaused && g.LastRunId is null && g.NextReviewAt <= now &&
             available.TryGetValue(g.Workflow, out var goalWorkflow) && (!goalWorkflow.RequiresCloud || g.AllowCloudProcessing) &&
             s.AgentControls.PausedWorkflows?.Contains(g.Workflow) != true))) return true;

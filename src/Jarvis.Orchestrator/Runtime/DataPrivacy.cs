@@ -56,7 +56,7 @@ public static class PrivacyData
         state.AgentRuns.Values.Where(x => x.DeletedAt is null).ToList(), state.AgentTasks.Values.Where(x => state.AgentRuns.GetValueOrDefault(x.RunId)?.DeletedAt is null)
             .Select(x => new AgentTaskExport(x.Id, x.RunId, x.Role, x.Status, x.Input, x.Output, x.ErrorCode, x.SourceRefs ?? [])).ToList(),
         state.AgentSchedules.Values.ToList(), state.AgentControls, state.AgentOutbox.Values.ToList(), state.ProviderResults.Values.ToList(),
-        state.UsageReservations.Values.ToList(), jobs, state.Goals.Values.Where(x => x.Status != "Deleted").ToList(),
+        state.UsageReservations.Values.ToList(), jobs, state.Goals.Values.Where(x => x.Status != GoalStatus.Deleted.ToList(),
         state.AgentTriggers.Values.ToList(), state.UsageReconciliations.Values.ToList(), state.ImportedDocuments.Values.Where(x => x.DeletedAt is null).ToList(), state.SourceClaims.Values.ToList(), state.VoiceRecalls.Values.ToList(),
         state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList(), domains ?? state.DomainRegistry.Export());
     public static RuntimeState EmptyAfterErase(RuntimeState old) => new()

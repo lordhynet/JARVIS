@@ -4,7 +4,7 @@ public sealed record PersonalGoal(Guid Id, int Revision, string Title, string Br
     bool AllowCloudProcessing, DateTimeOffset NextReviewAt, DateTimeOffset Deadline, string Status,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, Guid? LastRunId = null);
 public sealed record SaveGoalRequest(Guid RequestId, int? ExpectedRevision, string Title, string Brief,
-    string Workflow, bool AllowCloudProcessing, DateTimeOffset NextReviewAt, DateTimeOffset Deadline, string Status = "Active");
+    string Workflow, bool AllowCloudProcessing, DateTimeOffset NextReviewAt, DateTimeOffset Deadline, string Status = GoalStatus.Active);
 public sealed record AgentTriggerRequest(string Source, string OccurrenceId, long Revision, string Workflow,
     DateTimeOffset DueAt, DateTimeOffset ExpiresAt, string Brief, bool AllowCloudProcessing,
     string CorrelationId, bool Cancelled = false);

@@ -12,7 +12,7 @@ public static class AgentEndpoints
     {
         var api = app.MapGroup("/api").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
         api.MapPost("/agents/calendar/sync", (CalendarTriggerSync sync, CancellationToken ct) => sync.SyncAsync(ct));
-        api.MapGet("/goals", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.Goals.Values.Where(g => g.Status != "Deleted").OrderBy(g => g.NextReviewAt).ToList(), ct));
+        api.MapGet("/goals", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.Goals.Values.Where(g => g.Status != GoalStatus.Deleted).OrderBy(g => g.NextReviewAt).ToList(), ct));
         api.MapPost("/goals", (SaveGoalRequest request, ICommandHandler<SaveAgentGoal, PersonalGoal> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));
         api.MapDelete("/goals/{id:guid}", (Guid id, int revision, ICommandHandler<DeleteAgentGoal, bool> handler, CancellationToken ct) => handler.HandleAsync(new(id, revision), ct));
         api.MapGet("/agents/triggers", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.AgentTriggers.Values.OrderByDescending(t => t.DueAt).Take(100).ToList(), ct));
