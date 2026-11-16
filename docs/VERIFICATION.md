@@ -627,3 +627,7 @@ Fresh validation: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-wor
 Added `IRuntimeReader.ReadPaidAiPausedAsync`. PostgreSQL reads only the `AgentControls` pause fields in the JSON document, while in-memory storage preserves the same behavior. The realtime lease monitor now uses this narrow read once per second instead of deserializing the entire runtime state. Existing legacy `Paused` fallback semantics remain supported.
 
 Fresh validation: focused pause-control, PostgreSQL pause-read and realtime pause-flow tests passed 5/5 with a disposable PostgreSQL 17 test database; the realtime path still ends paid voice on pause and leaves local audio available. No production database or paid provider was used.
+
+## Round 3 RR3-06 — first-arrival arbitration known behavior
+
+Documentation-only item. `docs/KNOWN_BEHAVIOUR.md` records that v1 wake arbitration is first-arrival, explains the short contention edge and shared audio-lease safety boundary, and outlines a later short-window candidate selection design if real use warrants it. No runtime behavior changed; documentation whitespace validation passed with `git diff --check`.
