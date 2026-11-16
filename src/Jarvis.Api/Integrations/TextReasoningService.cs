@@ -15,7 +15,7 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
     {
         Guard.Require(task.OperationId != Guid.Empty && task.ScopeId != Guid.Empty && task.AllowCloudProcessing, 403, "A scoped request ID and cloud consent are required.");
         Guard.Require(Enum.IsDefined(task.Capability) && Enum.IsDefined(task.DataClass) && Enum.IsDefined(task.Lane) &&
-            task.Messages.Count is > 0 and <= 24 && task.Messages.All(m => m.Role is "user" or "assistant" && !string.IsNullOrWhiteSpace(m.Text)), 400, "Invalid normalized reasoning request.");
+            task.Messages.Count is > 0 and <= 24 && task.Messages.All(m => m.Role is ChatRoles.User or ChatRoles.Assistant && !string.IsNullOrWhiteSpace(m.Text)), 400, "Invalid normalized reasoning request.");
         Guard.Require(!string.IsNullOrWhiteSpace(task.Instructions) && Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(task)) <= 180000, 400, "Reasoning context exceeded its bound.");
         var rates = cards.ReadText(task.Profile, task.Capability, task.DataClass, task.OutputLimit);
         rates = rates with { Route = rates.Route with { CloudConsent = task.AllowCloudProcessing } };

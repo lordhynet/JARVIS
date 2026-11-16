@@ -30,7 +30,7 @@ public sealed class DomainFactory(IDomainRegistry registry, ICapabilityCatalog c
         System.Text.RegularExpressions.Regex.IsMatch(text, @"\b(add|create|build|make|extend|configure|set\s+up|start)\b.{0,180}\b(domain|module|programme|program|course|subject)\b",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     private Task<string> Captured(Guid sessionId, Guid utteranceId, CancellationToken ct) => runtime.ReadAsync(s => {
-        Guard.Require(s.VoiceTurns.TryGetValue(utteranceId, out var turn) && turn.SessionId == sessionId && turn.Role == "user" &&
+        Guard.Require(s.VoiceTurns.TryGetValue(utteranceId, out var turn) && turn.SessionId == sessionId && turn.Role == ChatRoles.User &&
             !s.RetiredSessions.Contains(sessionId), 409, "Use the captured user request from the current session.");
         return turn.Text;
     }, ct);
@@ -57,7 +57,7 @@ public sealed class DomainFactory(IDomainRegistry registry, ICapabilityCatalog c
         var input = JsonSerializer.Serialize(new { Request = description, SelectedKey = request.Key,
             InstalledCapabilities = capabilities.Installed, ExistingDomains = existing.Select(x => new { x.Definition.Key, x.Version.Manifest.Aliases, x.Version.Manifest.Description }) });
         var result = await reasoning.ReasonAsync(new(request.RequestId, sessionId ?? request.RequestId, "Agent", TextCapability.JsonReasoning,
-            ReasoningDataClass.Personal, true, instructions, [new("user", input)], UsageLane.Background, 1200), ct);
+            ReasoningDataClass.Personal, true, instructions, [new(ChatRoles.User, input)], UsageLane.Background, 1200), ct);
         Guard.Require(result.Text.Length <= 16000, 502, "Generated manifest exceeded its bound.");
         using var parsed = JsonDocument.Parse(result.Text, new JsonDocumentOptions { MaxDepth = 10 });
         var manifest = DomainPolicy.Parse(parsed.RootElement);

@@ -29,14 +29,14 @@ public sealed class ConversationService(ISessionStore sessions, IConversationPro
             Guard.Require((current.Messages?.Count ?? 0) == previousCount, 409, "Another message arrived. Send again with a new RequestId.");
             var now = clock.GetUtcNow();
             return current with { UpdatedAt = now, Messages = [.. current.Messages ?? [],
-                new(request.RequestId, "user", text, now), new(request.RequestId, "assistant", reply, now)] };
+                new(request.RequestId, ChatRoles.User, text, now), new(request.RequestId, ChatRoles.Assistant, reply, now)] };
         }, ct);
         return updated!;
     }
 
     private static bool Existing(ConversationSession session, Guid id, string text)
     {
-        var message = session.Messages?.FirstOrDefault(m => m.RequestId == id && m.Role == "user");
+        var message = session.Messages?.FirstOrDefault(m => m.RequestId == id && m.Role == ChatRoles.User);
         if (message is null) return false;
         Guard.Require(message.Text == text, 409, "RequestId was used for a different message.");
         return true;

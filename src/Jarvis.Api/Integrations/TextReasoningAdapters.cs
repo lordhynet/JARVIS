@@ -22,7 +22,7 @@ public sealed class OpenAiResponsesAdapter(ManagedAi ai) : ITextReasoningAdapter
     public IReadOnlySet<TextCapability> Capabilities { get; } = Enum.GetValues<TextCapability>().ToFrozenSet();
     public async Task<AdapterTextResult> ExecuteAsync(TextReasoningTask task, ReviewedTextRates rates, CancellationToken ct)
     {
-        object input = task.Messages.Count == 1 && task.Messages[0].Role == "user" ? task.Messages[0].Text :
+        object input = task.Messages.Count == 1 && task.Messages[0].Role == ChatRoles.User ? task.Messages[0].Text :
             task.Messages.Select(m => new { role = m.Role, content = m.Text }).ToArray();
         var model = rates.Route.Model; var max_output_tokens = rates.Route.OutputLimit; var instructions = task.Instructions;
         object payload = task.Capability switch {

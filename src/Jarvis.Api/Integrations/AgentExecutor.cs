@@ -54,7 +54,7 @@ public sealed class AgentExecutor(ITextReasoningProvider reasoning, IRuntimeStor
         var result = await reasoning.ReasonAsync(new(ManagedAi.Operation("agent-v1", task.Id, task.Id), task.Id, profile,
             research ? TextCapability.GroundedPublicSearch : TextCapability.JsonReasoning,
             research && input.Policy.DomainContext is null ? ReasoningDataClass.Public : ReasoningDataClass.Personal, input.Run.AllowCloudProcessing,
-            instructions, [new("user", JsonSerializer.Serialize(context))]), ct);
+            instructions, [new(ChatRoles.User, JsonSerializer.Serialize(context))]), ct);
         var text = result.Text;
         if (research)
             return JsonSerializer.Serialize(new { schemaVersion = 1, source = "provider-grounded-search", summary = text,

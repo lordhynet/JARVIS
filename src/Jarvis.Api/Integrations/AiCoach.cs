@@ -21,7 +21,7 @@ public sealed class AiCoach(ITextReasoningProvider reasoning, IRuntimeStore stor
     private async Task<(string Summary, List<string> FollowUps, List<DimensionScore> Scores, string Model)> Generate(Guid operation, Guid scope, object data, string answer, bool hasTechnicalReference, CancellationToken ct)
     {
         var result = await reasoning.ReasonAsync(new(operation, scope, "Coach", TextCapability.JsonReasoning,
-            ReasoningDataClass.Personal, true, Instructions, [new("user", JsonSerializer.Serialize(data))]), ct);
+            ReasoningDataClass.Personal, true, Instructions, [new(ChatRoles.User, JsonSerializer.Serialize(data))]), ct);
         using var parsed = JsonDocument.Parse(result.Text); var root = parsed.RootElement;
         var summary = Guard.Text(root.GetProperty("summary").GetString(), "AI summary", 1500);
         var followUps = root.GetProperty("followUps").EnumerateArray().Select(x => Guard.Text(x.GetString(), "Follow-up", 500)).ToList();

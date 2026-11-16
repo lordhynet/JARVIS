@@ -74,7 +74,7 @@ public sealed class PaidAiProvider(IConfiguration config, IRuntimeReader reader,
         var context = JsonSerializer.Serialize(sources, Json);
         var result = await reasoning.ReasonAsync(new(reusable?.Id ?? run.ClaimToken.Value, run.Id, "LegacyInterview", TextCapability.JsonReasoning,
             ReasoningDataClass.Personal, run.AllowCloudProcessing, SystemPrompt,
-            [new("user", "Source data for a preparation draft:\n" + context)]), ct);
+            [new(ChatRoles.User, "Source data for a preparation draft:\n" + context)]), ct);
         var model = result.Route.Model;
         using var doc = JsonDocument.Parse(result.Text);
         var root = doc.RootElement;

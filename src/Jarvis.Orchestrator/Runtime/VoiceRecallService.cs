@@ -17,7 +17,7 @@ public sealed class VoiceRecallService(IRuntimeStore store, ISessionReader sessi
         Guard.Require(action == "rate" || rating == "None", 400, "A rating is only valid after recall and reference reveal.");
         var session = await sessions.GetAsync(sessionId, ct);
         Guard.Require(session is { Status: SessionStatus.Active }, 409, "Resume the conversation before reviewing cards.");
-        var source = session.Messages?.LastOrDefault(m => m.Role == "user");
+        var source = session.Messages?.LastOrDefault(m => m.Role == ChatRoles.User);
         if (action != "current") Guard.Require(source is not null && source.RequestId == sourceId, 409, "Use the latest captured user speech for that review action.");
         return await store.UpdateAsync(s =>
         {

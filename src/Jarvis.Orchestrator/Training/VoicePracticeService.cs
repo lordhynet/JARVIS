@@ -21,7 +21,7 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
     }
     private static ChatMessage Utterance(ConversationSession session, Guid id)
     {
-        var source = session.Messages?.LastOrDefault(m => m.Role == "user");
+        var source = session.Messages?.LastOrDefault(m => m.Role == ChatRoles.User);
         Guard.Require(source is not null && source.RequestId == id, 409, "Use the latest captured user utterance, not generated or historical text.");
         return source;
     }

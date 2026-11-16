@@ -11,7 +11,7 @@ public interface IVoiceRepairStore
 public static class VoiceTranscriptRules
 {
     public static void Validate(VoiceTurn turn) => Guard.Require(turn.Id != Guid.Empty && turn.SessionId != Guid.Empty &&
-        turn.Role is "user" or "assistant" && turn.Text is { Length: > 0 and <= 8000 } &&
+        turn.Role is ChatRoles.User or ChatRoles.Assistant && turn.Text is { Length: > 0 and <= 8000 } &&
         (turn.SpeechSeconds is null || double.IsFinite(turn.SpeechSeconds.Value) && turn.SpeechSeconds is >= 0 and <= 180), 400, "Invalid bounded voice transcript.");
     public static void Publish(RuntimeState state, VoiceTurn turn)
     {

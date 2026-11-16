@@ -209,11 +209,11 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                         var item = message.GetProperty("item_id").GetString()!; var text = message.GetProperty("transcript").GetString();
                         if (!string.IsNullOrWhiteSpace(text))
                         {
-                            var role = type.StartsWith("conversation", StringComparison.Ordinal) ? "user" : "assistant";
+                            var role = type.StartsWith("conversation", StringComparison.Ordinal) ? ChatRoles.User : ChatRoles.Assistant;
                             var id = ManagedAi.Operation(role + ":" + item, session.Id, reservation.Id); var bounded = text.Length <= 8000 ? text : text[..8000];
-                            var duration = role == "user" && speechDurations.TryGetValue(item, out var seconds) ? (double?)seconds : null;
+                            var duration = role == ChatRoles.User && speechDurations.TryGetValue(item, out var seconds) ? (double?)seconds : null;
                             await transcripts.RecordAsync(session.Id, id, role, bounded, duration, timeout.Token);
-                            if (role == "user" && utterances.Count < 32 && utterances.Add(id))
+                            if (role == ChatRoles.User && utterances.Count < 32 && utterances.Add(id))
                                 await Provider(new { type = "conversation.item.create", item = new { type = "message", role = "system", content = new[] {
                                     new { type = "input_text", text = $"Core captured the latest user speech. Its utterance_id is {id}. This ID references the user's exact transcript on Core; never read the ID aloud." }
                                 } } });

@@ -70,7 +70,7 @@ public sealed class CoachingQueryHandlers(IRuntimeReader reader, ISessionReader 
             var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { session.Id, session.UpdatedAt,
                 Technical = technical.Select(x => new { x.Id, x.Revision }), Coaching = coaching.Select(x => new { x.Id, x.Revision, Current = CoachingService.SourceCurrent(s, x) }) })));
             return new SessionReview(session.Id, session.Title, fingerprint, technical.Count(x => !x.Skipped), technical.Count(x => x.Skipped), coaching.Count,
-                session.Messages?.Count(x => x.Role == "user") ?? 0,
+                session.Messages?.Count(x => x.Role == ChatRoles.User) ?? 0,
                 technical.Select(x => QuestionBank.Get(x.QuestionId).Prompt).Concat(coaching.Select(x => CoachingCatalog.Get(x.ExerciseId).Prompt)).Distinct().Take(50).ToList(),
                 weaknesses, analyses.SelectMany(x => x.Observations).GroupBy(x => x.Code).Select(g => new TextObservation(g.Key, g.First().Detail,
                     g.SelectMany(x => x.Evidence).Distinct().Take(6).ToList())).Take(8).ToList(), next.Take(5).ToList(), "Self ratings and deterministic text observations; no automatic competence or speech score.");
