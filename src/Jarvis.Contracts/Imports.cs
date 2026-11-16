@@ -1,6 +1,9 @@
 namespace Jarvis.Contracts;
 
-public sealed record TranscriptSegment(string Speaker, string Text, double StartSeconds, double EndSeconds);
+public sealed record TranscriptSegment(string Speaker, string Text, double StartSeconds, double EndSeconds)
+{
+    public const string UserSpeaker = "user";
+}
 public sealed record ImportDocumentRequest(Guid RequestId, string Kind, string Title, string Text,
     bool ConfirmStorageConsent, bool ConfirmRecordingAuthorised = false, IReadOnlyList<TranscriptSegment>? Segments = null);
 public sealed record ImportedDocument(Guid Id, string Kind, string Title, string Text, string ContentHash,

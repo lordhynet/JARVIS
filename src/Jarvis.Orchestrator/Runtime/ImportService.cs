@@ -18,7 +18,7 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock)
         double previous = 0;
         foreach (var segment in segments)
         {
-            Guard.Require(segment.Speaker is "user" or "interviewer" or "unknown" && !string.IsNullOrWhiteSpace(segment.Text) && segment.Text.Length <= 10000 &&
+            Guard.Require(segment.Speaker is TranscriptSegment.UserSpeaker or "interviewer" or "unknown" && !string.IsNullOrWhiteSpace(segment.Text) && segment.Text.Length <= 10000 &&
                 double.IsFinite(segment.StartSeconds) && double.IsFinite(segment.EndSeconds) && segment.StartSeconds >= previous && segment.EndSeconds > segment.StartSeconds && segment.EndSeconds <= 28800,
                 400, "Segments require ordered non-overlapping finite timing, text and an explicit speaker label.");
             previous = segment.EndSeconds;
@@ -85,10 +85,10 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock)
         Guard.Require(document.DeletedAt is null && document.Kind == "interview", 404, "Interview transcript not found.");
         int Words(string value) => Regex.Matches(value, @"\b[\p{L}\p{N}]+\b").Count;
         var questions = document.Text.Split('\n').Where(x => x.Contains('?')).Select(x => x.Trim()).Take(50).ToList();
-        var user = document.Segments.Where(x => x.Speaker == "user").ToList();
+        var user = document.Segments.Where(x => x.Speaker == TranscriptSegment.UserSpeaker).ToList();
         var seconds = user.Sum(x => x.EndSeconds - x.StartSeconds);
         var pauses = user.Zip(user.Skip(1)).Count(x => x.Second.StartSeconds - x.First.EndSeconds >= 1 &&
-            !document.Segments.Any(other => other.Speaker != "user" && other.StartSeconds >= x.First.EndSeconds && other.EndSeconds <= x.Second.StartSeconds));
+            !document.Segments.Any(other => other.Speaker != TranscriptSegment.UserSpeaker && other.StartSeconds >= x.First.EndSeconds && other.EndSeconds <= x.Second.StartSeconds));
         return new(document.Id, questions, Words(document.Text), seconds > 0 ? Math.Round(user.Sum(x => Words(x.Text)) * 60 / seconds, 1) : null,
             user.Count > 1 ? pauses : null, seconds > 0 ? "Imported speaker timing; not independently verified acoustic measurement" : "No timing; pace and pauses unavailable",
             ["Re-answer one extracted question using a real project example.", "Identify personal ownership and one trade-off.", "Practise the weakest answer again after a short break."]);
