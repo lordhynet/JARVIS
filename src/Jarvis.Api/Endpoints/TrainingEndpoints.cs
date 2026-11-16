@@ -9,7 +9,7 @@ public static class TrainingEndpoints
 {
     public static void MapTrainingEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/training").WithTags("Training");
+        var group = app.MapGroup("/api/training").WithTags("Training").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
         group.MapGet("/questions", () => QuestionBank.All);
         group.MapGet("/modes", () => DrillCatalog.Modes);
         group.MapPost("/drills", (StartTrainingDrillRequest r, ICommandHandler<StartTrainingDrill, TrainingDrillView> h, CancellationToken ct) => h.HandleAsync(new(r), ct));

@@ -19,7 +19,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
     // SignalR WebSocket clients cannot set custom headers, so they send the key as access_token.
     private const string QueryName = "access_token";
 
-    public async Task InvokeAsync(HttpContext context, DeviceCredentials credentials, OwnerAuthorization owner, IPrivacyReader privacy, HubTickets hubTickets)
+    public async Task InvokeAsync(HttpContext context, DeviceCredentials credentials, IPrivacyReader privacy, HubTickets hubTickets)
     {
         if (!IsProtected(context.Request.Path))
         {
@@ -69,13 +69,6 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
 
         context.Items[FingerprintItem] = Jarvis.Orchestrator.Runtime.PrivacyData.Hash(supplied!);
         context.Items[ActorItem] = actor ?? new CoreActor("legacy-owner-browser", null);
-        if (actor is not null && !CompanionRoute(context.Request, actor.DeviceId!))
-        {
-            context.Response.StatusCode = 403;
-            await context.Response.WriteAsJsonAsync(new { error = "This device credential is limited to its own audio companion operations." });
-            return;
-        }
-        if (OwnerScope(context.Request) is { } scope) owner.Require(context, scope);
         using var credentialScope = DeviceCredentialContext.Enter((CoreActor)context.Items[ActorItem]!);
         using var invocation = CoreInvocationContext.Enter(actor is null ? InvocationOrigin.ManualClient : InvocationOrigin.ExternalContent);
         await next(context);
@@ -85,24 +78,6 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
     {
         if (context.Items[ActorItem] is CoreActor { DeviceId: { } bound })
             Guard.Require(bound == deviceId, 403, "The requested device does not match the authenticated companion.");
-    }
-    private static bool CompanionRoute(HttpRequest request, string deviceId)
-    {
-        var path = request.Path.Value?.TrimEnd('/');
-        return request.Method == "GET" && path is "/api/privacy/status" or "/api/voice/status" or "/api/devices" or "/api/device-capabilities" ||
-            request.Method == "POST" && (path is "/api/voice/prepare" or "/api/voice/tickets" or "/api/voice/local/release" or "/api/voice/wake-candidates" || path == $"/api/devices/{deviceId}/heartbeat");
-    }
-    private static string? OwnerScope(HttpRequest request)
-    {
-        var path = request.Path.Value?.TrimEnd('/').ToLowerInvariant() ?? "";
-        if (request.Method == "GET" && path == "/api/privacy/export" || request.Method == "POST" &&
-            path is "/api/privacy/erase" or "/api/privacy/reopen" or "/api/privacy/retention/apply") return "privacy.manage";
-        if (request.Method == "POST" && path.StartsWith("/api/devices/", StringComparison.Ordinal) && path.EndsWith("/verify", StringComparison.Ordinal)) return "device.verify";
-        if (path.StartsWith("/api/device-grants", StringComparison.Ordinal) || path.StartsWith("/api/devices/", StringComparison.Ordinal) && path.Contains("/grants", StringComparison.Ordinal)) return "device.grants";
-        if (request.Method is "POST" or "DELETE" && path.StartsWith("/api/devices/", StringComparison.Ordinal) && path.EndsWith("/credential", StringComparison.Ordinal)) return "device.manage";
-        if (request.Method == "POST" && path.StartsWith("/api/tools/", StringComparison.Ordinal) && path.EndsWith("/confirm", StringComparison.Ordinal)) return "tool.confirm";
-        if (request.Method == "POST" && System.Text.RegularExpressions.Regex.IsMatch(path, "^/api/domains/[^/]+/(activate|disable|rollback)$")) return "domain.manage";
-        return null;
     }
 
     // The .NET SignalR client sends AccessTokenProvider values as "Authorization: Bearer <key>".

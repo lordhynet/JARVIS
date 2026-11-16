@@ -8,7 +8,7 @@ public static class LearningEndpoints
 {
     public static void MapLearningEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/learning").WithTags("Learning");
+        var group = app.MapGroup("/api/learning").WithTags("Learning").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
         group.MapGet("/", (bool? due, IQueryHandler<ListLearningItems, IReadOnlyList<LearningItem>> handler, CancellationToken ct) =>
             handler.HandleAsync(new ListLearningItems(due ?? false), ct));
         group.MapPost("/", (CreateLearningRequest request, ICommandHandler<CreateLearningItem, LearningItem> handler, CancellationToken ct) =>

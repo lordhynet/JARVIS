@@ -9,7 +9,7 @@ public static class WorkflowEndpoints
 {
     public static void MapWorkflowEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/workflows").WithTags("Workflows");
+        var group = app.MapGroup("/api/workflows").WithTags("Workflows").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
         group.MapGet("/paid-ai", (PaidAiProvider provider, CancellationToken ct) => provider.StatusAsync(ct));
         group.MapPost("/interview-briefs", async (CreateInterviewBriefRequest request,
             PaidAiProvider provider, ICommandHandler<CreateInterviewBrief, WorkflowRun> handler, CancellationToken ct) =>

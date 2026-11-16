@@ -8,7 +8,7 @@ public static class StoryEndpoints
 {
     public static void MapStoryEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/stories").WithTags("Story Bank");
+        var group = app.MapGroup("/api/stories").WithTags("Story Bank").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
         group.MapGet("/", (IQueryHandler<ListStories, IReadOnlyList<Story>> handler, CancellationToken ct) =>
             handler.HandleAsync(new ListStories(), ct));
         group.MapGet("/{id:guid}", (Guid id, IQueryHandler<GetStory, Story> handler, CancellationToken ct) =>

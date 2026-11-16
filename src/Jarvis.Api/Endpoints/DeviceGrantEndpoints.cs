@@ -10,11 +10,11 @@ public static class DeviceGrantEndpoints
     {
         app.MapPost("/api/devices/{id}/grants", (string id, GrantDeviceCapabilityRequest request,
             ICommandHandler<GrantDeviceCapability, DeviceCapabilityGrantView> handler, CancellationToken ct) =>
-            handler.HandleAsync(new GrantDeviceCapability(id, request), ct)).WithTags("Device grants");
+            handler.HandleAsync(new GrantDeviceCapability(id, request), ct)).WithTags("Device grants").RequireAuthorization(Jarvis.Api.Security.CorePolicies.DeviceGrants);
         app.MapGet("/api/device-grants", (string? deviceId,
             IQueryHandler<ListDeviceCapabilityGrants, IReadOnlyList<DeviceCapabilityGrantView>> handler, CancellationToken ct) =>
-            handler.HandleAsync(new ListDeviceCapabilityGrants(deviceId), ct)).WithTags("Device grants");
+            handler.HandleAsync(new ListDeviceCapabilityGrants(deviceId), ct)).WithTags("Device grants").RequireAuthorization(Jarvis.Api.Security.CorePolicies.DeviceGrants);
         app.MapDelete("/api/device-grants/{id:guid}", (Guid id, ICommandHandler<RevokeDeviceCapabilityGrant, bool> handler, CancellationToken ct) =>
-            handler.HandleAsync(new RevokeDeviceCapabilityGrant(id), ct)).WithTags("Device grants");
+            handler.HandleAsync(new RevokeDeviceCapabilityGrant(id), ct)).WithTags("Device grants").RequireAuthorization(Jarvis.Api.Security.CorePolicies.DeviceGrants);
     }
 }

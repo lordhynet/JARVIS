@@ -82,6 +82,7 @@ builder.Services.AddSignalR().AddJsonProtocol(o =>
     o.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddCoreAuthorization();
 var storageProvider = builder.Configuration["Jarvis:StorageProvider"] ?? "InMemory";
 if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
 {
@@ -241,7 +242,14 @@ app.Use(async (context, next) =>
         await context.Response.WriteAsJsonAsync(new { error = "External service returned an invalid response." });
     }
 });
+app.UseRouting();
 app.UseMiddleware<ApiKeyMiddleware>();
+app.UseAuthentication();
+// Static browser assets are public and must short-circuit before the deny-by-default
+// endpoint authorization fallback, which applies to every routed endpoint.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+app.UseAuthorization();
 app.UseMiddleware<Jarvis.Api.Privacy.PrivacyMiddleware>();
 app.UseRateLimiter();
 app.MapVoiceEndpoints();
@@ -249,11 +257,11 @@ app.MapAgentEndpoints();
 app.MapDomainEndpoints();
 app.MapBudgetEndpoints();
 app.MapPrivacyEndpoints();
-app.MapPost("/api/hubs/ticket", (HubTickets tickets, CancellationToken ct) => tickets.IssueAsync(ct));
+app.MapPost("/api/hubs/ticket", (HubTickets tickets, CancellationToken ct) => tickets.IssueAsync(ct)).RequireAuthorization(CorePolicies.Owner);
 app.MapImportEndpoints();
-app.MapGet("/api/push/status", (PushNotifications push, IConfiguration config) => new { ready = push.Ready, publicKey = push.Ready ? config["Push:PublicKey"] : "" });
-app.MapPost("/api/push/subscriptions", (Jarvis.Contracts.SavePushSubscriptionRequest request, HttpContext context, PushNotifications push, CancellationToken ct) => push.SubscribeAsync(request, (string)context.Items[ApiKeyMiddleware.FingerprintItem]!, ct));
-app.MapDelete("/api/push/subscriptions/{id:guid}", (Guid id, PushNotifications push, CancellationToken ct) => push.UnsubscribeAsync(id, ct));
+app.MapGet("/api/push/status", (PushNotifications push, IConfiguration config) => new { ready = push.Ready, publicKey = push.Ready ? config["Push:PublicKey"] : "" }).RequireAuthorization(CorePolicies.Owner);
+app.MapPost("/api/push/subscriptions", (Jarvis.Contracts.SavePushSubscriptionRequest request, HttpContext context, PushNotifications push, CancellationToken ct) => push.SubscribeAsync(request, (string)context.Items[ApiKeyMiddleware.FingerprintItem]!, ct)).RequireAuthorization(CorePolicies.Owner);
+app.MapDelete("/api/push/subscriptions/{id:guid}", (Guid id, PushNotifications push, CancellationToken ct) => push.UnsubscribeAsync(id, ct)).RequireAuthorization(CorePolicies.Owner);
 app.MapGet("/api/operations", (IRuntimeReader reader, TimeProvider clock, CancellationToken ct) => reader.ReadAsync(s => new
 {
     queuedTasks = s.AgentTasks.Values.Count(x => x.Status is Jarvis.Contracts.AgentTaskStatus.Queued or Jarvis.Contracts.AgentTaskStatus.RetryScheduled),
@@ -264,10 +272,7 @@ app.MapGet("/api/operations", (IRuntimeReader reader, TimeProvider clock, Cancel
     monthCommittedUsd = s.UsageReservations.Values.Where(x => x.At.Year == clock.GetUtcNow().Year && x.At.Month == clock.GetUtcNow().Month).Sum(x => x.ActualUsd ?? x.ReservedUsd),
     agentsPaused = s.AgentControls.EffectiveAgentsPaused,
     paidAiPaused = s.AgentControls.EffectivePaidAiPaused
-}, ct));
-app.UseDefaultFiles();
-app.UseStaticFiles();
-
+}, ct)).RequireAuthorization(CorePolicies.Owner);
 // Public: lets the watchdog and you check JARVIS is alive without a key.
 app.MapGet("/health", () => Results.Ok(new
 {
@@ -275,11 +280,11 @@ app.MapGet("/health", () => Results.Ok(new
     service = "jarvis-core",
     version,
     uptimeSeconds = (long)(DateTimeOffset.UtcNow - startedAt).TotalSeconds
-}));
+})).AllowAnonymous();
 
 app.MapSessionEndpoints();
 app.MapRuntimeEndpoints();
-app.MapHub<StatusHub>("/hubs/status");
+app.MapHub<StatusHub>("/hubs/status").RequireAuthorization(CorePolicies.Owner);
 app.MapDeviceCapabilityEndpoints();
 app.MapDeviceGrantEndpoints();
 

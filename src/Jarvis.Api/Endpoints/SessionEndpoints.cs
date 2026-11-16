@@ -9,7 +9,7 @@ public static class SessionEndpoints
 {
     public static IEndpointRouteBuilder MapSessionEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/sessions").WithTags("Sessions");
+        var group = app.MapGroup("/api/sessions").WithTags("Sessions").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
         group.MapGet("/", async (IQueryHandler<ListSessions, IReadOnlyList<ConversationSession>> handler, CancellationToken ct) =>
             Results.Ok(await handler.HandleAsync(new ListSessions(), ct)));
         group.MapGet("/{id:guid}", async (Guid id, IQueryHandler<GetSession, ConversationSession?> handler, CancellationToken ct) =>

@@ -9,16 +9,17 @@ public static class IntegrationEndpoints
 {
     public static void MapIntegrationEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/integrations", (IQueryHandler<ListIntegrations, IReadOnlyList<IntegrationStatus>> handler, CancellationToken ct) =>
+        var api = app.MapGroup("/api").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
+        api.MapGet("/integrations", (IQueryHandler<ListIntegrations, IReadOnlyList<IntegrationStatus>> handler, CancellationToken ct) =>
             handler.HandleAsync(new ListIntegrations(), ct));
-        app.MapGet("/api/transit", (string? lines, IQueryHandler<GetTransit, IReadOnlyList<TransitLine>> handler, CancellationToken ct) =>
+        api.MapGet("/transit", (string? lines, IQueryHandler<GetTransit, IReadOnlyList<TransitLine>> handler, CancellationToken ct) =>
             handler.HandleAsync(new GetTransit(lines), ct));
-        app.MapGet("/api/calendar/{provider}", (string provider, DateTimeOffset start, DateTimeOffset end,
+        api.MapGet("/calendar/{provider}", (string provider, DateTimeOffset start, DateTimeOffset end,
             IQueryHandler<GetCalendar, IReadOnlyList<CalendarEntry>> handler, CancellationToken ct) =>
             handler.HandleAsync(new GetCalendar(provider, start, end), ct));
-        app.MapGet("/api/briefing", (IQueryHandler<GetDailyBriefing, DailyBriefing> handler, CancellationToken ct) =>
+        api.MapGet("/briefing", (IQueryHandler<GetDailyBriefing, DailyBriefing> handler, CancellationToken ct) =>
             handler.HandleAsync(new GetDailyBriefing(), ct));
-        app.MapPost("/api/voice/transcribe", async (HttpRequest request, ICommandHandler<TranscribeAudio, string> handler, CancellationToken ct) =>
+        api.MapPost("/voice/transcribe", async (HttpRequest request, ICommandHandler<TranscribeAudio, string> handler, CancellationToken ct) =>
         {
             Guard.Require(request.HasFormContentType, 400, "Upload audio using multipart/form-data.");
             var form = await request.ReadFormAsync(ct);
@@ -31,6 +32,6 @@ public static class IntegrationEndpoints
         {
             var result = await handler.HandleAsync(new GetStorageReadiness(), ct);
             return result.Ready ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503);
-        });
+        }).AllowAnonymous();
     }
 }

@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Jarvis.Contracts;
+using Jarvis.Api.Security;
 using Jarvis.Orchestrator.Cqrs;
 using Jarvis.Orchestrator.Cqrs.Agents;
 using Jarvis.Orchestrator.Cqrs.Imports;
@@ -14,6 +16,8 @@ using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
 using Jarvis.Orchestrator.Workflows;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jarvis.Tests;
@@ -22,6 +26,74 @@ public sealed class CqrsArchitectureTests
 {
     private static bool Implements(Type type, Type definition) => type.GetInterfaces()
         .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == definition);
+
+    [Fact]
+    public void Every_endpoint_declares_authorization_or_is_explicitly_anonymous()
+    {
+        using var factory = new ScenarioFactory();
+        _ = factory.Client();
+        var endpoints = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>();
+        var missing = endpoints.Where(endpoint => endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().Count == 0 &&
+            endpoint.Metadata.GetMetadata<IAllowAnonymous>() is null).Select(endpoint => endpoint.DisplayName).ToArray();
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void Companion_endpoint_policy_matches_the_android_allowlist()
+    {
+        using var factory = new ScenarioFactory();
+        _ = factory.Client();
+        var source = FindWorkspaceFile(Path.Combine("JARVIS.MOBILE", "app", "src", "main", "java", "uk", "jarvis", "mobile", "CompanionRoutes.kt"));
+        var kotlin = File.ReadAllText(source);
+        var getBlock = Regex.Match(kotlin, "if \\(method == \\\"GET\\\"\\).*?setOf\\((?<routes>.*?)\\)", RegexOptions.Singleline);
+        var postBlock = Regex.Match(kotlin, "^\\s*return path in setOf\\((?<routes>.*?)\\) \\|\\|", RegexOptions.Singleline | RegexOptions.Multiline);
+        Assert.True(getBlock.Success && postBlock.Success, "Android companion allowlist format changed; update this parity check.");
+        var android = Regex.Matches(getBlock.Groups["routes"].Value, "\\\"(?<path>/api/[^\\\"]+)\\\"")
+            .Select(m => "GET " + m.Groups["path"].Value.TrimEnd('/'))
+            .Concat(Regex.Matches(postBlock.Groups["routes"].Value, "\\\"(?<path>/api/[^\\\"]+)\\\"")
+                .Select(m => "POST " + m.Groups["path"].Value.TrimEnd('/')))
+            .Append("POST /api/devices/{id}/heartbeat")
+            .ToHashSet(StringComparer.Ordinal);
+        // Bootstrap registration is allowlisted in Android because it uses the owner's legacy key;
+        // a paired device credential cannot register devices.
+        android.Remove("POST /api/devices");
+
+        var core = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().Any(policy => policy.Policy == CorePolicies.OwnerOrCompanion) &&
+                endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().All(policy => policy.Policy == CorePolicies.OwnerOrCompanion))
+            .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
+                .Select(method => method + " /" + endpoint.RoutePattern.RawText!.TrimStart('/').TrimEnd('/')))
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(android.OrderBy(x => x), core.OrderBy(x => x));
+    }
+
+    [Fact]
+    public void Browser_owner_call_rules_cover_every_owner_step_up_scope()
+    {
+        using var factory = new ScenarioFactory();
+        _ = factory.Client();
+        var script = File.ReadAllText(FindWorkspaceFile(Path.Combine("JARVIS.CORE", "src", "Jarvis.Api", "wwwroot", "app.js")));
+        var rules = new[]
+        {
+            "path === '/privacy/export'", "['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply']",
+            "/^\\/devices\\/[^/]+\\/(verify|credential)$/", "/^\\/devices\\/[^/]+\\/grants$/",
+            "/^\\/device-grants(?:\\/[^/]+)?$/", "/^\\/domains\\/[^/]+\\/(activate|disable|rollback)$/",
+            "/^\\/tools\\/[^/]+\\/confirm$/", "/^\\/budget\\/legacy\\/[^/]+\\/preview$/",
+            "/^\\/budget\\/(approvals(?:\\/[^/]+\\/revoke)?|legacy\\/[^/]+\\/classify)$/",
+            "/^\\/usage\\/charges\\/[^/]+\\/reconcile$/"
+        };
+        foreach (var rule in rules) Assert.Contains(rule, script, StringComparison.Ordinal);
+    }
+
+    private static string FindWorkspaceFile(string relativePath)
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            var candidate = Path.Combine(directory.FullName, relativePath);
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException($"Could not find workspace file {relativePath}.");
+    }
 
     [Fact]
     public void Every_request_has_a_registered_handler_and_reads_and_writes_are_separate()
