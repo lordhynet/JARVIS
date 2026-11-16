@@ -731,3 +731,13 @@ The existing tool routes and audit fields work with the adapter. An owner-confir
 All 34 focused checks passed with disposable PostgreSQL 17 and in-memory fixtures. Home Assistant tests use a fake HTTP transport and fixture credentials. They cover owner approval, command and tool audit linkage, duplicate confirmation, absent grants, partial configuration, state verification and state mismatch. EF reported no pending model changes. The Android route, header and DTO parity check passed.
 
 The full backend suite passed 387 tests with zero failures and the opt-in performance harness skipped. The disposable PostgreSQL containers were removed after verification.
+
+## Round 4 D6 — voice session decomposition
+
+Core's realtime gateway accepts the WebSocket and delegates to a per-connection `RealtimeVoiceSession`. Provider and client events have individual handlers. The provider pump owns response and tool counters, the client pump counts microphone bytes, and session shutdown fences audio before draining and settling usage. The dispatch architecture check follows the gateway delegation and still verifies that reservation precedes connection.
+
+All 30 focused Core checks passed with in-memory fixtures and disposable PostgreSQL 17. They cover one-time ticket authentication, live fencing and credential rotation, paid pause, transcript persistence, tool calls, and usage settlement. The full backend suite passed 387 tests with zero failures and the opt-in measurement harness skipped. EF reported no pending model changes.
+
+Android delegates local wake and arbitration to `WakeController`, communication mode and Bluetooth SCO to `AudioRouteController`, and WebSocket, lease and recovery operations to `VoiceTransport`. A sealed lifecycle state machine fences outdated wake and transport callbacks. The foreground service owns notification actions and microphone and playback resources.
+
+The initial Android build passed 33 JVM tests and release lint. The final rerun against Mobile commit `d0aec50` passed the same 33 tests with zero failures, errors or skips, and release lint passed again. The two new tests cover the wake, arbitration, and reconnect transitions and stale generations after a stop. Bluetooth routing and screen-off behavior still require a handset check.

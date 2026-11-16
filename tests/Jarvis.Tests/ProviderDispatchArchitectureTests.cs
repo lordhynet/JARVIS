@@ -14,14 +14,23 @@ public sealed class ProviderDispatchArchitectureTests
         foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories).Where(p => !p.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar))) {
             var text = File.ReadAllText(file);
             if (!(text.Contains("api.openai.com", StringComparison.Ordinal) || text.Contains("api.anthropic.com", StringComparison.Ordinal) || text.Contains("generativelanguage.googleapis.com", StringComparison.Ordinal))) continue;
-            Assert.Contains(Path.GetFileName(file), known);
-            var reserve = text.IndexOf(Path.GetFileName(file) == "TextReasoningAdapters.cs" ? "ManagedAi.RequireReservedAsync(" : "budget.ReserveAsync(", StringComparison.Ordinal);
+            var adapter = Path.GetFileName(file);
+            Assert.Contains(adapter, known);
+            if (adapter == "RealtimeGateway.cs")
+            {
+                var session = File.ReadAllText(Path.Combine(root, "Voice", "RealtimeVoiceSession.cs"));
+                Assert.Contains("await budget.ReserveAsync(", session, StringComparison.Ordinal);
+                var prepare = session.IndexOf("await PrepareWindowAsync()", StringComparison.Ordinal);
+                Assert.True(prepare >= 0 && session.IndexOf("connections.ConnectAsync(", StringComparison.Ordinal) > prepare);
+                Assert.Contains("await session.RunAsync(", text, StringComparison.Ordinal);
+                continue;
+            }
+            var reserve = text.IndexOf(adapter == "TextReasoningAdapters.cs" ? "ManagedAi.RequireReservedAsync(" : "budget.ReserveAsync(", StringComparison.Ordinal);
             Assert.True(reserve >= 0, "Provider adapter must reserve or verify its durable reservation: " + Path.GetFileName(file));
-            var send = Path.GetFileName(file) switch {
+            var send = adapter switch {
                 "ManagedAi.cs" => text.IndexOf("CoreObservability.SendAsync(", StringComparison.Ordinal),
                 "OpenAiProvider.cs" => text.IndexOf("gateway.JsonAsync(request", StringComparison.Ordinal),
-                "TextReasoningAdapters.cs" => text.IndexOf("CoreObservability.SendAsync(", reserve, StringComparison.Ordinal),
-                _ => text.IndexOf("connections.ConnectAsync(", StringComparison.Ordinal)
+                _ => text.IndexOf("CoreObservability.SendAsync(", reserve, StringComparison.Ordinal)
             };
             Assert.True(send > reserve, "Provider send must follow reservation: " + Path.GetFileName(file));
         }
