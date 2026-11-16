@@ -1,8 +1,8 @@
 # JARVIS audio-only Android companion
 
-Version 0.10.1 continues the earbuds-first audio interface with bounded transport recovery. Core owns conversations, memory, practice, CVs, goals, stories and tools. Android handles secure connection, microphone/playback, permissions and start/stop; there are no native feature dashboards or editors.
+Version 0.10.2 continues the earbuds-first audio interface with bounded transport recovery. Core owns conversations, memory, practice, CVs, goals, stories and tools. Android handles secure connection, microphone/playback, permissions and start/stop; there are no native feature dashboards or editors.
 
-Build with JDK 17 and `./build.ps1 -Clean`. This builds, runs JVM tests/lint and verifies the signed `../artifacts/JARVIS-Android-0.10.1.apk`. Pinned tools are in `../.tools`.
+Build with JDK 17 and `./build.ps1 -Clean`. This builds, runs JVM tests/lint and verifies the signed `../artifacts/JARVIS-Android-0.10.2.apk`. Pinned tools are in `../.tools`.
 
 Install through authorized ADB: `adb -s <serial> install -r <apk>`. From Core use `./scripts/connect-android.ps1 -Device <serial>`, then accept Connect to my Core. Provider credentials stay on Core.
 
