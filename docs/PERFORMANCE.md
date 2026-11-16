@@ -42,7 +42,24 @@ The baseline performed four full runtime reads and one locked runtime read per c
 | Full runtime reads during 200 preparations, excluding the locked claim read | 800 | 0 |
 | Session-candidate query, PostgreSQL mean | 405.2 ms | 217.8 ms |
 
-The preparation change projects device and lease fields, and counts messages directly from their stored JSON text. Median preparation fell by 57.7% in this synthetic test. Frame-level lease validation still reads PostgreSQL. Its before/after timings show run-to-run variation. The locked claim read and selected-session transcript query remain part of preparation.
+The preparation change projects device and lease fields, and counts messages directly from their stored JSON text. Median preparation fell by 57.7% in this synthetic test. Both runs still validated each frame through PostgreSQL, and the frame-check timings show run-to-run variation. The locked claim read and selected-session transcript query remain part of preparation.
+
+### Realtime frame authorization
+
+Each realtime connection caches its authoritative lease for audio forwarding. The monitor starts a refresh every 500 ms. A snapshot expires one second after the refresh began or when the lease expires, whichever comes first. Committed lease revocation, ownership loss and erasure invalidate matching snapshots in the same Core process. Changes made by another Core process are detected by the next refresh or the freshness deadline.
+
+Provider connection and Core tool dispatch still verify the lease with PostgreSQL. The profile retains the authoritative check for comparison and measures 200 batches of 1,000 in-process frame checks. It asserts that the cached batches issue zero PostgreSQL statements. The timings cover lease validation only. Network, provider, and device playback delays require separate measurement.
+
+| Measurement | Result |
+|---|---:|
+| Authoritative lease check p50 / p95 | 27.777 / 37.434 ms |
+| Cached batch of 1,000 checks p50 / p95 | 0.079 / 0.118 ms |
+| SQL SELECT statements in 200 authoritative checks | 800 |
+| SQL statements in 200,000 cached checks | 0 |
+| Companion preparation p50 / p95 | 1,158.1 / 2,055.4 ms |
+| Runtime update p50 / p95 | 1,444.7 / 2,126.5 ms |
+
+The 16 November 2026 result uses the same workstation and workload as the previous profile. The cached timing excludes refreshes, which run independently of frame traffic.
 
 ## Seven-day owner soak
 

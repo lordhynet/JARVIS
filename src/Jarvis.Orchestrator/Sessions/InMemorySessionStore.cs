@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Orchestrator.Sessions;
 
@@ -7,7 +8,7 @@ namespace Jarvis.Orchestrator.Sessions;
 /// Thread-safe in-memory store. Data is lost on restart — that is expected for
 /// Milestone 1 and is what Milestone 2 (PostgreSQL) fixes.
 /// </summary>
-public sealed class InMemorySessionStore : ISessionStore
+public sealed class InMemorySessionStore(AudioFenceChanges? audioChanges = null) : ISessionStore
 {
     private readonly ConcurrentDictionary<Guid, ConversationSession> _sessions = new();
     private readonly object _writeLock = new();
@@ -25,6 +26,7 @@ public sealed class InMemorySessionStore : ISessionStore
             if (!_sessions.TryGetValue(id, out var current)) return Task.FromResult<ConversationSession?>(null);
             var result = update(current);
             _sessions[id] = result;
+            audioChanges?.SessionChanged(current, result);
             return Task.FromResult<ConversationSession?>(result);
         }
     }

@@ -8,7 +8,7 @@ using System.Text.Json;
 namespace Jarvis.Persistence;
 
 // Each operation owns a context, so the store is safe to share across requests.
-public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> factory) : ISessionStore
+public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges? audioChanges = null) : ISessionStore
 {
     public async Task<SessionHandoff?> ReadHandoffAsync(Guid id, CancellationToken ct = default)
     {
@@ -165,7 +165,8 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         if (row is null) return null;
 
         await db.Entry(row).Collection(s => s.Checkpoints).LoadAsync(ct);
-        var updated = update(row.ToContract());
+        var current = row.ToContract();
+        var updated = update(current);
         foreach (var checkpoint in updated.Checkpoints.Where(c => row.Checkpoints.All(old => old.Id != c.Id)))
         {
             var added = CheckpointRow.FromContract(checkpoint);
@@ -181,6 +182,7 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         row.UpdatedAt = SessionRow.DatabaseTimestamp(updated.UpdatedAt);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        audioChanges?.SessionChanged(current, updated);
         return row.ToContract();
     }
 }

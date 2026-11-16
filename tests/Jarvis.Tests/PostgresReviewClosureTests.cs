@@ -42,7 +42,12 @@ public sealed partial class PostgresSessionTests
         Assert.Equal(lease, active.Lease);
         Assert.False(active.IsAvailable(now));
         Assert.True(active.IsAvailable(lease.ExpiresAt));
+        using var fence = new LiveAudioFence(lease, host.Services.GetRequiredService<AudioOwnership>(),
+            host.Services.GetRequiredService<AudioFenceChanges>(), TimeProvider.System);
+        Assert.True(await fence.RefreshAsync(default));
         await state.UpdateAsync(s => { AudioFencing.Revoke(s); return true; });
+        Assert.False(fence.IsCurrent());
+        Assert.False(await fence.RefreshAsync(default));
         var drain = await state.ReadAudioLeaseStateAsync();
         Assert.Null(drain.Lease);
         Assert.Equal(lease.ExpiresAt, drain.DrainUntil);

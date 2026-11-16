@@ -64,13 +64,17 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
             Require(s, lease); var updated = lease with { ExpiresAt = clock.GetUtcNow().AddSeconds(15) }; s.AudioLease = updated; return updated;
         }, ct);
     }
-    public async Task<bool> CurrentAsync(AudioLease lease, CancellationToken ct)
+    public async Task<bool> CurrentAsync(AudioLease lease, CancellationToken ct) =>
+        await ReadCurrentAsync(lease, ct) is not null;
+
+    internal async Task<AudioLease?> ReadCurrentAsync(AudioLease lease, CancellationToken ct)
     {
         var session = await sessions.ReadAudioStateAsync(lease.SessionId, ct);
-        if (session is not { Status: SessionStatus.Active } || session.ActiveDeviceId != lease.DeviceId) return false;
+        if (session is not { Status: SessionStatus.Active } || session.ActiveDeviceId != lease.DeviceId) return null;
         // Revocation/rotation atomically clears this fence. No full runtime or transcript read.
         var current = await store.ReadAudioLeaseAsync(ct);
-        return current?.Fence == lease.Fence && current.SessionId == lease.SessionId && current.DeviceId == lease.DeviceId && current.ExpiresAt > clock.GetUtcNow();
+        return current is not null && AudioFenceChanges.Matches(lease, current) && current.ExpiresAt > clock.GetUtcNow()
+            ? current : null;
     }
     public async Task<bool> RepairAsync(CancellationToken ct)
     {

@@ -82,6 +82,7 @@ builder.Services.AddSignalR().AddJsonProtocol(o =>
     o.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<AudioFenceChanges>();
 builder.Services.AddCoreAuthorization();
 var storageProvider = builder.Configuration["Jarvis:StorageProvider"] ?? "InMemory";
 if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))

@@ -22,7 +22,8 @@ public sealed class RealtimeConnectionFactory(IConfiguration config) : IRealtime
     }
 }
 public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectionFactory connections, ManagedAi ai,
-    UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, IPrivacyReader privacy, TimeProvider clock, CoreVoiceTools tools, VoiceTranscriptService transcripts)
+    UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, IPrivacyReader privacy, TimeProvider clock, CoreVoiceTools tools,
+    VoiceTranscriptService transcripts, AudioFenceChanges fenceChanges)
 {
     public async Task RunAsync(HttpContext context)
     {
@@ -33,15 +34,32 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         if (!context.WebSockets.IsWebSocketRequest) { context.Response.StatusCode = 400; return; }
         using var client = await context.WebSockets.AcceptWebSocketAsync();
         long firstAudioAt = 0;
+        var ending = false;
         AudioLease? lease = null; using var timeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         timeout.CancelAfter(TimeSpan.FromSeconds(8)); var clientSend = new SemaphoreSlim(1); var providerSend = new SemaphoreSlim(1);
         var pumps = new List<Task>(); WebSocket? upstreamSocket = null;
-        async Task Client(object value) { await clientSend.WaitAsync(timeout.Token); try { await SendAsync(client, value, timeout.Token); } finally { clientSend.Release(); } }
+        async Task Client(object value, LiveAudioFence? audioFence = null)
+        {
+            await clientSend.WaitAsync(timeout.Token);
+            try
+            {
+                if (audioFence is not null)
+                {
+                    if (Volatile.Read(ref ending)) return;
+                    Guard.Require(audioFence.IsCurrent(), 409, "Audio lease expired.");
+                    var latencyStart = Interlocked.Exchange(ref firstAudioAt, 0);
+                    if (latencyStart != 0) CoreTelemetry.VoiceFirstAudio.Record(clock.GetElapsedTime(latencyStart).TotalSeconds);
+                }
+                await SendAsync(client, value, timeout.Token);
+            }
+            finally { clientSend.Release(); }
+        }
         try
         {
             var first = await ReadAsync(client, 2048, timeout.Token);
             Guard.Require(first.GetProperty("type").GetString() == "authenticate", 401, "A one-time voice ticket is required.");
             lease = await ownership.ConsumeAsync(Guard.Text(first.GetProperty("ticket").GetString(), "Ticket", 100), timeout.Token);
+            using var fence = new LiveAudioFence(lease, ownership, fenceChanges, clock);
             ai.RequireReady("Voice"); var session = await sessions.GetAsync(lease.SessionId, timeout.Token);
             Guard.Require(session is not null, 404, "Session not found.");
             var hasDisplay = await runtime.ReadAsync(s => s.Devices.GetValueOrDefault(lease.DeviceId)?.Registration.Capabilities.HasDisplay == true, timeout.Token);
@@ -71,20 +89,33 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             var maximum = ((Encoding.UTF8.GetByteCount(instructions) + toolBytes + conversationTokens + 5120m) * maxTurns * pricing.MaxInput + maxTurns * outputTokens * pricing.MaxOutput) / 1_000_000m + pricing.Transcription(60);
             var reservation = await budget.ReserveAsync(Guid.NewGuid(), session.Id, voiceRates.Model, maximum, ai.Limits, timeout.Token, UsageLane.Voice, "openai");
             timeout.CancelAfter(TimeSpan.FromSeconds(65));
-            Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio lease expired before provider dispatch.");
+            Guard.Require(await fence.RefreshAsync(timeout.Token), 409, "Audio lease expired before provider dispatch.");
             using var provider = await connections.ConnectAsync(voiceRates.Model, timeout.Token);
             upstreamSocket = provider;
-            Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio lease expired while connecting.");
-            async Task Provider(object value) { await providerSend.WaitAsync(timeout.Token); try { await SendAsync(provider, value, timeout.Token); } finally { providerSend.Release(); } }
+            Guard.Require(await fence.RefreshAsync(timeout.Token), 409, "Audio lease expired while connecting.");
+            async Task Provider(object value, bool requireAudio = false)
+            {
+                await providerSend.WaitAsync(timeout.Token);
+                try
+                {
+                    if (requireAudio)
+                    {
+                        if (Volatile.Read(ref ending)) return;
+                        Guard.Require(fence.IsCurrent(), 409, "Audio lease expired.");
+                    }
+                    await SendAsync(provider, value, timeout.Token);
+                }
+                finally { providerSend.Release(); }
+            }
             await Provider(new { type = "session.update", session = new { type = "realtime", model = voiceRates.Model, output_modalities = new[] { "audio" },
                 instructions, max_output_tokens = outputTokens, tools = CoreVoiceTools.Definitions,
                 truncation = new { type = "retention_ratio", retention_ratio = .8, token_limits = new { post_instructions = conversationTokens } },
                 audio = new { input = new { format = new { type = "audio/pcm", rate = 24000 }, transcription = new { model = pricing.TranscriptionModel },
                     turn_detection = new { type = "server_vad", threshold = .5, prefix_padding_ms = 300, silence_duration_ms = 650, create_response = false, interrupt_response = true } },
-                    output = new { format = new { type = "audio/pcm", rate = 24000 }, voice = "marin" } } } });
+                    output = new { format = new { type = "audio/pcm", rate = 24000 }, voice = "marin" } } } }, requireAudio: true);
             var started = clock.GetTimestamp(); long bytes = 0; var created = 0; var completed = 0; var inputTokens = 0; var output = 0; decimal tokenCost = 0;
             var speechStarts = new Dictionary<string, int>(); var speechDurations = new Dictionary<string, double>(); var providerFailed = false;
-            var usageSeen = new HashSet<string>(); var createdIds = new HashSet<string>(); var ready = false; var requested = 0; var ending = false;
+            var usageSeen = new HashSet<string>(); var createdIds = new HashSet<string>(); var ready = false; var requested = 0;
             var handledResponses = new HashSet<string>(); var utterances = new HashSet<Guid>();
             var toolResults = new Dictionary<string, (string Fingerprint, string Output)>(); var toolCalls = 0;
             var cleared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -96,8 +127,10 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                     var message = await ReadAsync(provider, 1_000_000, timeout.Token); var type = message.GetProperty("type").GetString();
                     if (type == "session.updated")
                     {
-                        ready = true; await Client(new { type = "ready", fence = lease.Fence, leaseSeconds = 15, windowSeconds = 60, sampleRate = 24000 });
-                        if (requested == 0) { requested++; await Provider(new { type = "response.create" }); }
+                        Guard.Require(fence.IsCurrent(), 409, "Audio lease expired before the voice session was ready.");
+                        Volatile.Write(ref ready, true);
+                        await Client(new { type = "ready", fence = lease.Fence, leaseSeconds = 15, windowSeconds = 60, sampleRate = 24000 });
+                        if (requested == 0) { requested++; await Provider(new { type = "response.create" }, requireAudio: true); }
                     }
                     else if (type == "input_audio_buffer.cleared") cleared.TrySetResult();
                     else if (type == "response.created")
@@ -128,7 +161,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                             Interlocked.Increment(ref completed);
                         }
                         // Only completed, authorized responses can dispatch Core operations. Partial/cancelled calls are discarded.
-                        if (!ending && response.TryGetProperty("status", out var status) && status.GetString() == "completed" &&
+                        if (!Volatile.Read(ref ending) && response.TryGetProperty("status", out var status) && status.GetString() == "completed" &&
                             response.TryGetProperty("output", out var items) && items.ValueKind == JsonValueKind.Array)
                         {
                             var hadCalls = false;
@@ -136,8 +169,9 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                             Guard.Require(calls.Length <= CoreVoiceTools.MaxCalls, 502, "Provider exceeded the Core tool batch limit.");
                             foreach (var call in calls)
                             {
-                                if (ending) break;
-                                Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio ownership expired before Core tool dispatch.");
+                                if (Volatile.Read(ref ending)) break;
+                                Guard.Require(await ownership.CurrentAsync(lease, timeout.Token) && fence.IsCurrent(), 409,
+                                    "Audio ownership expired before Core tool dispatch.");
                                 var callId = Guard.Text(call.GetProperty("call_id").GetString(), "Tool call", 100);
                                 var name = Guard.Text(call.GetProperty("name").GetString(), "Tool name", 80);
                                 var args = call.GetProperty("arguments").GetString() ?? "";
@@ -154,8 +188,8 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                                 await Provider(new { type = "conversation.item.create", item = new { type = "function_call_output", call_id = callId, output = result } });
                                 hadCalls = true;
                             }
-                            if (hadCalls && !ending && requested < maxTurns) { requested++; await Provider(new { type = "response.create" }); }
-                            else if (hadCalls && !ending) await Client(new { type = "window_limit", detail = "Voice turn limit reached; saved Core progress will resume in the next window." });
+                            if (hadCalls && !Volatile.Read(ref ending) && requested < maxTurns) { requested++; await Provider(new { type = "response.create" }, requireAudio: true); }
+                            else if (hadCalls && !Volatile.Read(ref ending)) await Client(new { type = "window_limit", detail = "Voice turn limit reached; saved Core progress will resume in the next window." });
                         }
                     }
                     else if (type == "input_audio_buffer.speech_started")
@@ -167,8 +201,8 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                     {
                         var item = message.GetProperty("item_id").GetString()!;
                         if (speechStarts.TryGetValue(item, out var at)) speechDurations[item] = Math.Max(0, message.GetProperty("audio_end_ms").GetInt32() - at) / 1000d;
-                        if (!ending && requested < maxTurns) { requested++; await Provider(new { type = "response.create" }); }
-                        else if (!ending) await Client(new { type = "window_limit", detail = "Voice turn limit reached; continue in a new bounded window." });
+                        if (!Volatile.Read(ref ending) && requested < maxTurns) { requested++; await Provider(new { type = "response.create" }, requireAudio: true); }
+                        else if (!Volatile.Read(ref ending)) await Client(new { type = "window_limit", detail = "Voice turn limit reached; continue in a new bounded window." });
                     }
                     else if (type is "conversation.item.input_audio_transcription.completed" or "response.output_audio_transcript.done")
                     {
@@ -188,10 +222,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                     }
                     else if (type == "response.output_audio.delta")
                     {
-                        Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio lease expired.");
-                        var latencyStart = Interlocked.Exchange(ref firstAudioAt, 0);
-                        if (latencyStart != 0) CoreTelemetry.VoiceFirstAudio.Record(clock.GetElapsedTime(latencyStart).TotalSeconds);
-                        await Client(new { type = "audio", delta = message.GetProperty("delta").GetString(), itemId = message.GetProperty("item_id").GetString() });
+                        await Client(new { type = "audio", delta = message.GetProperty("delta").GetString(), itemId = message.GetProperty("item_id").GetString() }, fence);
                     }
                     else if (type == "error")
                     {
@@ -206,15 +237,15 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                 while (!timeout.IsCancellationRequested && client.State == WebSocketState.Open)
                 {
                     var message = await ReadAsync(client, 70000, inputStop.Token); var type = message.GetProperty("type").GetString();
-                    if (type == "heartbeat") { lease = await ownership.RenewAsync(lease, timeout.Token); await Client(new { type = "lease", fence = lease.Fence, leaseSeconds = 15, sequence = message.GetProperty("sequence").GetInt64() }); }
+                    if (type == "heartbeat") { var renewed = await ownership.RenewAsync(lease, timeout.Token); await Client(new { type = "lease", fence = renewed.Fence, leaseSeconds = 15, sequence = message.GetProperty("sequence").GetInt64() }); }
                     else if (type == "audio")
                     {
-                        Guard.Require(ready && await ownership.CurrentAsync(lease, timeout.Token), 409, "Voice session is not ready or its lease expired.");
+                        Guard.Require(Volatile.Read(ref ready), 409, "Voice session is not ready.");
                         var audio = message.GetProperty("audio").GetString()!; var pcm = Convert.FromBase64String(audio);
                         Guard.Require(pcm.Length is > 0 and <= 24000 && pcm.Length % 2 == 0, 400, "PCM chunks must be aligned mono 24kHz samples.");
                         bytes += pcm.Length;
                         Guard.Require(bytes <= 2_880_000 && bytes <= 48000 * (clock.GetElapsedTime(started).TotalSeconds + 2), 429, "Voice input exceeded its real-time window.");
-                        await Provider(new { type = "input_audio_buffer.append", audio });
+                        await Provider(new { type = "input_audio_buffer.append", audio }, requireAudio: true);
                     }
                     else if (type == "interrupt")
                     {
@@ -237,13 +268,24 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             pumps.Add(downstream);
             var expiry = Task.Delay(TimeSpan.FromSeconds(60), timeout.Token);
             var paidPauseRequested = 0;
-            var leaseMonitor = Task.Run(async () => { while (!timeout.IsCancellationRequested) { await Task.Delay(1000, timeout.Token);
-                if (await runtime.ReadPaidAiPausedAsync(timeout.Token)) { Interlocked.Exchange(ref paidPauseRequested, 1); return; }
-                Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio ownership expired."); } }, timeout.Token);
+            async Task MonitorLeaseAsync()
+            {
+                using var timer = new PeriodicTimer(LiveAudioFence.RefreshInterval, clock);
+                while (await timer.WaitForNextTickAsync(timeout.Token))
+                {
+                    if (await runtime.ReadPaidAiPausedAsync(timeout.Token))
+                    {
+                        Interlocked.Exchange(ref paidPauseRequested, 1);
+                        return;
+                    }
+                    Guard.Require(await fence.RefreshAsync(timeout.Token), 409, "Audio ownership expired.");
+                }
+            }
+            var leaseMonitor = MonitorLeaseAsync();
             pumps.Add(leaseMonitor);
             var finished = await Task.WhenAny(upstream, downstream, expiry, leaseMonitor);
             if (finished != expiry) await finished;
-            ending = true; await inputStop.CancelAsync();
+            Volatile.Write(ref ending, true); await inputStop.CancelAsync();
             try { await downstream; } catch (OperationCanceledException) when (inputStop.IsCancellationRequested) { }
             // Drain a provider acknowledgement before settling: queued input cannot create an
             // unaccounted response after this barrier. Missing acknowledgements retain the bound.

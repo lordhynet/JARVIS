@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Jarvis.Persistence;
 
-public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> factory) : IPrivacyStore
+public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges audioChanges) : IPrivacyStore
 {
     public async Task<PrivacyStatus> StatusAsync(CancellationToken ct = default)
     {
@@ -76,7 +76,9 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         control.Epoch = checked(control.Epoch + 1); control.Revision++; control.Erased = true; control.ErasedAt = now;
         control.ErasureRequestId = request.RequestId; control.ErasureKeyFingerprint = keyFingerprint;
         db.PrivacyJobs.Add(new() { Id = request.RequestId, Kind = "erasure", Fingerprint = PrivacyData.Hash("erasure:" + control.Epoch), CompletedAt = now, CountsJson = JsonSerializer.Serialize(counts) });
-        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return control.Status();
+        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+        audioChanges.LeaseChanged(state.AudioLease, null);
+        return control.Status();
     }
     public async Task<PrivacyStatus> ReopenAsync(ReopenCoreRequest request, string keyFingerprint, CancellationToken ct = default)
     {

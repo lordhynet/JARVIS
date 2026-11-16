@@ -25,6 +25,7 @@ public sealed class RealtimeProtocolTests
         private int responses;
         private Guid captured;
         public readonly Channel<JsonElement> ToolOutputs = Channel.CreateUnbounded<JsonElement>();
+        public readonly Channel<bool> AudioUploads = Channel.CreateUnbounded<bool>();
         public readonly TaskCompletionSource Idle = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<WebSocket> ConnectAsync(string model, CancellationToken ct) { Connections++; return Task.FromResult<WebSocket>(this); }
         public override WebSocketCloseStatus? CloseStatus => null;
@@ -36,6 +37,7 @@ public sealed class RealtimeProtocolTests
         public override Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken ct) { Abort(); return Task.CompletedTask; }
         public override Task CloseOutputAsync(WebSocketCloseStatus status, string? description, CancellationToken ct) => CloseAsync(status, description, ct);
         private void Queue(object value) => incoming.Writer.TryWrite(JsonSerializer.SerializeToUtf8Bytes(value));
+        public void EmitAudioFrame() => Queue(new { type = "response.output_audio.delta", delta = "AAA=", item_id = "audio-test" });
         public void Answer() {
             Queue(new { type = "conversation.item.input_audio_transcription.completed", item_id = "user-answer", transcript = "I would start by identifying the transaction boundary." });
             Queue(new { type = "input_audio_buffer.speech_stopped", item_id = "user-answer", audio_end_ms = 3000 });
@@ -67,8 +69,8 @@ public sealed class RealtimeProtocolTests
                     }
                     Queue(new { type = "response.created", response = new { id = "response-test" } });
                     if (EmitAudio) {
-                        Queue(new { type = "response.output_audio.delta", delta = "AAA=", item_id = "audio-test" });
-                        Queue(new { type = "response.output_audio.delta", delta = "AAA=", item_id = "audio-test" });
+                        EmitAudioFrame();
+                        EmitAudioFrame();
                     }
                     Queue(new { type = "response.output_audio_transcript.done", item_id = "item-test", transcript = "Explain one concrete decision." });
                     Queue(new { type = "response.done", response = new { id = "response-test", usage = new { input_tokens = 10, output_tokens = 10 } } }); break;
@@ -82,6 +84,7 @@ public sealed class RealtimeProtocolTests
                     }
                     break;
                 case "input_audio_buffer.clear": Queue(new { type = "input_audio_buffer.cleared" }); break;
+                case "input_audio_buffer.append": AudioUploads.Writer.TryWrite(true); break;
             }
             return Task.CompletedTask;
         }
@@ -92,6 +95,38 @@ public sealed class RealtimeProtocolTests
         }
     }
     private static Task Send(WebSocket socket, object data, CancellationToken ct) => socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(data), WebSocketMessageType.Text, true, ct);
+
+    [Fact]
+    public async Task Rotated_device_credential_stops_live_audio_forwarding()
+    {
+        using var factory = new ProviderFactory(_ => throw new InvalidOperationException("No HTTP provider call expected."));
+        var provider = new ProviderSocket();
+        using var host = factory.WithWebHostBuilder(builder => builder.ConfigureServices(s => s.AddSingleton<IRealtimeConnectionFactory>(provider)));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var devices = host.Services.GetRequiredService<DeviceService>();
+        var credentials = host.Services.GetRequiredService<DeviceCredentials>();
+        const string deviceId = "revoked-phone";
+        var id = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        await devices.RegisterAsync(new(deviceId, "Fixture phone", DeviceKind.AndroidCompanion, new(true, true, false, false, [])), timeout.Token);
+        await devices.VerifyAsync(deviceId, timeout.Token);
+        await credentials.IssueAsync(deviceId, timeout.Token);
+        await host.Services.GetRequiredService<ISessionStore>().AddAsync(new(id, ActivityType.General, "Voice fixture", SessionStatus.Active, deviceId, null, now, now, []), timeout.Token);
+        var ticket = await host.Services.GetRequiredService<AudioOwnership>().StartAsync(new(id, deviceId, true), timeout.Token);
+        using var socket = await host.Server.CreateWebSocketClient().ConnectAsync(new("ws://localhost/voice-stream"), timeout.Token);
+        await Send(socket, new { type = "authenticate", ticket = ticket.Ticket }, timeout.Token);
+        Assert.Equal("ready", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+        await Send(socket, new { type = "audio", audio = "AAA=" }, timeout.Token);
+        Assert.True(await provider.AudioUploads.Reader.ReadAsync(timeout.Token));
+        provider.EmitAudioFrame();
+        Assert.Equal("audio", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+
+        await credentials.IssueAsync(deviceId, timeout.Token);
+        provider.EmitAudioFrame();
+        var error = await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token);
+        Assert.Equal("error", error.GetProperty("type").GetString());
+        Assert.Contains("expir", error.GetProperty("detail").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
 
     [Fact]
     public async Task Voice_stream_rejects_authentication_without_a_ticket_before_provider_dispatch()

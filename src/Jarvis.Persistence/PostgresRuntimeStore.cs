@@ -9,7 +9,7 @@ namespace Jarvis.Persistence;
 
 // A single JSON document is deliberately simple for a personal assistant. The database
 // lock, not a process semaphore, coordinates multiple hosts. Split hot tables as needed.
-public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> factory) : IRuntimeStore
+public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges? audioChanges = null) : IRuntimeStore
 {
     public async Task<AudioLease?> ReadAudioLeaseAsync(CancellationToken ct = default)
     {
@@ -117,6 +117,7 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         CoreTelemetry.RuntimeBytes.Record(System.Text.Encoding.UTF8.GetByteCount(row.Json));
         var state = JsonSerializer.Deserialize<RuntimeState>(row.Json)!;
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.deserialize");
+        var previousLease = state.AudioLease;
         var before = JsonSerializer.Serialize(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.serialize_before");
         var result = update(state);
@@ -127,6 +128,7 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         else CoreTelemetry.RuntimeNoOpWrites.Add(1);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.save");
         await tx.CommitAsync(ct);
+        audioChanges?.LeaseChanged(previousLease, state.AudioLease);
         CoreTelemetry.RecordStoragePhase(phase, "runtime.update.commit");
         return result;
     }

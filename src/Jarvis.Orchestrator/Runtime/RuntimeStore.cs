@@ -93,11 +93,19 @@ public interface IRuntimeStore : IRuntimeReader
         UpdateAsync(s => Jarvis.Orchestrator.Workflows.UsageAccounting.Settle(s, id, actual, input, output), ct);
 }
 
-public sealed class InMemoryRuntimeStore : IRuntimeStore
+public sealed class InMemoryRuntimeStore(AudioFenceChanges? audioChanges = null) : IRuntimeStore
 {
     private readonly object _gate = new();
     private RuntimeState _state = new();
-    public void ReplacePrivacyData(RuntimeState state) { lock (_gate) _state = Copy(state); }
+    public void ReplacePrivacyData(RuntimeState state)
+    {
+        lock (_gate)
+        {
+            var previousLease = _state.AudioLease;
+            _state = Copy(state);
+            audioChanges?.LeaseChanged(previousLease, _state.AudioLease);
+        }
+    }
     private static RuntimeState Copy(RuntimeState state) =>
         JsonSerializer.Deserialize<RuntimeState>(JsonSerializer.Serialize(state))!;
 
@@ -114,9 +122,11 @@ public sealed class InMemoryRuntimeStore : IRuntimeStore
         ct.ThrowIfCancellationRequested();
         lock (_gate)
         {
+            var previousLease = _state.AudioLease;
             var copy = Copy(_state);
             var result = update(copy);
             _state = Copy(copy);
+            audioChanges?.LeaseChanged(previousLease, _state.AudioLease);
             return Task.FromResult(result);
         }
     }

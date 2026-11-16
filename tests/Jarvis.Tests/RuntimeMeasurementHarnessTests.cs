@@ -38,6 +38,7 @@ public sealed class RuntimeMeasurementHarnessTests
     private const int AgentRunCount = 500;
     private const int RuntimeTranscriptCount = 700;
     private const int VoiceProfileSamples = 200;
+    private const int FrameChecksPerSample = 1_000;
 
     [RuntimeMeasurementFact]
     public async Task Generate_synthetic_dataset_and_measure_runtime_hot_paths()
@@ -236,6 +237,15 @@ public sealed class RuntimeMeasurementHarnessTests
             Assert.True(await audio.CurrentAsync(lease, default));
             return true;
         });
+        var clock = services.GetRequiredService<TimeProvider>();
+        using var frameFence = new LiveAudioFence(lease, audio, services.GetRequiredService<AudioFenceChanges>(), clock);
+        Assert.True(await frameFence.RefreshAsync(default));
+        var frameChecks = await ProfileAsync(statsConnection, () =>
+        {
+            for (var frame = 0; frame < FrameChecksPerSample; frame++)
+                if (!frameFence.IsCurrent()) throw new InvalidOperationException("The benchmark frame lease expired.");
+            return Task.FromResult(true);
+        }, requireNoQueries: true);
         await audio.ReleaseAsync(lease, default);
         var prepare = await ProfileAsync(statsConnection, () => companion.PrepareAsync(new(Guid.NewGuid(), deviceId, true), default));
         var update = await ProfileAsync(statsConnection, UpdateAsync);
@@ -248,12 +258,13 @@ public sealed class RuntimeMeasurementHarnessTests
                 learningCards = LearningCount, agentRuns = AgentRunCount, voiceTurns = RuntimeTranscriptCount },
             runtimeDocumentBytes = documentBytes,
             currentAsync = current,
+            cachedFrameChecks = new { checksPerSample = FrameChecksPerSample, profile = frameChecks },
             companionPrepare = prepare,
             runtimeUpdate = update
         });
     }
 
-    private static async Task<object> ProfileAsync<T>(NpgsqlConnection connection, Func<Task<T>> operation)
+    private static async Task<object> ProfileAsync<T>(NpgsqlConnection connection, Func<Task<T>> operation, bool requireNoQueries = false)
     {
         await MeasureAsync(5, operation);
         var before = await QueryStatsAsync(connection);
@@ -281,6 +292,7 @@ public sealed class RuntimeMeasurementHarnessTests
             .OrderByDescending(stat => stat.totalExecMs)
             .Select(stat => new { stat.Query, stat.calls, stat.totalExecMs, meanExecMs = Math.Round(stat.totalExecMs / stat.calls, 3) })
             .ToArray();
+        if (requireNoQueries) Assert.Empty(queries);
         return new { totalMs = Summary(total), phasesMs = timings.ToDictionary(x => x.Key, x => Summary(x.Value.ToArray())), queries };
     }
 

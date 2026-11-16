@@ -661,3 +661,9 @@ Fresh verification: `dotnet test Jarvis.sln --no-restore` with disposable Postgr
 Added phase timing for Core's PostgreSQL storage paths and an opt-in profile with 200 samples each for lease validation, companion preparation and runtime writes. In the follow-up profile, narrow device and lease queries eliminated 800 full runtime reads across 200 preparations. The candidate query counts messages directly from stored JSON text. Median preparation decreased from 3.00 s to 1.27 s on the same synthetic workload. [Performance results](PERFORMANCE.md) include p95 timings and workstation conditions.
 
 Both `scripts/measure-runtime.ps1 -VoiceProfile` runs passed 1/1 on disposable PostgreSQL 17 databases. The focused backend run passed 44/44 tests covering companion preparation and handoff, audio drain, device authorization, realtime protocols, transcript repair and PostgreSQL projections. Both disposable containers were stopped after verification.
+
+## Round 4 — realtime audio lease snapshot
+
+Realtime input and output check a per-connection lease snapshot at forwarding time. Core refreshes it every 500 ms and limits freshness to one second. Committed lease changes, session ownership loss and erasure invalidate the matching snapshot on the same Core process. Other processes use the authoritative refresh and freshness limit. Provider setup and Core tool dispatch retain direct checks.
+
+Focused validation passed 55/55 tests with disposable PostgreSQL 17. Coverage includes credential rotation on an active fake-provider WebSocket, PostgreSQL invalidation, authoritative expiry, and a refresh racing with revocation. `scripts/measure-runtime.ps1 -VoiceProfile` passed 1/1 and verified zero SQL statements across 200,000 cached checks. The disposable container stopped after verification.
