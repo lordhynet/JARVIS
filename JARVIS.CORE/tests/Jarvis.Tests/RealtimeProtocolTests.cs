@@ -17,16 +17,19 @@ public sealed class RealtimeProtocolTests
 {
     private sealed class ProviderSocket : WebSocket, IRealtimeConnectionFactory
     {
-        private readonly Channel<byte[]> incoming = Channel.CreateUnbounded<byte[]>();
+        private readonly Channel<(byte[] Bytes, bool CompletesUsage)> incoming =
+            Channel.CreateUnbounded<(byte[], bool)>();
         public readonly List<JsonElement> Sent = [];
         private WebSocketState state = WebSocketState.Open;
         public int Connections;
         public bool ToolScenario, CancelTool, Coaching, EmitAudio;
         private int responses;
         private Guid captured;
+        private bool usageDelivered;
         public readonly Channel<JsonElement> ToolOutputs = Channel.CreateUnbounded<JsonElement>();
         public readonly Channel<bool> AudioUploads = Channel.CreateUnbounded<bool>();
         public readonly TaskCompletionSource Idle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource UsageProcessed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<WebSocket> ConnectAsync(string model, CancellationToken ct) { Connections++; return Task.FromResult<WebSocket>(this); }
         public override WebSocketCloseStatus? CloseStatus => null;
         public override string? CloseStatusDescription => null;
@@ -36,7 +39,8 @@ public sealed class RealtimeProtocolTests
         public override void Dispose() => Abort();
         public override Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken ct) { Abort(); return Task.CompletedTask; }
         public override Task CloseOutputAsync(WebSocketCloseStatus status, string? description, CancellationToken ct) => CloseAsync(status, description, ct);
-        private void Queue(object value) => incoming.Writer.TryWrite(JsonSerializer.SerializeToUtf8Bytes(value));
+        private void Queue(object value, bool completesUsage = false) =>
+            incoming.Writer.TryWrite((JsonSerializer.SerializeToUtf8Bytes(value), completesUsage));
         public void EmitAudioFrame() => Queue(new { type = "response.output_audio.delta", delta = "AAA=", item_id = "audio-test" });
         public void Answer() {
             Queue(new { type = "conversation.item.input_audio_transcription.completed", item_id = "user-answer", transcript = "I would start by identifying the transaction boundary." });
@@ -50,7 +54,9 @@ public sealed class RealtimeProtocolTests
             if (Coaching) name = "core_coaching";
             var done = new { type = "response.done", response = new { id = "response-" + responses, status = CancelTool ? "cancelled" : "completed",
                 output = new[] { new { type = "function_call", call_id = "call-" + responses, name, arguments = args } }, usage = new { input_tokens = 10, output_tokens = 10 } } };
-            Queue(done); Queue(done); // Duplicate terminal events must never repeat an action or its follow-up.
+            // Duplicate terminal events must never repeat an action or its follow-up.
+            Queue(done);
+            Queue(done, CancelTool);
             if (CancelTool) Idle.TrySetResult();
         }
         public override Task SendAsync(ArraySegment<byte> bytes, WebSocketMessageType type, bool end, CancellationToken ct)
@@ -64,7 +70,15 @@ public sealed class RealtimeProtocolTests
                         responses++; Queue(new { type = "response.created", response = new { id = "response-" + responses } });
                         if (responses == 1) Queue(new { type = "conversation.item.input_audio_transcription.completed", item_id = "user-start", transcript = Coaching ? "Please start point-first coaching." : "Please start a rapid technical drill." });
                         else if (responses == 3) Function("core_practice_answer");
-                        else { Queue(new { type = "response.done", response = new { id = "response-" + responses, status = "completed", output = Array.Empty<object>(), usage = new { input_tokens = 10, output_tokens = 10 } } }); Idle.TrySetResult(); }
+                        else
+                        {
+                            Queue(new
+                            {
+                                type = "response.done",
+                                response = new { id = "response-" + responses, status = "completed", output = Array.Empty<object>(), usage = new { input_tokens = 10, output_tokens = 10 } }
+                            }, responses == 4);
+                            Idle.TrySetResult();
+                        }
                         break;
                     }
                     Queue(new { type = "response.created", response = new { id = "response-test" } });
@@ -90,7 +104,11 @@ public sealed class RealtimeProtocolTests
         }
         public override async Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken ct)
         {
-            var bytes = await incoming.Reader.ReadAsync(ct); bytes.AsSpan().CopyTo(buffer.AsSpan());
+            // The serial provider pump asks for another frame after handling the previous one.
+            if (usageDelivered) UsageProcessed.TrySetResult();
+            var (bytes, completesUsage) = await incoming.Reader.ReadAsync(ct);
+            usageDelivered = completesUsage;
+            bytes.AsSpan().CopyTo(buffer.AsSpan());
             return new(bytes.Length, WebSocketMessageType.Text, true);
         }
     }
@@ -238,6 +256,7 @@ public sealed class RealtimeProtocolTests
             var saved = await provider.ToolOutputs.Reader.ReadAsync(timeout.Token); Assert.True(saved.GetProperty("ok").GetBoolean());
             Assert.Equal("I would start by identifying the transaction boundary.", saved.GetProperty("result").GetProperty("capturedAnswer").GetString());
         }
+        await provider.UsageProcessed.Task.WaitAsync(timeout.Token);
         await Send(socket, new { type = "heartbeat", sequence = 1 }, timeout.Token);
         Assert.Equal("lease", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
         await Send(socket, new { type = "stop" }, timeout.Token);
