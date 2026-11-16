@@ -72,8 +72,18 @@ public sealed record HubAccessTicket(string KeyFingerprint, long Epoch, DateTime
 public interface IRuntimeReader
 {
     Task<AudioLease?> ReadAudioLeaseAsync(CancellationToken ct = default) => ReadAsync(s => s.AudioLease, ct);
+    Task<AudioLeaseState> ReadAudioLeaseStateAsync(CancellationToken ct = default) =>
+        ReadAsync(s => new AudioLeaseState(s.AudioLease, s.AudioDrainUntil), ct);
+    Task<RegisteredDevice?> ReadRegisteredDeviceAsync(string id, CancellationToken ct = default) =>
+        ReadAsync(s => s.Devices.GetValueOrDefault(id), ct);
     Task<bool> ReadPaidAiPausedAsync(CancellationToken ct = default) => ReadAsync(s => s.AgentControls.EffectivePaidAiPaused, ct);
     Task<T> ReadAsync<T>(Func<RuntimeState, T> read, CancellationToken ct = default);
+}
+
+public readonly record struct AudioLeaseState(AudioLease? Lease, DateTimeOffset? DrainUntil)
+{
+    public bool IsAvailable(DateTimeOffset now) =>
+        (Lease is null || Lease.ExpiresAt <= now) && (DrainUntil is null || DrainUntil <= now);
 }
 
 public interface IRuntimeStore : IRuntimeReader

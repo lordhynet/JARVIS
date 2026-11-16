@@ -21,18 +21,38 @@ public sealed partial class PostgresSessionTests
         Assert.Equal(before, await Version());
         var session = await CreateSession(client); var lease = new AudioLease(session.Id, "fixture", 12345, DateTimeOffset.UtcNow.AddMinutes(1));
         var sessions = host.Services.GetRequiredService<ISessionStore>();
-        session = await sessions.UpdateAsync(session.Id, current => current with { ActiveDeviceId = "fixture" })
+        session = await sessions.UpdateAsync(session.Id, current => current with
+        {
+            ActiveDeviceId = "fixture",
+            Messages = [new(Guid.NewGuid(), "user", "Synthetic transcript with [brackets].", DateTimeOffset.UtcNow)]
+        })
             ?? throw new InvalidOperationException("The test session disappeared during update.");
         var now = DateTimeOffset.UtcNow;
+        Assert.True((await state.ReadAudioLeaseStateAsync()).IsAvailable(now));
+        Assert.Null(await state.ReadRegisteredDeviceAsync("fixture"));
+        var devices = host.Services.GetRequiredService<DeviceService>();
+        await devices.RegisterAsync(new("fixture", "Fixture companion", DeviceKind.AndroidCompanion, new(true, true, false, false, [])));
+        await devices.VerifyAsync("fixture");
+        Assert.Equal("fixture", (await devices.RequireOnlineAsync("fixture", true, default)).Registration.DeviceId);
         await sessions.AddAsync(new(Guid.NewGuid(), ActivityType.General, "unrelated", SessionStatus.Active,
             "other-device", null, now, now, []));
         await state.UpdateAsync(s => { s.AudioLease = lease; return true; });
         Assert.Equal(lease, await state.ReadAudioLeaseAsync());
+        var active = await state.ReadAudioLeaseStateAsync();
+        Assert.Equal(lease, active.Lease);
+        Assert.False(active.IsAvailable(now));
+        Assert.True(active.IsAvailable(lease.ExpiresAt));
+        await state.UpdateAsync(s => { AudioFencing.Revoke(s); return true; });
+        var drain = await state.ReadAudioLeaseStateAsync();
+        Assert.Null(drain.Lease);
+        Assert.Equal(lease.ExpiresAt, drain.DrainUntil);
+        Assert.False(drain.IsAvailable(now));
+        Assert.True(drain.IsAvailable(lease.ExpiresAt));
         var projection = await host.Services.GetRequiredService<ISessionReader>().ReadAudioStateAsync(session.Id);
         Assert.Equal(session.Status, projection!.Status); Assert.Equal(session.ActiveDeviceId, projection.ActiveDeviceId);
         var reader = host.Services.GetRequiredService<ISessionReader>();
         var summary = Assert.Single(await reader.ListPreparationAsync("fixture", Guid.NewGuid()));
-        Assert.Equal(session.Id, summary.Id); Assert.Equal(0, summary.MessageCount);
+        Assert.Equal(session.Id, summary.Id); Assert.Equal(1, summary.MessageCount);
         Assert.Null(await reader.ReadHandoffAsync(session.Id));
     }
 }

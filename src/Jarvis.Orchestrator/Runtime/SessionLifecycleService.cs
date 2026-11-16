@@ -18,8 +18,9 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
     public async Task<ConversationSession> ClaimAsync(Guid id, string deviceId, CancellationToken ct)
     {
         await devices.RequireOnlineAsync(deviceId, false, ct);
-        Guard.Require(await runtime.ReadAsync(s => s.AudioLease is null || s.AudioLease.ExpiresAt <= clock.GetUtcNow() ||
-            s.AudioLease.SessionId == id && s.AudioLease.DeviceId == deviceId, ct), 409, "Another session has an active audio lease.");
+        var lease = await runtime.ReadAudioLeaseAsync(ct);
+        Guard.Require(lease is null || lease.ExpiresAt <= clock.GetUtcNow() ||
+            lease.SessionId == id && lease.DeviceId == deviceId, 409, "Another session has an active audio lease.");
         return await Change(id, s =>
         {
             Guard.Require(s.Status == SessionStatus.Active, 409, "Session must be active.");

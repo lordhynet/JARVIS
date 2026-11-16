@@ -14,6 +14,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 
 namespace Jarvis.Tests;
@@ -36,6 +37,7 @@ public sealed class RuntimeMeasurementHarnessTests
     private const int LearningCount = 2_000;
     private const int AgentRunCount = 500;
     private const int RuntimeTranscriptCount = 700;
+    private const int VoiceProfileSamples = 200;
 
     [RuntimeMeasurementFact]
     public async Task Generate_synthetic_dataset_and_measure_runtime_hot_paths()
@@ -51,13 +53,23 @@ public sealed class RuntimeMeasurementHarnessTests
             await using var command = new NpgsqlCommand($"CREATE DATABASE \"{databaseName}\"", connection);
             await command.ExecuteNonQueryAsync();
         }
-        var databaseConnection = new NpgsqlConnectionStringBuilder(admin.ConnectionString) { Database = databaseName, Pooling = false }.ConnectionString;
+        var voiceProfile = Environment.GetEnvironmentVariable("JARVIS_PERF_VOICE_PROFILE") == "1";
+        var databaseConnection = new NpgsqlConnectionStringBuilder(admin.ConnectionString)
+        {
+            Database = databaseName,
+            Pooling = voiceProfile
+        };
         try
         {
-            await MeasureDatabaseAsync(databaseConnection, outputPath);
+            await MeasureDatabaseAsync(databaseConnection.ConnectionString, outputPath, voiceProfile);
         }
         finally
         {
+            if (voiceProfile)
+            {
+                using var pooled = new NpgsqlConnection(databaseConnection.ConnectionString);
+                NpgsqlConnection.ClearPool(pooled);
+            }
             await using var connection = new NpgsqlConnection(admin.ConnectionString);
             await connection.OpenAsync();
             await using var command = new NpgsqlCommand($"DROP DATABASE \"{databaseName}\" WITH (FORCE)", connection);
@@ -65,10 +77,10 @@ public sealed class RuntimeMeasurementHarnessTests
         }
     }
 
-    private static async Task MeasureDatabaseAsync(string connection, string outputPath)
+    private static async Task MeasureDatabaseAsync(string connection, string outputPath, bool voiceProfile)
     {
         var sql = new SqlCallCounter();
-        using var host = new MeasurementApiFactory(connection, sql);
+        using var host = new MeasurementApiFactory(connection, sql, voiceProfile);
         using var client = host.CreateClient(); // Starts the isolated API and applies its migrations.
         var services = host.Services;
         var runtime = services.GetRequiredService<IRuntimeStore>();
@@ -132,6 +144,11 @@ public sealed class RuntimeMeasurementHarnessTests
         }
 
         var documentBytes = await ReadRuntimeDocumentBytesAsync(services.GetRequiredService<IDbContextFactory<SessionDbContext>>());
+        if (voiceProfile)
+        {
+            await ProfileVoiceAsync(connection, outputPath, documentBytes, services, syntheticSessions[0].Id, deviceId);
+            return;
+        }
         using var meter = new RuntimeMetricCapture();
         meter.Start();
         var lockSampleStart = meter.LockWaits.Count;
@@ -192,10 +209,106 @@ public sealed class RuntimeMeasurementHarnessTests
             idleWorkerDbCallsPerMinute = Math.Round(idleCalls * 60.0 / idleSeconds, 2),
             idleWorkerObservationSeconds = Math.Round(idleSeconds, 2)
         };
+        await WriteReportAsync(outputPath, report);
+    }
+
+    private static async Task ProfileVoiceAsync(string connection, string outputPath, long documentBytes,
+        IServiceProvider services, Guid sessionId, string deviceId)
+    {
+        await using var statsConnection = new NpgsqlConnection(connection);
+        await statsConnection.OpenAsync();
+        await using (var enableStats = new NpgsqlCommand("CREATE EXTENSION pg_stat_statements", statsConnection))
+            await enableStats.ExecuteNonQueryAsync();
+
+        var runtime = services.GetRequiredService<IRuntimeStore>();
+        var audio = services.GetRequiredService<AudioOwnership>();
+        var companion = services.GetRequiredService<CompanionVoiceService>();
+
+        Task<bool> UpdateAsync() => runtime.UpdateAsync(state =>
+        {
+            state.AgentControls = state.AgentControls with { PaidAiPaused = state.AgentControls.PaidAiPaused != true };
+            return true;
+        });
+
+        var lease = await audio.StartLocalAsync(sessionId, deviceId, default);
+        var current = await ProfileAsync(statsConnection, async () =>
+        {
+            Assert.True(await audio.CurrentAsync(lease, default));
+            return true;
+        });
+        await audio.ReleaseAsync(lease, default);
+        var prepare = await ProfileAsync(statsConnection, () => companion.PrepareAsync(new(Guid.NewGuid(), deviceId, true), default));
+        var update = await ProfileAsync(statsConnection, UpdateAsync);
+
+        await WriteReportAsync(outputPath, new
+        {
+            generatedAtUtc = DateTimeOffset.UtcNow,
+            workload = "Pooled PostgreSQL, serial calls, no Core background workers",
+            dataset = new { sessions = SessionCount, messagesPerSession = MessagesPerSession,
+                learningCards = LearningCount, agentRuns = AgentRunCount, voiceTurns = RuntimeTranscriptCount },
+            runtimeDocumentBytes = documentBytes,
+            currentAsync = current,
+            companionPrepare = prepare,
+            runtimeUpdate = update
+        });
+    }
+
+    private static async Task<object> ProfileAsync<T>(NpgsqlConnection connection, Func<Task<T>> operation)
+    {
+        await MeasureAsync(5, operation);
+        var before = await QueryStatsAsync(connection);
+        using var phases = new MeterListener();
+        var timings = new Dictionary<string, List<double>>();
+        phases.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument == CoreTelemetry.StoragePhaseDuration) listener.EnableMeasurementEvents(instrument);
+        };
+        phases.SetMeasurementEventCallback<double>((_, seconds, tags, _) =>
+        {
+            var phase = (string)tags[0].Value!;
+            if (!timings.TryGetValue(phase, out var values)) timings.Add(phase, values = []);
+            values.Add(seconds * 1000);
+        });
+        phases.Start();
+        var total = await MeasureAsync(VoiceProfileSamples, operation);
+        var after = await QueryStatsAsync(connection);
+        var queries = after.Values.Select(stat =>
+        {
+            before.TryGetValue(stat.QueryId, out var prior);
+            return new { stat.Query, calls = stat.Calls - (prior?.Calls ?? 0),
+                totalExecMs = Math.Round(stat.ExecMs - (prior?.ExecMs ?? 0), 3) };
+        }).Where(stat => stat.calls > 0)
+            .OrderByDescending(stat => stat.totalExecMs)
+            .Select(stat => new { stat.Query, stat.calls, stat.totalExecMs, meanExecMs = Math.Round(stat.totalExecMs / stat.calls, 3) })
+            .ToArray();
+        return new { totalMs = Summary(total), phasesMs = timings.ToDictionary(x => x.Key, x => Summary(x.Value.ToArray())), queries };
+    }
+
+    private sealed record QueryStat(long QueryId, string Query, long Calls, double ExecMs);
+
+    private static async Task<Dictionary<long, QueryStat>> QueryStatsAsync(NpgsqlConnection connection)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT queryid, query, calls, total_exec_time
+            FROM pg_stat_statements
+            WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+              AND toplevel AND queryid IS NOT NULL AND query NOT LIKE '%FROM pg_stat_statements%'
+            """, connection);
+        await using var rows = await command.ExecuteReaderAsync();
+        var result = new Dictionary<long, QueryStat>();
+        while (await rows.ReadAsync())
+        {
+            var stat = new QueryStat(rows.GetInt64(0), rows.GetString(1), rows.GetInt64(2), rows.GetDouble(3));
+            result[stat.QueryId] = stat;
+        }
+        return result;
+    }
+
+    private static async Task WriteReportAsync(string outputPath, object report)
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"Performance report written: {outputPath}");
-        Console.WriteLine(JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private static bool IsLoopback(string host) => string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
@@ -284,7 +397,13 @@ public sealed class RuntimeMeasurementHarnessTests
         public Task<SessionDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(new SessionDbContext(options));
     }
 
-    private sealed class MeasurementApiFactory(string connection, SqlCallCounter counter) : WebApplicationFactory<Program>
+    private sealed class ProfileClock : TimeProvider
+    {
+        private readonly DateTimeOffset now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class MeasurementApiFactory(string connection, SqlCallCounter counter, bool voiceProfile) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -298,6 +417,12 @@ public sealed class RuntimeMeasurementHarnessTests
                 services.RemoveAll<IDbContextFactory<SessionDbContext>>();
                 services.AddSingleton(counter);
                 services.AddSingleton<IDbContextFactory<SessionDbContext>>(_ => new CountingContextFactory(connection, counter));
+                if (voiceProfile)
+                {
+                    services.RemoveAll<IHostedService>();
+                    services.RemoveAll<TimeProvider>();
+                    services.AddSingleton<TimeProvider, ProfileClock>();
+                }
             });
         }
     }

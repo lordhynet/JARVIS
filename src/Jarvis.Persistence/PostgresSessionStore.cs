@@ -1,6 +1,8 @@
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
 using Microsoft.EntityFrameworkCore;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace Jarvis.Persistence;
@@ -23,21 +25,23 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         => await ListPreparationCoreAsync(deviceId, preferredCheckpointId, ct);
     private async Task<IReadOnlyList<SessionPreparationState>> ListPreparationCoreAsync(string? deviceId, Guid? preferredCheckpointId, CancellationToken ct)
     {
+        var phase = Stopwatch.GetTimestamp();
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
-        // Count JSON array entries in PostgreSQL; never transfer transcript contents for selection.
+        phase = CoreTelemetry.RecordStoragePhase(phase, "session.preparation.begin_and_gate");
+        // Count entries from the stored JSON text without constructing a binary JSON document.
         List<PreparationRow> rows;
         if (deviceId is null)
             rows = await db.Database.SqlQueryRaw<PreparationRow>("""
             SELECT s."Id", s."Status", s."ActiveDeviceId", s."Title", s."UpdatedAt", s."HandoffJson",
-                jsonb_array_length(s."MessagesJson"::jsonb) AS "MessageCount"
+                json_array_length(s."MessagesJson"::json) AS "MessageCount"
             FROM "Sessions" s
             """).ToListAsync(ct);
         else
             rows = await db.Database.SqlQuery<PreparationRow>($"""
                 SELECT s."Id", s."Status", s."ActiveDeviceId", s."Title", s."UpdatedAt", s."HandoffJson",
-                    jsonb_array_length(s."MessagesJson"::jsonb) AS "MessageCount"
+                    json_array_length(s."MessagesJson"::json) AS "MessageCount"
                 FROM "Sessions" s
                 WHERE s."Id" = {preferredCheckpointId}
                    OR EXISTS (SELECT 1 FROM "Checkpoints" c WHERE c."SessionId" = s."Id" AND c."Id" = {preferredCheckpointId})
@@ -46,13 +50,17 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
                    OR (s."Status" = {(int)SessionStatus.Active} AND s."HandoffJson" IS NOT NULL
                        AND s."HandoffJson"::jsonb ->> 'ToDeviceId' = {deviceId})
                 """).ToListAsync(ct);
+        phase = CoreTelemetry.RecordStoragePhase(phase, "session.preparation.candidates");
         var sessionIds = rows.Select(s => s.Id).ToArray();
         var checkpoints = await db.Checkpoints.AsNoTracking().Where(c => sessionIds.Contains(c.SessionId))
             .Select(c => new { c.Id, c.SessionId }).ToListAsync(ct);
+        phase = CoreTelemetry.RecordStoragePhase(phase, "session.preparation.checkpoints");
         await tx.CommitAsync(ct);
         var ids = checkpoints.ToLookup(c => c.SessionId, c => c.Id);
-        return rows.Select(s => new SessionPreparationState(s.Id, s.Status, s.ActiveDeviceId, s.Title, s.UpdatedAt,
+        var candidates = rows.Select(s => new SessionPreparationState(s.Id, s.Status, s.ActiveDeviceId, s.Title, s.UpdatedAt,
             s.HandoffJson is null ? null : JsonSerializer.Deserialize<SessionHandoff>(s.HandoffJson), ids[s.Id].ToArray(), s.MessageCount)).ToArray();
+        CoreTelemetry.RecordStoragePhase(phase, "session.preparation.commit_and_project");
+        return candidates;
     }
     private sealed class PreparationRow
     {
@@ -66,11 +74,18 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
     }
     public async Task<SessionAudioState?> ReadAudioStateAsync(Guid id, CancellationToken ct = default)
     {
+        var phase = Stopwatch.GetTimestamp();
         await using var db = await factory.CreateDbContextAsync(ct);
+        phase = CoreTelemetry.RecordStoragePhase(phase, "session.audio.context");
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        phase = CoreTelemetry.RecordStoragePhase(phase, "session.audio.begin");
         await PostgresPrivacyGate.LockAsync(db, ct);
+        phase = CoreTelemetry.RecordStoragePhase(phase, "session.audio.privacy_gate");
         var state = await db.Sessions.AsNoTracking().Where(s => s.Id == id).Select(s => new SessionAudioState(s.Status, s.ActiveDeviceId)).SingleOrDefaultAsync(ct);
-        await tx.CommitAsync(ct); return state;
+        phase = CoreTelemetry.RecordStoragePhase(phase, "session.audio.load");
+        await tx.CommitAsync(ct);
+        CoreTelemetry.RecordStoragePhase(phase, "session.audio.commit");
+        return state;
     }
     public async Task<ConversationSession> AddAsync(ConversationSession session, CancellationToken ct = default)
     {

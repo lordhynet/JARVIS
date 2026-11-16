@@ -24,4 +24,13 @@ public static class CoreTelemetry
     public static readonly Histogram<long> RuntimeBytes = Meter.CreateHistogram<long>("jarvis.runtime.bytes", "By");
     public static readonly Counter<long> RuntimeWrites = Meter.CreateCounter<long>("jarvis.runtime.writes");
     public static readonly Counter<long> RuntimeNoOpWrites = Meter.CreateCounter<long>("jarvis.runtime.no_op_writes");
+    public static readonly Histogram<double> StoragePhaseDuration = Meter.CreateHistogram<double>("jarvis.storage.phase.duration", "s");
+
+    public static long RecordStoragePhase(long started, string phase)
+    {
+        var now = Stopwatch.GetTimestamp();
+        if (StoragePhaseDuration.Enabled)
+            StoragePhaseDuration.Record(Stopwatch.GetElapsedTime(started, now).TotalSeconds, new KeyValuePair<string, object?>("phase", phase));
+        return now;
+    }
 }

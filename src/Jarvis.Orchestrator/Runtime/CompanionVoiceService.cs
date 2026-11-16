@@ -48,8 +48,8 @@ public sealed class CompanionVoiceService(ISessionStore sessions, DeviceService 
                     409, "Incoming handoff was cancelled or expired. Start again from the source device.");
                 transferred = await lifecycle.AdvanceAsync(targetId, "complete", new(handoff.Id, deviceId), ct);
             }
-            Guard.Require(await runtime.ReadAsync(s => (s.AudioLease is null || s.AudioLease.ExpiresAt <= clock.GetUtcNow()) &&
-                (s.AudioDrainUntil is null || s.AudioDrainUntil <= clock.GetUtcNow()), ct),
+            var audio = await runtime.ReadAudioLeaseStateAsync(ct);
+            Guard.Require(audio.IsAvailable(clock.GetUtcNow()),
                 409, "Another voice connection is active. Stop it before starting this one.");
             var all = candidates;
             var selected = all.FirstOrDefault(s => s.Id == id || s.CheckpointIds.Contains(id));

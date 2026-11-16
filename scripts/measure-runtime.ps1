@@ -1,4 +1,4 @@
-param()
+param([switch]$VoiceProfile)
 $ErrorActionPreference = 'Stop'
 
 $adminConnection = $env:JARVIS_PERF_TEST_POSTGRES
@@ -24,7 +24,9 @@ if (!$loopback -or $databaseName -ne 'postgres') {
 $root = Split-Path $PSScriptRoot -Parent
 $outputPath = Join-Path ([System.IO.Path]::GetTempPath()) "jarvis-runtime-measurement-$PID.json"
 $previousOutput = $env:JARVIS_PERF_OUTPUT
+$previousProfile = $env:JARVIS_PERF_VOICE_PROFILE
 $env:JARVIS_PERF_OUTPUT = $outputPath
+$env:JARVIS_PERF_VOICE_PROFILE = if ($VoiceProfile) { '1' } else { $null }
 Write-Output "Performance harness environment set: connection=$([bool]$env:JARVIS_PERF_TEST_POSTGRES), reportPath=$([bool]$env:JARVIS_PERF_OUTPUT)"
 Push-Location $root
 try {
@@ -39,5 +41,6 @@ try {
     Get-Content -LiteralPath $outputPath -Raw
 } finally {
     $env:JARVIS_PERF_OUTPUT = $previousOutput
+    $env:JARVIS_PERF_VOICE_PROFILE = $previousProfile
     Pop-Location
 }
