@@ -214,9 +214,9 @@ else
 var startedAt = DateTimeOffset.UtcNow;
 var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
 
-if (string.IsNullOrWhiteSpace(app.Configuration[ApiKeyMiddleware.ConfigKey]))
+if (string.IsNullOrWhiteSpace(app.Configuration[ConfigKeys.CoreApiKey]))
     app.Logger.LogWarning("No API key set. Protected endpoints will return 503. Configure {Key} in the private root appsettings.json.",
-        ApiKeyMiddleware.ConfigKey);
+        ConfigKeys.CoreApiKey);
 
 app.UseWebSockets();
 app.UseMiddleware<OperationsMiddleware>();

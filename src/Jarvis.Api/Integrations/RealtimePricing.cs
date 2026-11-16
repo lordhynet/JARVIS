@@ -10,14 +10,14 @@ public sealed record RealtimePricing(decimal AudioInput, decimal TextInput, deci
     public decimal MaxOutput => Math.Max(AudioOutput, TextOutput);
     public static RealtimePricing Read(IConfiguration config)
     {
-        decimal Rate(string key) => config.GetValue<decimal>("AI:Voice:" + key);
+        decimal Rate(string key) => config.GetValue<decimal>(ConfigKeys.VoiceProfile + key);
         var p = new RealtimePricing(Rate("AudioInputUsdPerMillion"), Rate("TextInputUsdPerMillion"),
             Rate("CachedAudioInputUsdPerMillion"), Rate("CachedTextInputUsdPerMillion"), Rate("AudioOutputUsdPerMillion"),
-            Rate("TextOutputUsdPerMillion"), Rate("TranscriptionUsdPerMinute"), config["AI:Voice:TranscriptionModel"] ?? "");
+            Rate("TextOutputUsdPerMillion"), Rate("TranscriptionUsdPerMinute"), config[ConfigKeys.VoiceProfile + "TranscriptionModel"] ?? "");
         Guard.Require(p.AudioInput >= p.TextInput && p.TextInput > 0 && p.AudioOutput >= p.TextOutput && p.TextOutput > 0 &&
             p.CachedAudioInput > 0 && p.CachedAudioInput <= p.AudioInput && p.CachedTextInput > 0 && p.CachedTextInput <= p.TextInput &&
             p.TranscriptionPerMinute > 0 && !string.IsNullOrWhiteSpace(p.TranscriptionModel) &&
-            config["AI:Voice:TranscriptionRateCardModel"] == p.TranscriptionModel, 503,
+            config[ConfigKeys.VoiceProfile + "TranscriptionRateCardModel"] == p.TranscriptionModel, 503,
             "Configure explicit realtime audio/text/cached rates and model-bound input transcription pricing.");
         return p;
     }

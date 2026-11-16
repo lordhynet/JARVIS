@@ -35,7 +35,7 @@ public sealed class SignalRSessionNotifier(IHubContext<StatusHub> hub, IPrivacyR
     {
         var status = await privacy.StatusAsync(ct);
         if (status.Erased || PrivacyContext.Epoch is long epoch && epoch != status.Epoch) return;
-        var key = config[ApiKeyMiddleware.ConfigKey]; if (string.IsNullOrWhiteSpace(key)) return;
+        var key = config[ConfigKeys.CoreApiKey]; if (string.IsNullOrWhiteSpace(key)) return;
         await hub.Clients.Group(StatusHub.Group(status.Epoch, PrivacyData.Hash(key))).SendAsync(HubMethods.SessionEvent, evt, ct);
     }
 }

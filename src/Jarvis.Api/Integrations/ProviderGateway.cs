@@ -13,8 +13,8 @@ public sealed class ProviderGateway(IHttpClientFactory clients, IConfiguration c
 {
     public IReadOnlyList<IntegrationStatus> Status() =>
     [
-        new("OpenAI", Has("OpenAI:ApiKey") && Has("OpenAI:Model"), "Conversation requires ApiKey and Model."),
-        new("Transcription", Has("OpenAI:ApiKey") && Has("OpenAI:TranscriptionModel"), "Recorded microphone audio is sent to OpenAI only on request."),
+        new("OpenAI", Has(ConfigKeys.OpenAiApiKey) && Has(ConfigKeys.OpenAiModel), "Conversation requires ApiKey and Model."),
+        new("Transcription", Has(ConfigKeys.OpenAiApiKey) && Has(ConfigKeys.OpenAiTranscriptionModel), "Recorded microphone audio is sent to OpenAI only on request."),
         new("HomeAssistant", Has("HomeAssistant:BaseUrl") && Has("HomeAssistant:Token"), "Actions require an allowed entity and explicit confirmation."),
         new("GoogleCalendar", Has("Calendar:Google:AccessToken"), "Read-only calendar access; provide a current OAuth access token."),
         new("MicrosoftCalendar", Has("Calendar:Microsoft:AccessToken"), "Read-only calendar access; provide a current OAuth access token."),

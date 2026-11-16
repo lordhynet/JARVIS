@@ -11,7 +11,6 @@ namespace Jarvis.Api.Security;
 /// </summary>
 public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config, ILogger<ApiKeyMiddleware> logger)
 {
-    public const string ConfigKey = "Jarvis:ApiKey";
     public const string FingerprintItem = "Jarvis.AuthFingerprint";
     public const string ActorItem = "Jarvis.Actor";
 
@@ -26,10 +25,10 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
             return;
         }
 
-        var expected = config[ConfigKey];
+        var expected = config[ConfigKeys.CoreApiKey];
         if (string.IsNullOrWhiteSpace(expected))
         {
-            logger.LogError("No API key configured ({ConfigKey}). Refusing protected request.", ConfigKey);
+            logger.LogError("No API key configured ({ConfigKey}). Refusing protected request.", ConfigKeys.CoreApiKey);
             context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
             await context.Response.WriteAsJsonAsync(new { error = "JARVIS API key is not configured. See README step 3." });
             return;

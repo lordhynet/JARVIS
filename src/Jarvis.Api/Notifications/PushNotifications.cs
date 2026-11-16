@@ -69,7 +69,7 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
     public async Task<bool> DispatchOneAsync(CancellationToken ct)
     {
         if (!Ready) return false;
-        var fingerprint = PrivacyData.Hash(config[ApiKeyMiddleware.ConfigKey] ?? "");
+        var fingerprint = PrivacyData.Hash(config[ConfigKeys.CoreApiKey] ?? "");
         var nowCheck = clock.GetUtcNow();
         if (!await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, nowCheck, fingerprint), ct)) return false;
         var claim = await store.UpdateAsync(s =>

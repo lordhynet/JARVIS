@@ -15,7 +15,7 @@ public sealed class RealtimeConnectionFactory(IConfiguration config) : IRealtime
 {
     public async Task<WebSocket> ConnectAsync(string model, CancellationToken ct)
     {
-        var socket = new ClientWebSocket(); socket.Options.SetRequestHeader("Authorization", "Bearer " + config["OpenAI:ApiKey"]);
+        var socket = new ClientWebSocket(); socket.Options.SetRequestHeader("Authorization", "Bearer " + config[ConfigKeys.OpenAiApiKey]);
         socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(10);
         try { await socket.ConnectAsync(new Uri("wss://api.openai.com/v1/realtime?model=" + Uri.EscapeDataString(model)), ct); return socket; }
         catch { socket.Dispose(); throw; }

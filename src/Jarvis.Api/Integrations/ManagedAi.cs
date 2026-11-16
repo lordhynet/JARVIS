@@ -14,13 +14,13 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     private readonly RateCard rateCards = cards ?? new RateCard(config, clock);
     public (string Model, RealtimePricing Pricing) RealtimeRates() { var rates = rateCards.ReadRealtime(); budget.RequireConfigured(); return rates; }
     public (string Model, decimal PerMinute, string ApiKey) TranscriptionRates() { var rates = rateCards.ReadTranscription(); budget.RequireConfigured(); return rates; }
-    public BudgetLimits Limits => new(config.GetValue("PaidAI:DailyLimitUsd", 2m), config.GetValue("PaidAI:MonthlyLimitUsd", 50m),
-        config.GetValue("PaidAI:BackgroundLimitUsd", 15m), config.GetValue("AI:VoiceLimitUsd", 30m), config.GetValue("AI:InteractiveLimitUsd", 5m));
-    public string Model(string profile) => config["AI:" + profile + ":Model"] ?? throw new DomainException(503, "AI model profile is missing.");
-    public decimal Rate(string profile, string direction) => config.GetValue<decimal>($"AI:{profile}:{direction}UsdPerMillion");
+    public BudgetLimits Limits => new(config.GetValue(ConfigKeys.DailyLimitUsd, 2m), config.GetValue(ConfigKeys.MonthlyLimitUsd, 50m),
+        config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m), config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m));
+    public string Model(string profile) => config[ConfigKeys.AiProfilePrefix(profile) + ConfigKeys.Model] ?? throw new DomainException(503, "AI model profile is missing.");
+    public decimal Rate(string profile, string direction) => config.GetValue<decimal>(ConfigKeys.AiProfilePrefix(profile) + direction + "UsdPerMillion");
     public int OutputCap(string profile)
     {
-        var cap = config.GetValue($"AI:{profile}:MaxOutputTokens", profile == "Chat" ? 1500 : 2048);
+        var cap = config.GetValue(ConfigKeys.AiProfilePrefix(profile) + ConfigKeys.MaxOutputTokens, profile == "Chat" ? 1500 : 2048);
         Guard.Require(cap is > 0 and <= 32768, 503, "AI profile output cap must be 1–32768 tokens."); return cap;
     }
     public void RequireReady(string profile)
@@ -33,7 +33,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     public AiCapabilityStatus Status(string profile)
     {
         try { RequireReady(profile); return new(true, Model(profile), "Configured; explicit cloud-processing consent is required."); }
-        catch (DomainException e) { return new(false, config[$"AI:{profile}:Model"] ?? "", e.Message); }
+        catch (DomainException e) { return new(false, config[ConfigKeys.AiProfilePrefix(profile) + ConfigKeys.Model] ?? "", e.Message); }
     }
     public static Guid Operation(string kind, Guid scope, Guid request) => new(SHA256.HashData(Encoding.UTF8.GetBytes($"{kind}:{scope}:{request}"))[..16]);
     public async Task<JsonElement> TextAsync(Guid id, Guid scope, string profile, object payload, UsageLane lane, CancellationToken ct, ReviewedTextRates? reviewed = null, bool preReserved = false)
