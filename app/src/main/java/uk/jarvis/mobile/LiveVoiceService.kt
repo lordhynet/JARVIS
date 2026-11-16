@@ -200,10 +200,10 @@ class LiveVoiceService : Service() {
             try {
                 val saved = CredentialVault(this@LiveVoiceService).read() ?: error("Reconnect this phone to Core before using local wake.")
                 val candidateClient = CoreApi(saved.url, saved.token, saved.certificateSha256)
-                val privacy = candidateClient.get("/api/privacy/status", PrivacyStatus::class.java); candidateClient.bindEpoch(privacy.epoch)
+                val privacy = candidateClient.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java); candidateClient.bindEpoch(privacy.epoch)
                 deviceId = getSharedPreferences("installation", 0).getString("id", "").orEmpty()
-                candidateClient.send("/api/devices/$deviceId/heartbeat", emptyMap<String, String>(), JsonObject::class.java)
-                val candidate = candidateClient.send("/api/voice/wake-candidates", WakeCandidateRequest(java.util.UUID.randomUUID().toString(), deviceId, true), WakeCandidateResponse::class.java)
+                candidateClient.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
+                val candidate = candidateClient.send(CoreCompanionRoutes.VOICE_WAKE_CANDIDATES, WakeCandidateRequest(java.util.UUID.randomUUID().toString(), deviceId, true), WakeCandidateResponse::class.java)
                 candidateClient.invalidate()
                 sessionId = candidate.sessionId.toString(); pendingWakeTicket = candidate.voice
                 startService(Intent(this@LiveVoiceService, LiveVoiceService::class.java).setAction(START)
@@ -224,7 +224,7 @@ class LiveVoiceService : Service() {
         val connection = CredentialVault(this).read() ?: error("Connect this phone to Core first.")
         savedConnection = connection
         client = CoreApi(connection.url, connection.token, connection.certificateSha256)
-        val privacy = client!!.get("/api/privacy/status", PrivacyStatus::class.java)
+        val privacy = client!!.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java)
         if (!active || generation != current) return
         client!!.bindEpoch(privacy.epoch)
         deviceId = getSharedPreferences("installation", 0).getString("id", "").orEmpty()
@@ -256,7 +256,7 @@ class LiveVoiceService : Service() {
                 if (!ready) continue
                 val id = ++sequence; pings[id] = SystemClock.elapsedRealtime(); socket?.send(gson.toJson(mapOf("type" to "heartbeat", "sequence" to id)))
                 if (pings.size > 8) { reconnect(current); continue }
-                try { client?.send("/api/devices/$deviceId/heartbeat", emptyMap<String, String>(), JsonObject::class.java) }
+                try { client?.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java) }
                 catch (e: CoreHttpException) { stopVoice(e.message ?: "Core rejected device access.") }
                 catch (_: IOException) { reconnect(current) }
                 catch (e: Exception) { if (active && current == generation) stopVoice(e.message ?: "Core privacy access changed.") }
@@ -280,13 +280,13 @@ class LiveVoiceService : Service() {
         stopCapture()
         val at = SystemClock.elapsedRealtime()
         val ticket = pendingWakeTicket?.also { pendingWakeTicket = null }
-            ?: client!!.send("/api/voice/tickets", VoiceStartRequest(sessionId, deviceId, true), VoiceTicket::class.java)
+            ?: client!!.send(CoreCompanionRoutes.VOICE_TICKETS, VoiceStartRequest(sessionId, deviceId, true), VoiceTicket::class.java)
         if (!active || generation != current) return
         currentLease = ticket.lease
         leaseDeadline.set(at + 15000); pings.clear(); ready = false
         val established = CompletableDeferred<Unit>()
         val queue = soundQueue; val queueBudget = playbackBudget
-        val url = connection.url.replaceFirst("https://", "wss://") + "/voice-stream"
+        val url = connection.url.replaceFirst("https://", "wss://") + CoreCompanionRoutes.VOICE_STREAM
         socket = transport!!.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) { if (active && generation == current) webSocket.send(gson.toJson(mapOf("type" to "authenticate", "ticket" to ticket.ticket))) else webSocket.close(1000, "Cancelled") }
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -444,7 +444,7 @@ class LiveVoiceService : Service() {
             // Acknowledge only after capture has exited and playback has stopped. One bounded attempt, no replay.
             val acknowledgement = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             acknowledgement.launch {
-                try { withTimeout(3000) { stoppedCapture?.join(); stoppedClient.send("/api/voice/local/release", stoppedLease, Boolean::class.javaObjectType) } }
+                try { withTimeout(3000) { stoppedCapture?.join(); stoppedClient.send(CoreCompanionRoutes.VOICE_LOCAL_RELEASE, stoppedLease, Boolean::class.javaObjectType) } }
                 catch (_: Exception) { /* Core retains the original drain expiry if acknowledgement is lost. */ }
                 finally { acknowledgement.cancel() }
             }

@@ -58,8 +58,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 require(token.isNotBlank()) { "Enter the Core connection key." }
                 val saved = SavedConnection(CoreAddress.validate(url), token.trim(), pin)
                 client = CoreApi(saved.url, saved.token, saved.certificateSha256); api = client; connection = saved
-                val privacy = client.get("/api/privacy/status", PrivacyStatus::class.java); client.bindEpoch(privacy.epoch)
-                val devices = client.list("/api/devices", DeviceView::class.java)
+                val privacy = client.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java); client.bindEpoch(privacy.epoch)
+                val devices = client.list(CoreCompanionRoutes.DEVICES, DeviceView::class.java)
                 if (saved.token.startsWith("jdv1_")) {
                     val enrolled = devices.singleOrNull() ?: error("Ask the owner to enrol this audio companion on Core.")
                     deviceId = enrolled.device.registration.deviceId
@@ -68,10 +68,10 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 val existing = devices.firstOrNull { it.device.registration.deviceId == deviceId }
                 if (CompanionRegistrationPolicy.shouldRegister(saved.token.startsWith("jdv1_"), existing != null,
                     existing?.device?.registration?.capabilities?.extra?.contains("audio-only") == true)) {
-                    client.send("/api/devices", mapOf("deviceId" to deviceId, "name" to "Android ${Build.MODEL}", "kind" to "AndroidCompanion",
+                    client.send(CoreCompanionRoutes.DEVICES, mapOf("deviceId" to deviceId, "name" to "Android ${Build.MODEL}", "kind" to "AndroidCompanion",
                         "capabilities" to mapOf("canListen" to true, "canSpeak" to true, "hasDisplay" to false, "canControlHome" to false, "extra" to listOf("native-android", "audio-only"))), JsonObject::class.java)
-                } else client.send("/api/devices/$deviceId/heartbeat", emptyMap<String, String>(), JsonObject::class.java)
-                val voice = client.get("/api/voice/status", AiCapabilityStatus::class.java)
+                } else client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
+                val voice = client.get(CoreCompanionRoutes.VOICE_STATUS, AiCapabilityStatus::class.java)
                 vault.save(saved.url, saved.token, saved.certificateSha256); offer = null
                 mutable.value = ScreenState(connected = true, url = saved.url, voice = voice,
                     verified = existing?.let { it.device.capabilitiesVerified && "audio-only" in it.device.registration.capabilities.extra } == true,
@@ -101,21 +101,21 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         check(mutable.value.verified) { "Confirm your microphone and earbuds in connection settings first." }
         check(mutable.value.voice?.ready == true) { mutable.value.voice?.detail ?: "Voice is not ready on Core." }
         val id = preparationId ?: UUID.randomUUID().toString().also { preparationId = it }
-        client.send("/api/devices/$deviceId/heartbeat", emptyMap<String, String>(), JsonObject::class.java)
+        client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
         try {
-            val prepared = client.send("/api/voice/prepare", CompanionVoiceRequest(id, deviceId, true), CompanionVoiceSession::class.java)
+            val prepared = client.send(CoreCompanionRoutes.VOICE_PREPARE, CompanionVoiceRequest(id, deviceId, true), CompanionVoiceSession::class.java)
             preparationId = null; onReady(prepared.sessionId)
         } catch (error: CoreHttpException) { if (error.status in listOf(400, 409)) preparationId = null; throw error }
     }
     fun refresh() = work { client ->
-        client.get("/api/privacy/status", PrivacyStatus::class.java)
-        client.send("/api/devices/$deviceId/heartbeat", emptyMap<String, String>(), JsonObject::class.java)
-        val voice = client.get("/api/voice/status", AiCapabilityStatus::class.java)
-        val device = client.list("/api/devices", DeviceView::class.java).firstOrNull { it.device.registration.deviceId == deviceId }
+        client.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java)
+        client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
+        val voice = client.get(CoreCompanionRoutes.VOICE_STATUS, AiCapabilityStatus::class.java)
+        val device = client.list(CoreCompanionRoutes.DEVICES, DeviceView::class.java).firstOrNull { it.device.registration.deviceId == deviceId }
         mutable.update { it.copy(voice = voice, verified = device?.device?.capabilitiesVerified == true, offline = false, notice = "Connected to Core.") }
     }
     fun verifyAudio() = work { client ->
-        val device = client.list("/api/devices", DeviceView::class.java).firstOrNull { it.device.registration.deviceId == deviceId }
+        val device = client.list(CoreCompanionRoutes.DEVICES, DeviceView::class.java).firstOrNull { it.device.registration.deviceId == deviceId }
         mutable.update { it.copy(verified = device?.device?.capabilitiesVerified == true,
             notice = "Confirm this device's audio on the trusted Core computer, then refresh. The phone cannot verify itself.") }
     }
@@ -123,8 +123,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         if (!mutable.value.connected || mutable.value.busy) return
         val client = api ?: return
         try {
-            client.get("/api/privacy/status", PrivacyStatus::class.java)
-            client.send("/api/devices/$deviceId/heartbeat", emptyMap<String, String>(), JsonObject::class.java)
+            client.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java)
+            client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
             if (api === client) mutable.update { it.copy(offline = false) }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
@@ -138,7 +138,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         val saved = connection ?: return
         val client = api ?: return
         viewModelScope.launch {
-            try { client.get("/api/privacy/status", PrivacyStatus::class.java); withContext(Dispatchers.IO) {
+            try { client.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java); withContext(Dispatchers.IO) {
                 val plain = LegacyDraftRecovery.export(getApplication(), saved)
                 getApplication<Application>().contentResolver.openOutputStream(uri, "w")?.use { it.write(plain) } ?: error("The chosen file could not be opened.")
             }; reportAudioIssue("Legacy local drafts exported. Nothing was uploaded or replayed.") }

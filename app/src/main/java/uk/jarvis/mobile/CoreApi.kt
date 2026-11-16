@@ -1,5 +1,6 @@
 package uk.jarvis.mobile
 
+import uk.jarvis.mobile.contracts.CoreCompanionRoutes
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
@@ -34,7 +35,7 @@ class CoreApi(rawUrl: String, private val token: String, certificateSha256: Stri
     private suspend fun exchange(path: String, body: Any?, method: String): String = withContext(Dispatchers.IO) {
         require(CompanionRoutes.allowed(path, method)) { "This audio companion only connects voice and device controls to Core." }
         val responseLimit = 1_048_576
-        val privacyStatus = path == "/api/privacy/status"
+        val privacyStatus = path == CoreCompanionRoutes.PRIVACY_STATUS
         if (!privacyStatus) {
             check(privacy.epoch != null) { "Reconnect to verify Core privacy before accessing data." }
             privacy.verify(privacy.epoch)
