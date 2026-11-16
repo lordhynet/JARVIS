@@ -8,7 +8,7 @@ public static class DeviceGrantEndpoints
 {
     public static void MapDeviceGrantEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/devices/{id}/grants", (string id, GrantDeviceCapabilityRequest request,
+        app.MapPost(CoreRoutes.DeviceGrants, (string id, GrantDeviceCapabilityRequest request,
             ICommandHandler<GrantDeviceCapability, DeviceCapabilityGrantView> handler, CancellationToken ct) =>
             handler.HandleAsync(new GrantDeviceCapability(id, request), ct)).WithTags("Device grants").RequireAuthorization(Jarvis.Api.Security.CorePolicies.DeviceGrants);
         app.MapGet("/api/device-grants", (string? deviceId,

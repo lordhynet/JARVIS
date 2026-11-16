@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
-  <ItemGroup><ProjectReference Include="../../src/Jarvis.Contracts/Jarvis.Contracts.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Jarvis.Contracts/Jarvis.Contracts.csproj" />
+    <Compile Include="../../src/Jarvis.Api/CoreRoutes.cs" Link="CoreRoutes.cs" />
+  </ItemGroup>
 </Project>

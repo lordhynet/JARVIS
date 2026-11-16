@@ -10,8 +10,8 @@ public static class PrivacyEndpoints
 {
     public static void MapPrivacyEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/api/privacy").WithTags("Privacy").RequireAuthorization(Jarvis.Api.Security.CorePolicies.OwnerOrCompanion);
-        group.MapGet("/status", (IQueryHandler<GetPrivacyStatus, PrivacyStatus> h, CancellationToken ct) => h.HandleAsync(new(), ct));
+        var group = app.MapGroup(CoreRoutes.Privacy).WithTags("Privacy").RequireAuthorization(CorePolicies.OwnerOrCompanion);
+        group.MapGet(CoreRoutes.PrivacyStatusSuffix, (IQueryHandler<GetPrivacyStatus, PrivacyStatus> h, CancellationToken ct) => h.HandleAsync(new(), ct));
         group.MapGet("/export", async (HttpContext context, TimeProvider clock, IQueryHandler<ExportCore, CoreDataExport> h, CancellationToken ct) =>
         {
             context.Response.Headers.ContentDisposition = "attachment; filename=jarvis-core-export.json";

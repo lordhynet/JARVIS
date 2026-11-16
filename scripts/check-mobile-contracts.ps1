@@ -9,8 +9,13 @@ try {
     $dotnet = if (Test-Path $workspaceSdk) { $workspaceSdk } else { 'dotnet' }
     & $dotnet run --project tools/Jarvis.ContractGen -- $generated
     if ($LASTEXITCODE -ne 0) { throw 'Contract generation failed.' }
-    if ((Get-FileHash -LiteralPath $actual).Hash -ne (Get-FileHash -LiteralPath $generated).Hash) {
-        throw 'Android contracts drifted. Regenerate CoreContracts.kt from Jarvis.Contracts.'
+    $checkedIn = [IO.File]::ReadAllText($actual).Replace("`r`n", "`n")
+    $expected = [IO.File]::ReadAllText($generated)
+    if ($checkedIn -cne $expected) {
+        throw 'Android contracts or companion routes drifted. Regenerate CoreContracts.kt with Jarvis.ContractGen.'
     }
-    Write-Host 'Android contracts match the C# source.'
-} finally { Pop-Location }
+    Write-Host 'Android contracts and companion routes match the C# source.'
+} finally {
+    if (Test-Path -LiteralPath $generated) { Remove-Item -LiteralPath $generated }
+    Pop-Location
+}

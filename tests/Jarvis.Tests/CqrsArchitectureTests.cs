@@ -1,6 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.RegularExpressions;
+using Jarvis.Api;
 using Jarvis.Contracts;
 using Jarvis.Api.Security;
 using Jarvis.Orchestrator.Cqrs;
@@ -39,32 +39,24 @@ public sealed class CqrsArchitectureTests
     }
 
     [Fact]
-    public void Companion_endpoint_policy_matches_the_android_allowlist()
+    public void Companion_route_contract_matches_the_scoped_endpoint_policy()
     {
         using var factory = new ScenarioFactory();
         _ = factory.Client();
-        var source = FindWorkspaceFile(Path.Combine("JARVIS.MOBILE", "app", "src", "main", "java", "uk", "jarvis", "mobile", "CompanionRoutes.kt"));
-        var kotlin = File.ReadAllText(source);
-        var getBlock = Regex.Match(kotlin, "if \\(method == \\\"GET\\\"\\).*?setOf\\((?<routes>.*?)\\)", RegexOptions.Singleline);
-        var postBlock = Regex.Match(kotlin, "^\\s*return path in setOf\\((?<routes>.*?)\\) \\|\\|", RegexOptions.Singleline | RegexOptions.Multiline);
-        Assert.True(getBlock.Success && postBlock.Success, "Android companion allowlist format changed; update this parity check.");
-        var android = Regex.Matches(getBlock.Groups["routes"].Value, "\\\"(?<path>/api/[^\\\"]+)\\\"")
-            .Select(m => "GET " + m.Groups["path"].Value.TrimEnd('/'))
-            .Concat(Regex.Matches(postBlock.Groups["routes"].Value, "\\\"(?<path>/api/[^\\\"]+)\\\"")
-                .Select(m => "POST " + m.Groups["path"].Value.TrimEnd('/')))
-            .Append("POST /api/devices/{id}/heartbeat")
-            .ToHashSet(StringComparer.Ordinal);
-        // Bootstrap registration is allowlisted in Android because it uses the owner's legacy key;
-        // a paired device credential cannot register devices.
-        android.Remove("POST /api/devices");
-
-        var core = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()
-            .Where(endpoint => endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().Any(policy => policy.Policy == CorePolicies.OwnerOrCompanion) &&
+        var endpoints = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>();
+        var expected = CoreRoutes.CompanionGet.Select(path => "GET " + path)
+            .Concat(CoreRoutes.CompanionPost.Where(path => path != CoreRoutes.Devices).Select(path => "POST " + path));
+        var scoped = endpoints
+            .Where(endpoint => endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().Count > 0 &&
                 endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().All(policy => policy.Policy == CorePolicies.OwnerOrCompanion))
             .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
-                .Select(method => method + " /" + endpoint.RoutePattern.RawText!.TrimStart('/').TrimEnd('/')))
-            .ToHashSet(StringComparer.Ordinal);
-        Assert.Equal(android.OrderBy(x => x), core.OrderBy(x => x));
+                .Select(method => method + " /" + endpoint.RoutePattern.RawText!.Trim('/')));
+        Assert.Equal(expected.OrderBy(x => x, StringComparer.Ordinal), scoped.OrderBy(x => x, StringComparer.Ordinal));
+
+        var bootstrap = Assert.Single(endpoints, endpoint =>
+            "/" + endpoint.RoutePattern.RawText!.Trim('/') == CoreRoutes.Devices &&
+            endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods.Contains("POST") == true);
+        Assert.Contains(bootstrap.Metadata.GetOrderedMetadata<IAuthorizeData>(), policy => policy.Policy == CorePolicies.Owner);
     }
 
     [Fact]
@@ -72,7 +64,7 @@ public sealed class CqrsArchitectureTests
     {
         using var factory = new ScenarioFactory();
         _ = factory.Client();
-        var script = File.ReadAllText(FindWorkspaceFile(Path.Combine("JARVIS.CORE", "src", "Jarvis.Api", "wwwroot", "app.js")));
+        var script = File.ReadAllText(FindWorkspaceFile(Path.Combine("src", "Jarvis.Api", "wwwroot", "app.js")));
         var rules = new[]
         {
             "path === '/privacy/export'", "['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply']",
