@@ -793,3 +793,11 @@ Workflow lint, five path-selection scenarios, Android contract parity, and front
 The 99-commit pre-push scan found a historical settings file with logging and host defaults, a CI fixture password assignment, and script patterns. The owner approved retaining the history. Existing commit metadata includes the owner's configured email. If visibility ever changes, review author email attribution before publishing.
 
 Owner follow-ups are branch protection on `master` after promotion, Dependabot alerts, secret-scanning push protection if supported, and confirmation that the repository remains private.
+
+## Item 13 — private remote access
+
+All 66 focused Core tests passed. They cover bind addresses, endpoint authorization, device credentials, hub tickets, and realtime voice. An isolated Windows Core process refused a public test bind before opening a listener. A local HTTPS reverse proxy using a fixture `.ts.net` hostname verified readiness, Core credential checks, companion isolation, one-time hub ticket use, and upgrades for both `/hubs/status` and `/voice-stream`.
+
+All 37 Android debug unit tests passed, including four provisioning tests for an optional pin, existing USB pins, and malformed payloads. Android debug lint passed with zero errors and 12 warnings after a retry for a Windows Gradle cache error.
+
+The Windows Core host still needs Tailscale installation and tailnet sign-in. Live access rules, certificate issuance, and the mobile-data and earbud checks remain owner-run. See the [private remote access guide](REMOTE_ACCESS.md).

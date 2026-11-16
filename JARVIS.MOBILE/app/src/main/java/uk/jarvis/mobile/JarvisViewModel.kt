@@ -4,11 +4,9 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.JsonObject
-import com.google.gson.JsonParser
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import uk.jarvis.mobile.contracts.*
@@ -38,12 +36,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun offerPairing(encoded: String) {
-        runCatching {
-            require(encoded.length <= 8192)
-            val json = JsonParser.parseString(String(Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8)).asJsonObject
-            val token = json.get("token").asString
-            require(token.length in 16..512 && !token.contains('\n'))
-            offer = SavedConnection(CoreAddress.validate(json.get("url").asString), token, CertificatePin.normalize(json.get("certificateSha256").asString))
+        runCatching { Provisioning.parse(encoded) }.onSuccess { connection ->
+            offer = connection
             mutable.update { it.copy(pairingOffered = true, notice = "") }
         }.onFailure { reportAudioIssue("Pairing details were invalid. Send them again from your trusted Core computer.") }
     }
