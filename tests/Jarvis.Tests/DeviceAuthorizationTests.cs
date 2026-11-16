@@ -82,6 +82,19 @@ public sealed class DeviceAuthorizationTests
     }
 
     [Fact]
+    public async Task Paired_device_can_discover_code_installed_descriptors_without_executing_or_granting_them()
+    {
+        using var host = new JarvisApiFactory(); var issued = await Enrol(host); using var phone = Companion(host, issued);
+        var descriptors = await phone.GetFromJsonAsync<DeviceCapabilityDescriptor[]>("/api/device-capabilities", LifeScenarioTests.Json);
+        var descriptor = Assert.Single(descriptors!);
+        Assert.Equal("homeassistant.turn", descriptor.Id);
+        Assert.Equal("1.0.0", descriptor.Version);
+        Assert.Equal(DeviceCapabilityRisk.Reversible, descriptor.Risk);
+        Assert.Equal(DeviceConfirmationPolicy.Owner, descriptor.ConfirmationPolicy);
+        Assert.Empty(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.Tools));
+    }
+
+    [Fact]
     public async Task Scoped_device_credential_can_claim_its_own_wake_candidate_but_not_another_device()
     {
         using var factory = new ProviderFactory(_ => throw new InvalidOperationException("Wake arbitration must not call a provider."));

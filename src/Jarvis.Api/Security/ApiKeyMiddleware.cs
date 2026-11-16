@@ -89,7 +89,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
     private static bool CompanionRoute(HttpRequest request, string deviceId)
     {
         var path = request.Path.Value?.TrimEnd('/');
-        return request.Method == "GET" && path is "/api/privacy/status" or "/api/voice/status" or "/api/devices" ||
+        return request.Method == "GET" && path is "/api/privacy/status" or "/api/voice/status" or "/api/devices" or "/api/device-capabilities" ||
             request.Method == "POST" && (path is "/api/voice/prepare" or "/api/voice/tickets" or "/api/voice/local/release" or "/api/voice/wake-candidates" || path == $"/api/devices/{deviceId}/heartbeat");
     }
     private static string? OwnerScope(HttpRequest request)

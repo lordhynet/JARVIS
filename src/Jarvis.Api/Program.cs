@@ -166,6 +166,8 @@ builder.Services.AddSingleton<WakeCandidateArbiter>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Training.VoicePracticeService>();
 builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Runtime.IDeviceCapabilityCatalog>(
+    _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All));
 builder.Services.AddSingleton<OwnerAuthorization>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IWorkflowCatalog, Jarvis.Orchestrator.Domains.WorkflowCatalog>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(_ => new Jarvis.Orchestrator.Domains.CapabilityCatalog(Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat([new("core_template_practice", "Deliver an authored domain practice template without AI or tools.", Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly)])));
@@ -275,6 +277,7 @@ app.MapGet("/health", () => Results.Ok(new
 app.MapSessionEndpoints();
 app.MapRuntimeEndpoints();
 app.MapHub<StatusHub>("/hubs/status");
+app.MapDeviceCapabilityEndpoints();
 
 app.Run();
 
