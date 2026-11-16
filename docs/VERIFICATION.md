@@ -769,3 +769,11 @@ Core installs sensitive Home Assistant capabilities for cover open, close and po
 All 95 focused backend checks passed with disposable PostgreSQL 17 and mocked Home Assistant. They include pre-approval denial, grant scope, voice proposal isolation, owner argument-hash matching, cover movement and position, alarm outcome and code isolation, and the bounded owner review query. The four focused Playwright checks passed on desktop and mobile against an isolated in-memory API.
 
 The full backend suite passed 407 tests with zero failures and the opt-in measurement harness skipped. EF reported no pending model changes, and Android route, header and DTO parity passed. The disposable PostgreSQL instance was removed after verification.
+
+## Release 0.1 LAN beta verification (16 November 2026)
+
+Core `8447c56` limits the reversible grant pre-approval exemption to Voice. The regression test reproduced the Agent proposal entering `Pending` before the fix. The corrected behavior requires `AwaitingConfirmation` for Agent proposals and keeps `Pending` for eligible Voice proposals.
+
+The full backend run passed 409 tests with zero failures on disposable PostgreSQL 17. The opt-in runtime benchmark was the only skip. Playwright passed all 52 tests across desktop and mobile, 26 per project. EF found no pending model changes and discovered 14 migrations. The Android route, header and DTO parity check passed.
+
+Android release 0.10.2 (version code 13, source `c4c23fe`) passed all 33 unit tests and release lint. The signed APK embeds that revision. Its SHA-256 is `ADDD4D0CCBBE37051737551C0F8523AE1FB87E96C43E1F65461AF821E2F8477F`, and its signing certificate matches 0.10.1. Physical handset and Home Assistant checks remain owner-run.
