@@ -9,14 +9,15 @@ using Jarvis.Orchestrator.Intelligence;
 namespace Jarvis.Api.Voice;
 
 /// <summary>Fixed Core capabilities, never a provider-selected URL or arbitrary command.</summary>
-public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService practice, TimeProvider clock, VoiceRecallService recall, VoiceCoachingService coaching, Jarvis.Orchestrator.Domains.IDomainFactory? domains = null)
+public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService practice, TimeProvider clock, VoiceRecallService recall,
+    VoiceCoachingService coaching, CoreHomeVoiceTool home, Jarvis.Orchestrator.Domains.IDomainFactory? domains = null)
 {
     public static IReadOnlyList<Jarvis.Orchestrator.Domains.CapabilityDescriptor> Capabilities => Definitions.Select(tool => {
         var json = JsonSerializer.SerializeToElement(tool); var name = json.GetProperty("name").GetString()!;
         var readOnly = name is "core_context" or "core_story_search" or "core_coaching_catalog" or "core_coaching_prompt" or "core_practice_current";
         return new Jarvis.Orchestrator.Domains.CapabilityDescriptor(name, json.GetProperty("description").GetString()!,
             readOnly ? Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly : Jarvis.Orchestrator.Domains.CapabilityRisk.CoreWrite);
-    }).ToArray();
+    }).Where(tool => tool.Key != CoreHomeVoiceTool.Name).ToArray();
     public const int MaxCalls = 4, MaxOutputBytes = 6000;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static object Schema(Dictionary<string, object> properties) => new {
@@ -26,6 +27,9 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         new { type = "function", name, description, parameters = Schema(properties) };
     private static readonly object Utterance = new { type = "string", description = "Core utterance_id supplied after the latest captured user speech. Never invent an ID." };
     public static readonly object[] Definitions = [
+        Tool(CoreHomeVoiceTool.Name, "List granted lights and switches, or turn one on or off only on an explicit latest spoken request. For list use an empty utterance_id. For turn use the latest captured utterance_id. Ask which entity if ambiguous. Report success only for status succeeded, and never read command IDs aloud.", new() {
+            ["action"] = new { type = "string", @enum = new[] { "list", "turn" } }, ["utterance_id"] = Utterance
+        }),
         Tool("core_domain_propose", "Propose a domain only after the user explicitly asks to create one. Uses the captured request verbatim. Returns a draft, missing capabilities and owner review instructions. Never activates or grants tools. Ask for owner approval in the dashboard after preview.", new() { ["utterance_id"] = Utterance }),
         Tool("core_coaching_correction", "Correct a saved voice coaching answer only on explicit user request. First prepare using the attempt_id and revision from Core current feedback. Ask for a separate full replacement answer, then answer with its captured utterance_id and the same expected_revision. Never save the correction instruction itself or generated text. Stop with core_coaching stop to keep the prior answer.", new() {
             ["action"] = new { type = "string", @enum = new[] { "prepare", "answer" } },
@@ -67,7 +71,8 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
     public static string Failure(string message) => JsonSerializer.Serialize(new { ok = false, error = message }, Json);
     private static string Clip(string value, int length) => value.Length <= length ? value : value[..length];
 
-    public async Task<string> ExecuteAsync(string name, string arguments, Guid sessionId, IReadOnlySet<Guid> windowUtterances, CancellationToken ct)
+    public async Task<string> ExecuteAsync(string name, string arguments, Guid sessionId, IReadOnlySet<Guid> windowUtterances,
+        CancellationToken ct, Guid latestUtterance = default, Func<CancellationToken, Task<bool>>? currentAudio = null)
     {
         try
         {
@@ -76,6 +81,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             var args = parsed.RootElement;
             Guard.Require(args.ValueKind == JsonValueKind.Object, 400, "Tool arguments must be an object.");
             string[] fields = name switch {
+                CoreHomeVoiceTool.Name => ["action", "utterance_id"],
                 "core_domain_propose" => ["utterance_id"],
                 "core_coaching_correction" => ["action", "utterance_id", "attempt_id", "expected_revision"],
                 "core_coaching" => ["action", "utterance_id", "exercise_id", "story_id", "story_version", "claim_index"],
@@ -90,7 +96,8 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             var properties = args.EnumerateObject().Select(p => p.Name).ToArray();
             Guard.Require(properties.Length == fields.Length && fields.All(f => properties.Count(p => p == f) == 1), 400, "Tool arguments do not match the Core schema.");
             Guid source = Guid.Empty;
-            if (fields.Contains("utterance_id") && !((name is "core_recall" or "core_coaching") && args.GetProperty("action").GetString() == "current"))
+            if (fields.Contains("utterance_id") && !((name is "core_recall" or "core_coaching") && args.GetProperty("action").GetString() == "current") &&
+                !(name == CoreHomeVoiceTool.Name && args.GetProperty("action").GetString() == "list"))
             {
                 source = args.GetProperty("utterance_id").GetGuid();
                 Guard.Require(windowUtterances.Contains(source), 409, "Wait for Core to capture the latest user speech before requesting that action.");
@@ -98,6 +105,12 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             object? result;
             switch (name)
             {
+                case CoreHomeVoiceTool.Name:
+                    var homeAction = args.GetProperty("action").GetString()!;
+                    Guard.Require(homeAction == "list" || (source != Guid.Empty && source == latestUtterance),
+                        409, "Use the latest captured spoken request.");
+                    result = await home.RunAsync(homeAction, sessionId, source, currentAudio, ct);
+                    break;
                 case "core_domain_propose":
                     Guard.Require(domains is not null, 503, "Domain proposal service is unavailable.");
                     var proposal = await domains.ProposeCapturedAsync(sessionId, source, ct);

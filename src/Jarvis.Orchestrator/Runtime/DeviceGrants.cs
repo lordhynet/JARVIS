@@ -14,7 +14,8 @@ public sealed record DeviceGrant(
     DateTimeOffset ExpiresAt,
     DateTimeOffset? RevokedAt = null,
     string? GrantedBy = null,
-    string? Reason = null)
+    string? Reason = null,
+    bool PreApproved = false)
 {
     public DeviceGrantAudit? Audit => GrantedBy is not null && Reason is not null ? new(Id, GrantedBy, Reason) : null;
     // Retain revoked audited requests until their original expiry so a retry cannot recreate them.
@@ -24,7 +25,7 @@ public sealed record DeviceGrant(
     {
         Guard.Require(Audit is not null && GrantedBy == proposed.GrantedBy && Reason == proposed.Reason &&
             DeviceId == proposed.DeviceId && CapabilityId == proposed.CapabilityId && CapabilityVersion == proposed.CapabilityVersion &&
-            CredentialHash == proposed.CredentialHash && ExpiresAt == proposed.ExpiresAt &&
+            CredentialHash == proposed.CredentialHash && ExpiresAt == proposed.ExpiresAt && PreApproved == proposed.PreApproved &&
             DeviceJsonSchema.TryReadObject(ConstraintsJson, 16_000, out var existing) &&
             DeviceJsonSchema.TryReadObject(proposed.ConstraintsJson, 8_000, out var requested) &&
             JsonElement.DeepEquals(existing, requested), 409, "Grant request ID was already used for different input.");
@@ -54,6 +55,8 @@ public sealed class DeviceGrantService(IRuntimeReader runtime, IDeviceCapability
         Guard.Require(actor.SubjectId is { Length: > 0 and <= 80 } && !string.IsNullOrWhiteSpace(actor.SubjectId) &&
             actor.Scopes.Contains(ManageScope, StringComparer.Ordinal), 403, "Owner grant authorization is required.");
         var descriptor = capabilities.Get(request.CapabilityId, request.CapabilityVersion);
+        Guard.Require(!request.PreApproved || descriptor.Risk == DeviceCapabilityRisk.Reversible, 400,
+            "Only reversible capabilities can be pre-approved.");
         Guard.Require(deviceId is { Length: > 0 and <= 80 } && deviceId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'),
             400, "Device ID is invalid.");
         Guard.Require(request.RequestId != Guid.Empty, 400, "A grant request ID is required.");
@@ -73,7 +76,7 @@ public sealed class DeviceGrantService(IRuntimeReader runtime, IDeviceCapability
             Guard.Require(state.DeviceCredentials.TryGetValue(deviceId, out var credential) && !credential.Revoked, 409,
                 "An active device credential is required before granting a capability.");
             var grant = await writes.AddDeviceGrantAsync(new(request.RequestId, deviceId, descriptor.Id, descriptor.Version,
-                request.ConstraintsJson, credential.SecretHash, now, expiresAt, GrantedBy: actor.SubjectId, Reason: reason));
+                request.ConstraintsJson, credential.SecretHash, now, expiresAt, GrantedBy: actor.SubjectId, Reason: reason, PreApproved: request.PreApproved));
             return View(state, grant, now);
         }, ct);
     }
@@ -96,7 +99,7 @@ public sealed class DeviceGrantService(IRuntimeReader runtime, IDeviceCapability
             current.SecretHash == grant.CredentialHash &&
             capabilities.HasValidConstraints(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson);
         return new(grant.Id, grant.DeviceId, grant.CapabilityId, grant.CapabilityVersion,
-            grant.ConstraintsJson, grant.GrantedAt, grant.ExpiresAt, grant.RevokedAt, audit, effective);
+            grant.ConstraintsJson, grant.GrantedAt, grant.ExpiresAt, grant.RevokedAt, audit, effective, grant.PreApproved);
     }
 
     public Task<bool> RevokeAsync(Guid id, CancellationToken ct = default) => grants.RevokeAsync(id, clock.GetUtcNow(), ct);

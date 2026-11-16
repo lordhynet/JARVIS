@@ -116,16 +116,31 @@ public sealed class ProviderGateway(IHttpClientFactory clients, IConfiguration c
 
     internal async Task<string> VerifyHomeStateAsync(string entityId, string action, CancellationToken ct)
     {
+        var reply = await HomeStateAsync(entityId, ct);
+        var expected = action == "turn_on" ? "on" : "off";
+        Guard.Require(reply.TryGetProperty("state", out var state) && state.ValueKind == JsonValueKind.String && state.GetString() == expected,
+            502, "Home Assistant did not report the requested entity state.");
+        return $"Home Assistant reports the entity is {expected}.";
+    }
+
+    internal async Task<string?> HomeFriendlyNameAsync(string entityId, CancellationToken ct)
+    {
+        var state = await HomeStateAsync(entityId, ct);
+        return state.TryGetProperty("attributes", out var attributes) && attributes.ValueKind == JsonValueKind.Object &&
+            attributes.TryGetProperty("friendly_name", out var name) && name.ValueKind == JsonValueKind.String &&
+            name.GetString() is { Length: > 0 and <= 120 } friendly ? friendly : null;
+    }
+
+    private async Task<JsonElement> HomeStateAsync(string entityId, CancellationToken ct)
+    {
         var (root, token) = HomeTarget(entityId);
         using var request = new HttpRequestMessage(HttpMethod.Get, root + "/api/states/" + Uri.EscapeDataString(entityId));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var reply = await JsonAsync(request, ct);
-        var expected = action == "turn_on" ? "on" : "off";
         Guard.Require(reply.ValueKind == JsonValueKind.Object &&
-            reply.TryGetProperty("entity_id", out var entity) && entity.ValueKind == JsonValueKind.String && entity.GetString() == entityId &&
-            reply.TryGetProperty("state", out var state) && state.ValueKind == JsonValueKind.String && state.GetString() == expected,
-            502, "Home Assistant did not report the requested entity state.");
-        return $"Home Assistant reports the entity is {expected}.";
+            reply.TryGetProperty("entity_id", out var entity) && entity.ValueKind == JsonValueKind.String && entity.GetString() == entityId,
+            502, "Home Assistant did not report the requested entity.");
+        return reply;
     }
 
     private (string Root, string Token) HomeTarget(string entityId)

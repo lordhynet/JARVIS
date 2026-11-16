@@ -741,3 +741,15 @@ All 30 focused Core checks passed with in-memory fixtures and disposable Postgre
 Android delegates local wake and arbitration to `WakeController`, communication mode and Bluetooth SCO to `AudioRouteController`, and WebSocket, lease and recovery operations to `VoiceTransport`. A sealed lifecycle state machine fences outdated wake and transport callbacks. The foreground service owns notification actions and microphone and playback resources.
 
 The initial Android build passed 33 JVM tests and release lint. The final rerun against Mobile commit `d0aec50` passed the same 33 tests with zero failures, errors or skips, and release lint passed again. The two new tests cover the wake, arbitration, and reconnect transitions and stale generations after a stop. Bluetooth routing and screen-off behavior still require a handset check.
+
+## Item 3b — spoken on/off commands
+
+The initial voice home capability handles direct on/off requests for granted lights and switches. Core parses the latest captured user speech, resolves effective grants against the executor's allowlist and resolves Home Assistant friendly names and owner aliases. It asks for clarification when multiple entities match. A signed receipt with a verified Home Assistant state is required for a success result.
+
+The additive `20261116154900_VoiceHomeGrants` migration defaults existing grants to `preApproved: false`. Owners can pre-approve reversible grants. Core checks the paid-work pause and privacy state and counts dispatches by device and entity. A spoken action refused by the dispatch limit is cancelled. Automatic spoken actions are claimed during the live tool call.
+
+The first 39-check focused run found a regex timeout. Core now uses bounded word parsing for the on/off phrases. All 39 checks passed after that change. The following full run passed 390 tests, skipped the opt-in harness and found an older migration fixture that used the current EF model to seed the historical grant table. The fixture now writes the historical columns directly and checks the migrated pre-approval default.
+
+Core rechecks live audio ownership after name lookup and again before Home Assistant execution. The final focused run passed 40 checks with disposable PostgreSQL 17 and in-memory fixtures. The Home Assistant transport was mocked. Coverage includes captured speech, lost audio ownership, the upgrade fixture, ambiguous names, missing authorization, replay, paid pause, state mismatch and the per-device and per-entity dispatch limits. EF reported no pending model changes. The Android route, header and DTO parity check passed.
+
+The final full backend suite passed 391 tests with zero failures and the opt-in measurement harness skipped. The disposable PostgreSQL instances were removed after verification.

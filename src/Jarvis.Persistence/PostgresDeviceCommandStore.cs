@@ -81,10 +81,11 @@ public sealed class DeviceCommandRow
     public string? CancelledBy { get; set; }
     public Guid? DispatchRequestId { get; set; }
     public DateTimeOffset? DispatchedAt { get; set; }
+    public string? HomeEntityId { get; set; }
 
     public DeviceCommand Contract() => new(Id, GrantId, DeviceId, CapabilityId, CapabilityVersion, CredentialHash,
         ArgumentsJson, ArgumentHash, Origin, Status, CreatedAt, ExpiresAt, ConfirmedAt, ConfirmedBy, CancelledAt, CancelledBy,
-        DispatchRequestId, DispatchedAt);
+        DispatchRequestId, DispatchedAt, HomeEntityId);
 
     internal static DeviceCommandRow From(DeviceCommand command)
     {
@@ -92,7 +93,8 @@ public sealed class DeviceCommandRow
         {
             Id = command.Id, GrantId = command.GrantId, DeviceId = command.DeviceId, CapabilityId = command.CapabilityId,
             CapabilityVersion = command.CapabilityVersion, CredentialHash = command.CredentialHash, ArgumentsJson = command.ArgumentsJson,
-            ArgumentHash = command.ArgumentHash, Origin = command.Origin, CreatedAt = command.CreatedAt, ExpiresAt = command.ExpiresAt
+            ArgumentHash = command.ArgumentHash, Origin = command.Origin, CreatedAt = command.CreatedAt, ExpiresAt = command.ExpiresAt,
+            HomeEntityId = command.HomeEntityId
         };
         row.ApplyState(command);
         return row;

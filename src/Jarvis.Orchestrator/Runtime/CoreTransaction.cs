@@ -25,6 +25,7 @@ public interface ICoreTransactionWrites
     Task SaveDeviceCommandAsync(DeviceCommand command);
     Task<IReadOnlyList<DeviceReceiptView>> ReadDeviceReceiptsAsync(Guid commandId);
     Task AddDeviceReceiptAsync(DeviceReceiptView receipt);
+    Task<bool> HasHomeDispatchCapacityAsync(string deviceId, string entityId, DateTimeOffset since, int limit);
 }
 
 public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemorySessionStore sessions,
@@ -92,6 +93,12 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
 
         private IEnumerable<DeviceCommand> DeviceCommands() =>
             stagedCommands.Values.Concat(boundary.DeviceCommands.Values.Where(x => !stagedCommands.ContainsKey(x.Id)));
+
+        public Task<bool> HasHomeDispatchCapacityAsync(string deviceId, string entityId, DateTimeOffset since, int limit)
+        {
+            var recent = DeviceCommands().Where(x => x.HomeEntityId is not null && x.DispatchedAt > since).ToArray();
+            return Task.FromResult(recent.Count(x => x.DeviceId == deviceId) < limit && recent.Count(x => x.HomeEntityId == entityId) < limit);
+        }
 
         public Task SaveDeviceCommandAsync(DeviceCommand command)
         {

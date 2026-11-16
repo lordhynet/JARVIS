@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using Jarvis.Contracts;
 
 namespace Jarvis.Orchestrator.Runtime;
@@ -6,7 +7,8 @@ namespace Jarvis.Orchestrator.Runtime;
 public sealed record DeviceCommand(Guid Id, Guid GrantId, string DeviceId, string CapabilityId, string CapabilityVersion,
     string CredentialHash, string ArgumentsJson, string ArgumentHash, InvocationOrigin Origin, DeviceCommandStatus Status,
     DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, DateTimeOffset? ConfirmedAt = null, string? ConfirmedBy = null,
-    DateTimeOffset? CancelledAt = null, string? CancelledBy = null, Guid? DispatchRequestId = null, DateTimeOffset? DispatchedAt = null)
+    DateTimeOffset? CancelledAt = null, string? CancelledBy = null, Guid? DispatchRequestId = null, DateTimeOffset? DispatchedAt = null,
+    string? HomeEntityId = null)
 {
     public DeviceCommandStatus StatusAt(DateTimeOffset now) =>
         ExpiresAt <= now && Status is DeviceCommandStatus.Pending or DeviceCommandStatus.AwaitingConfirmation or
@@ -27,6 +29,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
 {
     public const string ConfirmScope = "device.commands.confirm";
     private static readonly TimeSpan MaximumLifetime = TimeSpan.FromMinutes(5);
+    private const int HomeActionsPerMinute = 20;
 
     public Task<DeviceCommandView> ProposeAsync(string deviceId, ProposeDeviceCommandRequest request, CancellationToken ct = default)
     {
@@ -55,10 +58,14 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             var descriptor = capabilities.Get(grant.CapabilityId, grant.CapabilityVersion);
             Guard.Require(capabilities.Permits(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson, request.ArgumentsJson),
                 403, "Command arguments are outside the granted capability.");
-            var needsConfirmation = RequiresConfirmation(origin, descriptor);
+            var homeEntity = descriptor.Id == BuiltInDeviceCapabilities.HomeAssistantTurn ? HomeEntity(request.ArgumentsJson) : null;
+            Guard.Require(homeEntity is null || !AutomaticOrigin(origin) || !writes.Runtime.AgentControls.EffectivePaidAiPaused,
+                409, "Home actions from voice and agents are paused.");
+            var needsConfirmation = RequiresConfirmation(origin, descriptor, grant.PreApproved);
             var command = new DeviceCommand(request.RequestId, grant.Id, deviceId, grant.CapabilityId, grant.CapabilityVersion,
                 grant.CredentialHash, request.ArgumentsJson, PrivacyData.Hash(request.ArgumentsJson), origin,
-                needsConfirmation ? DeviceCommandStatus.AwaitingConfirmation : DeviceCommandStatus.Pending, Timestamp(now), expiresAt);
+                needsConfirmation ? DeviceCommandStatus.AwaitingConfirmation : DeviceCommandStatus.Pending, Timestamp(now), expiresAt,
+                HomeEntityId: homeEntity);
             await writes.SaveDeviceCommandAsync(command);
             return command.View(now);
         }, ct);
@@ -152,16 +159,52 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
                 foreach (var command in pending)
                 {
                     if (homeAssistantOnly && !IsHomeAssistantTurn(command)) continue;
-                    if (await ReadDeliveryCapabilityAsync(writes, command) is null) continue;
-                    var now = clock.GetUtcNow();
-                    if (command.ExpiresAt <= now) continue;
-                    var dispatched = Dispatch(command, request.RequestId, now);
-                    await writes.SaveDeviceCommandAsync(dispatched);
-                    return Delivery(dispatched);
+                    // Spoken actions without per-command confirmation are dispatched within the live tool call.
+                    if (IsHomeAssistantTurn(command) && command.Origin == InvocationOrigin.Voice && command.ConfirmedAt is null) continue;
+                    var (delivery, _) = await TryDispatchAsync(writes, command, request.RequestId);
+                    if (delivery is not null) return delivery;
                 }
                 after = pending[^1];
             }
         }, ct);
+    }
+
+    public async Task<DeliveredDeviceCommand?> ClaimVoiceHomeCommandAsync(Guid id, CancellationToken ct = default)
+    {
+        Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.Voice, 403, "A voice window is required.");
+        var actor = DeviceCredentialContext.RequirePairedActor();
+        var (delivery, limited) = await transaction.ExecuteAsync<(DeliveredDeviceCommand? Delivery, bool Limited)>(async writes =>
+        {
+            DeviceCredentialContext.RequireCurrent(writes.Runtime, actor.DeviceId!);
+            var command = await writes.ReadDeviceCommandAsync(id);
+            if (command is null || command.Status != DeviceCommandStatus.Pending || command.Origin != InvocationOrigin.Voice ||
+                command.DeviceId != actor.DeviceId || command.CredentialHash != actor.CredentialHash || !IsHomeAssistantTurn(command))
+                return (null, false);
+            var attempted = await TryDispatchAsync(writes, command, Guid.NewGuid());
+            if (attempted.Limited)
+                await writes.SaveDeviceCommandAsync(command with
+                {
+                    Status = DeviceCommandStatus.Cancelled, CancelledAt = Timestamp(clock.GetUtcNow()), CancelledBy = "core:home-rate-limit"
+                });
+            return attempted;
+        }, ct);
+        Guard.Require(!limited, 429, "The home action limit was reached for this device or entity.");
+        return delivery;
+    }
+
+    private async Task<(DeliveredDeviceCommand? Delivery, bool Limited)> TryDispatchAsync(ICoreTransactionWrites writes,
+        DeviceCommand command, Guid requestId)
+    {
+        if (await ReadDeliveryCapabilityAsync(writes, command) is null) return (null, false);
+        if (IsHomeAssistantTurn(command) && AutomaticOrigin(command.Origin) &&
+            !await writes.HasHomeDispatchCapacityAsync(command.DeviceId, HomeEntity(command.ArgumentsJson),
+                clock.GetUtcNow().AddMinutes(-1), HomeActionsPerMinute))
+            return (null, true);
+        var now = clock.GetUtcNow();
+        if (command.ExpiresAt <= now) return (null, false);
+        var dispatched = Dispatch(command, requestId, now);
+        await writes.SaveDeviceCommandAsync(dispatched);
+        return (Delivery(dispatched), false);
     }
 
     public Task<DeliveredDeviceCommand> DispatchConfirmedHomeToolAsync(Guid toolId, BudgetActor? owner,
@@ -200,7 +243,8 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
                 if (expiresAt <= now) continue;
                 var command = new DeviceCommand(toolId, grant.Id, deviceId, grant.CapabilityId, grant.CapabilityVersion,
                     grant.CredentialHash, arguments, PrivacyData.Hash(arguments), InvocationOrigin.ManualClient,
-                    DeviceCommandStatus.Pending, Timestamp(now), expiresAt, Timestamp(now), owner!.SubjectId);
+                    DeviceCommandStatus.Pending, Timestamp(now), expiresAt, Timestamp(now), owner!.SubjectId,
+                    HomeEntityId: HomeEntity(arguments));
                 var dispatched = Dispatch(command, Guid.NewGuid(), now);
                 await writes.SaveDeviceCommandAsync(dispatched);
                 return Delivery(dispatched);
@@ -228,19 +272,27 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
 
     private async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
     {
+        if (IsHomeAssistantTurn(command) && AutomaticOrigin(command.Origin) && writes.Runtime.AgentControls.EffectivePaidAiPaused)
+            return null;
         var grant = await writes.ReadDeviceGrantAsync(command.GrantId);
         var now = clock.GetUtcNow();
         if (command.ExpiresAt <= now || !HasActiveGrant(writes.Runtime, grant, command.DeviceId, command.ExpiresAt, now) ||
             !MatchesGrantedArguments(command, grant) || PrivacyData.Hash(command.ArgumentsJson) != command.ArgumentHash)
             return null;
         var descriptor = capabilities.Get(command.CapabilityId, command.CapabilityVersion);
-        return !RequiresConfirmation(command.Origin, descriptor) ||
+        return !RequiresConfirmation(command.Origin, descriptor, grant.PreApproved) ||
             command.ConfirmedAt is not null && !string.IsNullOrWhiteSpace(command.ConfirmedBy) ? descriptor : null;
     }
 
     private static bool IsHomeAssistantTurn(DeviceCommand command) =>
         command.CapabilityId == BuiltInDeviceCapabilities.HomeAssistantTurn &&
         command.CapabilityVersion == BuiltInDeviceCapabilities.HomeAssistantTurnVersion;
+
+    private static string HomeEntity(string arguments)
+    {
+        using var json = JsonDocument.Parse(arguments);
+        return json.RootElement.GetProperty("entityId").GetString()!;
+    }
 
     private static DeviceCommand Dispatch(DeviceCommand command, Guid requestId, DateTimeOffset now) =>
         command with { Status = DeviceCommandStatus.Dispatched, DispatchRequestId = requestId, DispatchedAt = Timestamp(now) };
@@ -254,9 +306,12 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
         grant.CapabilityVersion == command.CapabilityVersion &&
         capabilities.Permits(grant.CapabilityId, grant.CapabilityVersion, grant.ConstraintsJson, command.ArgumentsJson);
 
-    private static bool RequiresConfirmation(InvocationOrigin origin, DeviceCapabilityDescriptor descriptor) =>
-        origin != InvocationOrigin.ManualClient || descriptor.ConfirmationPolicy == DeviceConfirmationPolicy.Owner ||
-        descriptor.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible;
+    private static bool AutomaticOrigin(InvocationOrigin origin) => origin is InvocationOrigin.Voice or InvocationOrigin.Agent;
+
+    private static bool RequiresConfirmation(InvocationOrigin origin, DeviceCapabilityDescriptor descriptor, bool preApproved) =>
+        !(preApproved && AutomaticOrigin(origin) && descriptor.Risk == DeviceCapabilityRisk.Reversible) &&
+        (origin != InvocationOrigin.ManualClient || descriptor.ConfirmationPolicy == DeviceConfirmationPolicy.Owner ||
+            descriptor.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible);
 
     private static bool HasActiveGrant(RuntimeState state, [NotNullWhen(true)] DeviceGrant? grant,
         string deviceId, DateTimeOffset expiresAt, DateTimeOffset now) =>

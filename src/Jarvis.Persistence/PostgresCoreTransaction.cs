@@ -70,5 +70,12 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
             db.DeviceReceipts.Add(DeviceReceiptRow.From(receipt));
             await db.SaveChangesAsync(ct);
         }
+
+        public async Task<bool> HasHomeDispatchCapacityAsync(string deviceId, string entityId, DateTimeOffset since, int limit)
+        {
+            var recent = db.DeviceCommands.Where(x => x.HomeEntityId != null && x.DispatchedAt > since);
+            return await recent.CountAsync(x => x.DeviceId == deviceId, ct) < limit &&
+                await recent.CountAsync(x => x.HomeEntityId == entityId, ct) < limit;
+        }
     }
 }

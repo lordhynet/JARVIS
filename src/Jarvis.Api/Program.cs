@@ -191,6 +191,7 @@ builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis
 builder.Services.AddSingleton<HubTickets>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Coaching.VoiceCoachingService>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreVoiceTools>();
+builder.Services.AddSingleton<Jarvis.Api.Voice.CoreHomeVoiceTool>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.IRealtimeConnectionFactory, Jarvis.Api.Voice.RealtimeConnectionFactory>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.RealtimeGateway>();
 builder.Services.AddSingleton<PaidAiProvider>();

@@ -117,6 +117,12 @@ The adapter polls for that device's approved commands. The existing `/api/tools/
 
 Existing installations may continue using the legacy integration with both executor settings absent. Once either executor setting is supplied, legacy confirmations require both valid settings and an active grant. Rotate the dedicated paired credential and renew its owner grants together when changing the binding.
 
+### Voice home control for lights and switches
+
+The voice window can list granted lights and switches and handle direct requests such as “Turn on the kitchen light” or “Turn the kitchen light off.” Core uses the latest captured user speech to derive the action. It matches exact entity IDs, Home Assistant's friendly names and owner aliases under `HomeAssistant:Aliases`. Each alias key is a spoken name and its value is a granted entity ID. Voice can resolve only entities in both `HomeAssistant:AllowedEntities` and an effective grant on the paired executor. If a name matches multiple entities, Core returns the candidates. [Home Assistant state endpoints](https://contributors.home-assistant.io/core/internals/rest-api/#states)
+
+Set `preApproved` to `true` when the owner issues a reversible capability grant to allow voice and agent commands within its constraints. Existing grants default to `false`. In voice, a matching grant without pre-approval creates a proposal for manual owner confirmation. An automatically approved spoken action dispatches only in the live tool call. It reports success when the signed receipt confirms the requested state. Core limits automatic Home Assistant dispatches to 20 per device and 20 per entity in a rolling minute, and checks the paid-work pause and privacy state before dispatch.
+
 ## Primary API references
 
 - [OpenAI text generation](https://developers.openai.com/api/docs/guides/text)

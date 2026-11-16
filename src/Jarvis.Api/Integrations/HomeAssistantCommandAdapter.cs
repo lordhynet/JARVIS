@@ -17,6 +17,23 @@ public sealed class HomeAssistantCommandAdapter(ProviderGateway gateway, IConfig
     public Task<string> ExecuteAsync(string entityId, string action, CancellationToken ct) =>
         gateway.ExecuteAsync(entityId, action, ct);
 
+    internal async Task<string> VoiceExecutorIdAsync(CancellationToken ct)
+    {
+        var executor = await ReadExecutorAsync(ct);
+        Guard.Require(executor is not null, 503, "Configure a current paired credential for the Home Assistant executor.");
+        return executor.Value.Actor.DeviceId!;
+    }
+
+    internal async Task ExecuteVoiceCommandAsync(Guid id, Func<CancellationToken, Task<bool>> currentAudio, CancellationToken ct)
+    {
+        var executor = await ReadExecutorAsync(ct);
+        Guard.Require(executor is not null, 503, "Configure a current paired credential for the Home Assistant executor.");
+        var (actor, secret) = executor.Value;
+        using var device = DeviceCredentialContext.Enter(actor);
+        var delivery = await commands.ClaimVoiceHomeCommandAsync(id, ct);
+        if (delivery is not null) await ExecuteDeliveryAsync(delivery, secret, ct, currentAudio);
+    }
+
     public async Task<string> ExecuteConfirmedAsync(Guid toolId, string entityId, string action, BudgetActor? owner, CancellationToken ct)
     {
         if (!Configured) return await ExecuteAsync(entityId, action, ct);
@@ -57,7 +74,8 @@ public sealed class HomeAssistantCommandAdapter(ProviderGateway gateway, IConfig
         return actor?.DeviceId == deviceId ? (actor, secret) : null;
     }
 
-    private async Task<string> ExecuteDeliveryAsync(DeliveredDeviceCommand delivery, string credential, CancellationToken ct)
+    private async Task<string> ExecuteDeliveryAsync(DeliveredDeviceCommand delivery, string credential, CancellationToken ct,
+        Func<CancellationToken, Task<bool>>? currentAudio = null)
     {
         var acknowledged = await RecordAsync(delivery, credential, DeviceReceiptKind.Acknowledged, null, ct);
         Guard.Require(!acknowledged.Late, 409, "The Home Assistant dispatch expired before execution.");
@@ -68,6 +86,7 @@ public sealed class HomeAssistantCommandAdapter(ProviderGateway gateway, IConfig
             using var args = JsonDocument.Parse(delivery.ArgumentsJson);
             var entityId = args.RootElement.GetProperty("entityId").GetString()!;
             var action = args.RootElement.GetProperty("action").GetString()!;
+            Guard.Require(currentAudio is null || await currentAudio(ct), 409, "The voice window no longer owns audio.");
             await ExecuteAsync(entityId, action, ct);
             result = await gateway.VerifyHomeStateAsync(entityId, action, ct);
         }

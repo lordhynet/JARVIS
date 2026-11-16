@@ -177,8 +177,13 @@ public sealed partial class PostgresSessionTests
             oldState.DeviceCredentials["old-device"] = new("old-device", "current-hash", now);
             var runtimeRow = await before.RuntimeDocuments.SingleAsync();
             runtimeRow.Json = System.Text.Json.JsonSerializer.Serialize(oldState);
-            before.DeviceGrants.Add(DeviceGrantRow.From(new(grantId, "old-device", "homeassistant.turn", "1.0.0",
-                "{}", "previous-hash", now, now.AddDays(1), GrantedBy: "fixture-owner", Reason: "Stale grant")));
+            const string constraints = "{}";
+            await before.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "DeviceGrants" ("Id", "DeviceId", "CapabilityId", "CapabilityVersion", "ConstraintsJson",
+                    "CredentialHash", "GrantedAt", "ExpiresAt", "GrantedBy", "Reason")
+                VALUES ({grantId}, 'old-device', 'homeassistant.turn', '1.0.0', CAST({constraints} AS jsonb),
+                    'previous-hash', {now}, {now.AddDays(1)}, 'fixture-owner', 'Stale grant')
+                """);
             await before.SaveChangesAsync();
         }
 
@@ -194,6 +199,8 @@ public sealed partial class PostgresSessionTests
         var sessions = host.Services.GetRequiredService<ISessionStore>();
         Assert.Empty((await sessions.GetAsync(sessionId))!.PendingVoiceProjectionIds!);
         Assert.Empty((await sessions.GetAsync(retiredId))!.PendingVoiceProjectionIds!);
-        Assert.NotNull((await host.Services.GetRequiredService<IDeviceGrantStore>().GetAsync(grantId))!.RevokedAt);
+        var migratedGrant = (await host.Services.GetRequiredService<IDeviceGrantStore>().GetAsync(grantId))!;
+        Assert.NotNull(migratedGrant.RevokedAt);
+        Assert.False(migratedGrant.PreApproved);
     }
 }

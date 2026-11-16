@@ -117,6 +117,10 @@ namespace Jarvis.Persistence.Migrations
                     b.Property<Guid>("GrantId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("HomeEntityId")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
                     b.Property<int>("Origin")
                         .HasColumnType("integer");
 
@@ -126,6 +130,8 @@ namespace Jarvis.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedAt");
+
+                    b.HasIndex("DispatchedAt");
 
                     b.HasIndex("DeviceId", "CredentialHash", "DispatchRequestId")
                         .IsUnique();
@@ -174,6 +180,9 @@ namespace Jarvis.Persistence.Migrations
                     b.Property<string>("GrantedBy")
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
+
+                    b.Property<bool>("PreApproved")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Reason")
                         .HasMaxLength(1000)
