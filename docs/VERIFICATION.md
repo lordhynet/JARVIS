@@ -667,3 +667,11 @@ Both `scripts/measure-runtime.ps1 -VoiceProfile` runs passed 1/1 on disposable P
 Realtime input and output check a per-connection lease snapshot at forwarding time. Core refreshes it every 500 ms and limits freshness to one second. Committed lease changes, session ownership loss and erasure invalidate the matching snapshot on the same Core process. Other processes use the authoritative refresh and freshness limit. Provider setup and Core tool dispatch retain direct checks.
 
 Focused validation passed 55/55 tests with disposable PostgreSQL 17. Coverage includes credential rotation on an active fake-provider WebSocket, PostgreSQL invalidation, authoritative expiry, and a refresh racing with revocation. `scripts/measure-runtime.ps1 -VoiceProfile` passed 1/1 and verified zero SQL statements across 200,000 cached checks. The disposable container stopped after verification.
+
+## Round 4 — shared identifiers and companion parity
+
+Centralized repeated route, header, and configuration names. The Kotlin contract generator now emits the Core companion routes and headers alongside all 15 existing DTOs, including the two wake-candidate types. The backend compares the generated route contract with endpoint authorization and checks that bootstrap registration carries the owner policy. String tests pin provider IDs, chat roles, the imported transcript speaker, agent run and trigger states, goal states, and provider attempt outcomes.
+
+The initial Android build identified the two wake DTOs missing from the generator inputs. The initial backend build identified a syntax error in the goal export filter. Both were corrected before rerunning verification. The standalone frontend's intelligence module now matches the domain risk controls already served by Core, and both workspace parity scripts pass locally.
+
+The full backend suite with disposable PostgreSQL 17 passed 351 tests with zero failures. The opt-in performance harness was skipped. Android passed all 31 JVM tests and release lint. The 15 generated Kotlin DTO declarations match the pre-refactor declarations.
