@@ -50,9 +50,14 @@ export function initIntelligence({ api, node, button, notice }) {
         node('p', 'Capabilities: ' + version.manifest.capabilities.map(c => c.id + ' (' + c.versionConstraint + ')').join(', ')));
       if (preview.unmetDependencies.length) row.append(node('p', 'Missing: ' + preview.unmetDependencies.join(' '), 'error'));
       const details = document.createElement('details'); details.append(node('summary', 'Exact manifest to approve'), node('pre', JSON.stringify(version.manifest, null, 2)), node('small', 'Manifest hash: ' + version.manifestHash)); row.append(details);
+      const riskLabel = node('label', 'Approval risk class'); const approvalRisk = document.createElement('select'); approvalRisk.setAttribute('aria-label', 'Approval risk class');
+      const riskChoices = preview.risk === 'General' ? ['General', 'Finance', 'Law', 'Health'] : [preview.risk];
+      for (const risk of riskChoices) { const option = document.createElement('option'); option.value = risk; option.textContent = risk; approvalRisk.append(option); }
+      approvalRisk.value = preview.risk; riskLabel.append(approvalRisk); row.append(riskLabel,
+        node('small', preview.risk === 'General' ? 'You may apply a stricter risk class. Sensitive classes add policy restrictions and cannot be lowered later.' : 'This classification is inferred from the domain and cannot be lowered or replaced during approval.'));
       if (!preview.unmetDependencies.length && (definition.currentVersionId !== version.id || definition.status !== 'Active')) row.append(button('Approve and activate this version', async () => {
-        if (!confirm('Activate ' + version.manifest.displayName + ' version ' + version.version + ' with the access shown above?')) return;
-        await api('/domains/' + encodeURIComponent(definition.key) + '/activate', { requestId: crypto.randomUUID(), expectedRevision: definition.revision, versionId: version.id, manifestHash: version.manifestHash, reason: 'Owner reviewed manifest and access preview' }); await load();
+        if (!confirm('Activate ' + version.manifest.displayName + ' version ' + version.version + ' at ' + approvalRisk.value + ' risk with the access shown above?')) return;
+        await api('/domains/' + encodeURIComponent(definition.key) + '/activate', { requestId: crypto.randomUUID(), expectedRevision: definition.revision, versionId: version.id, manifestHash: version.manifestHash, reason: 'Owner reviewed manifest and access preview', riskClass: approvalRisk.value }); await load();
       }));
       if (definition.status === 'Active') row.append(button('Disable domain', async () => { await api('/domains/' + encodeURIComponent(definition.key) + '/disable', { requestId: crypto.randomUUID(), expectedRevision: definition.revision }); await load(); }));
       domainList.append(row);
