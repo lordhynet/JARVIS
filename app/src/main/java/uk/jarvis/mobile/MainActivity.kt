@@ -33,10 +33,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         model = ViewModelProvider(this)[JarvisViewModel::class.java]
         readPairing(intent)
+        resumeWakeFromNotification(intent)
         lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { while (isActive) { delay(5000); model.poll() } } }
         setContent { JarvisTheme { VoiceCompanion(model, ::requestVoice, ::requestLocalWake, ::stopVoice, ::openPermissions, ::testAudio) { export.launch("jarvis-legacy-local-drafts.json") } } }
     }
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); readPairing(intent) }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); readPairing(intent); resumeWakeFromNotification(intent) }
+    private fun resumeWakeFromNotification(intent: Intent?) {
+        if (intent?.action != LiveVoiceService.RESUME_WAKE) return
+        intent.action = null
+        startForegroundService(Intent(this, LiveVoiceService::class.java).setAction(LiveVoiceService.WAKE_START))
+    }
     private fun readPairing(intent: Intent?) { intent?.getStringExtra("jarvis.provision")?.let { model.offerPairing(it); intent.removeExtra("jarvis.provision") } }
     private fun requestVoice() {
         if (model.state.value.busy || !model.state.value.connected) return

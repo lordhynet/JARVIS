@@ -34,6 +34,7 @@ class LiveVoiceService : Service() {
         const val STOP = "uk.jarvis.mobile.LIVE_STOP"
         const val INTERRUPT = "uk.jarvis.mobile.LIVE_INTERRUPT"
         const val WAKE_START = "uk.jarvis.mobile.LOCAL_WAKE_START"
+        const val RESUME_WAKE = "uk.jarvis.mobile.RESUME_LOCAL_WAKE"
         private val mutable = MutableStateFlow(LiveVoiceState())
         val state = mutable.asStateFlow()
     }
@@ -88,7 +89,16 @@ class LiveVoiceService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("live-voice", "Active live voice", NotificationManager.IMPORTANCE_LOW))
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent == null && getSharedPreferences("installation", 0).getBoolean("local-wake-enabled", false)) startWakeListening()
+        val wakeWasEnabled = getSharedPreferences("installation", 0).getBoolean("local-wake-enabled", false)
+        when (WakeRestartPolicy.action(intent != null, wakeWasEnabled)) {
+            WakeRestartAction.OfferResume -> {
+                showTapToResumeNotification()
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+            WakeRestartAction.Stop -> { stopSelf(startId); return START_NOT_STICKY }
+            WakeRestartAction.HandleCommand -> Unit
+        }
         when (intent?.action) {
             STOP -> stopVoice("Live voice and local wake detection stopped.", disableWake = true)
             INTERRUPT -> interrupt()
@@ -137,6 +147,25 @@ class LiveVoiceService : Service() {
             }
         }
         return if (wakeEnabled) START_STICKY else START_NOT_STICKY
+    }
+    private fun showTapToResumeNotification() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            mutable.value = LiveVoiceState(message = "Wake paused after Android restarted JARVIS. Open the app and allow notifications to resume.")
+            return
+        }
+        val resume = PendingIntent.getActivity(this, 203,
+            Intent(this, MainActivity::class.java).setAction(RESUME_WAKE)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = Notification.Builder(this, "live-voice")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle("JARVIS wake listening paused")
+            .setContentText("Tap to resume wake")
+            .setContentIntent(resume)
+            .setAutoCancel(true)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(44, notification)
+        mutable.value = LiveVoiceState(message = "Wake paused after Android restarted JARVIS. Tap the notification to resume.")
     }
     private fun startWakeListening() {
         if (active || wakeEnabled) return
