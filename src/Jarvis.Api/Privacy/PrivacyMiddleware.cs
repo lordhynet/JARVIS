@@ -8,8 +8,8 @@ public sealed class PrivacyMiddleware(RequestDelegate next)
     {
         if (!context.Request.Path.StartsWithSegments("/api") && !context.Request.Path.StartsWithSegments("/hubs")) { await next(context); return; }
         var status = await reader.StatusAsync(context.RequestAborted);
-        context.Response.Headers["X-Jarvis-Data-Epoch"] = status.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var suppliedEpoch = context.Request.Headers["X-Jarvis-Data-Epoch"];
+        context.Response.Headers[CoreHeaders.DataEpoch] = status.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var suppliedEpoch = context.Request.Headers[CoreHeaders.DataEpoch];
         if (!context.Request.Path.StartsWithSegments(CoreRoutes.Privacy) && suppliedEpoch.Count > 0 &&
             (suppliedEpoch.Count != 1 || !long.TryParse(suppliedEpoch[0], System.Globalization.NumberStyles.None,
                 System.Globalization.CultureInfo.InvariantCulture, out var epoch) || epoch != status.Epoch))

@@ -3,5 +3,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Jarvis.Contracts/Jarvis.Contracts.csproj" />
     <Compile Include="../../src/Jarvis.Api/CoreRoutes.cs" Link="CoreRoutes.cs" />
+    <Compile Include="../../src/Jarvis.Api/CoreHeaders.cs" Link="CoreHeaders.cs" />
   </ItemGroup>
 </Project>

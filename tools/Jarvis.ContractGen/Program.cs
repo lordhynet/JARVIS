@@ -52,6 +52,10 @@ output.AppendLine($"    val postPaths = setOf({string.Join(", ", CoreRoutes.Comp
 output.AppendLine("    val heartbeatPattern = Regex(DEVICE_HEARTBEAT.replace(\"{id}\", \"[A-Za-z0-9_-]{1,80}\"))");
 output.AppendLine("    fun heartbeat(deviceId: String) = DEVICE_HEARTBEAT.replace(\"{id}\", deviceId)");
 output.AppendLine("}\n");
+output.AppendLine("internal object CoreCompanionHeaders {");
+output.AppendLine($"    const val API_KEY = {JsonSerializer.Serialize(CoreHeaders.ApiKey)}");
+output.AppendLine($"    const val DATA_EPOCH = {JsonSerializer.Serialize(CoreHeaders.DataEpoch)}");
+output.AppendLine("}\n");
 foreach (var type in types.OrderBy(t => t.Name, StringComparer.Ordinal))
 {
     if (type.IsEnum) { output.AppendLine($"enum class {type.Name} {{ {string.Join(", ", Enum.GetNames(type))} }}\n"); continue; }

@@ -11,7 +11,6 @@ namespace Jarvis.Api.Security;
 /// </summary>
 public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config, ILogger<ApiKeyMiddleware> logger)
 {
-    public const string HeaderName = "X-Jarvis-Key";
     public const string ConfigKey = "Jarvis:ApiKey";
     public const string FingerprintItem = "Jarvis.AuthFingerprint";
     public const string ActorItem = "Jarvis.Actor";
@@ -36,7 +35,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
             return;
         }
 
-        var supplied = context.Request.Headers[HeaderName].FirstOrDefault() ?? BearerToken(context.Request);
+        var supplied = context.Request.Headers[CoreHeaders.ApiKey].FirstOrDefault() ?? BearerToken(context.Request);
         if (supplied is null && context.Request.Path.StartsWithSegments("/hubs") && context.Request.Query[QueryName].Count > 0)
         {
             Guard.Require(context.WebSockets.IsWebSocketRequest && context.Request.Path.Equals(new PathString("/hubs/status")) &&
@@ -58,7 +57,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
                 var status = await privacy.StatusAsync(context.RequestAborted);
                 if (status.Erased)
                 {
-                    context.Response.Headers["X-Jarvis-Data-Epoch"] = status.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    context.Response.Headers[CoreHeaders.DataEpoch] = status.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture);
                     await context.Response.WriteAsJsonAsync(new { error = "Core data has been erased. Reconnect after the owner reopens Core.", coreErased = true });
                     return;
                 }

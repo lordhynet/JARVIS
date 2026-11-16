@@ -12,9 +12,9 @@ try {
     $checkedIn = [IO.File]::ReadAllText($actual).Replace("`r`n", "`n")
     $expected = [IO.File]::ReadAllText($generated)
     if ($checkedIn -cne $expected) {
-        throw 'Android contracts or companion routes drifted. Regenerate CoreContracts.kt with Jarvis.ContractGen.'
+        throw 'Android contracts, companion routes or headers drifted. Regenerate CoreContracts.kt with Jarvis.ContractGen.'
     }
-    Write-Host 'Android contracts and companion routes match the C# source.'
+    Write-Host 'Android contracts, companion routes and headers match the C# source.'
 } finally {
     if (Test-Path -LiteralPath $generated) { Remove-Item -LiteralPath $generated }
     Pop-Location
