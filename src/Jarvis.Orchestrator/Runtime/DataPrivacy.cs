@@ -85,7 +85,7 @@ public static class PrivacyData
         var deadSessions = sessions.Where(x => x.Status == SessionStatus.Ended && x.UpdatedAt < at.AddDays(-p.SessionDays)).Select(x => x.Id).ToHashSet();
         var training = state.TrainingAttempts.Values.Where(x => x.DeletedAt is null && (AnswerAt(x) < at.AddDays(-p.AnswerDays) || deadSessions.Contains(x.SessionId))).Select(x => x.Id).ToHashSet();
         var coaching = state.CoachingAttempts.Values.Where(x => x.DeletedAt is null && (CoachAt(state, x) < at.AddDays(-p.AnswerDays) || deadSessions.Contains(x.SessionId))).Select(x => x.Id).ToHashSet();
-        var agents = state.AgentRuns.Values.Where(x => x.DeletedAt is null && x.Status is not ("Queued" or "Running") && x.CreatedAt < at.AddDays(-p.ArtifactDays)).Select(x => x.Id).ToHashSet();
+        var agents = state.AgentRuns.Values.Where(x => x.DeletedAt is null && x.Status is not (AgentRunStatus.Queued or AgentRunStatus.Running) && x.CreatedAt < at.AddDays(-p.ArtifactDays)).Select(x => x.Id).ToHashSet();
         var taskIds = state.AgentTasks.Values.Where(x => agents.Contains(x.RunId)).Select(x => x.Id).ToHashSet();
         return new(deadSessions, training, coaching,
             state.VoiceTurns.Values.Where(x => x.At < at.AddDays(-p.VoiceDays) || deadSessions.Contains(x.SessionId)).Select(x => x.Id).ToHashSet(),
@@ -125,7 +125,7 @@ public static class PrivacyData
             state.Tools[tool.Invocation.Id] = tool with { Invocation = tool.Invocation with { ArgumentsJson = "{}", Status = ToolInvocationStatus.Rejected, Permission = ToolPermission.Denied }, Result = null, CompletedAt = at };
         foreach (var run in state.AgentRuns.Values.Where(x => selection.Agents.Contains(x.Id)).ToList())
         {
-            state.AgentRuns[run.Id] = run with { DeletedAt = at, Status = "Cancelled",
+            state.AgentRuns[run.Id] = run with { DeletedAt = at, Status = AgentRunStatus.Cancelled,
                 WorkflowPolicy = run.WorkflowPolicy is { } policy ? policy with { DomainContext = null, PracticeTemplate = null } : null };
             foreach (var id in run.TaskIds)
             {

@@ -11,7 +11,7 @@ public static class AgentEligibility
 {
     public static bool HasTickWork(RuntimeState s, DateTimeOffset now, IReadOnlyDictionary<string, WorkflowDescriptor> available)
     {
-        if (s.AgentRuns.Values.Any(r => r.DeletedAt is null && r.Status is "Queued" or "Running")) return true;
+        if (s.AgentRuns.Values.Any(r => r.DeletedAt is null && r.Status is AgentRunStatus.Queued or AgentRunStatus.Running)) return true;
         if (s.Goals.Values.Any(g => g.Status == "Active" && (g.Deadline <= now ||
             !s.AgentControls.EffectiveAgentsPaused && g.LastRunId is null && g.NextReviewAt <= now &&
             available.TryGetValue(g.Workflow, out var goalWorkflow) && (!goalWorkflow.RequiresCloud || g.AllowCloudProcessing) &&
@@ -44,7 +44,7 @@ public static class AgentEligibility
         if (s.AgentTasks.Values.Any(t => t.Status == AgentTaskStatus.Running && t.LeaseExpiresAt <= now)) return true;
         if (s.AgentTasks.Values.Count(x => x.Status == AgentTaskStatus.Running && x.LeaseExpiresAt > now) >= 2) return false;
         return s.AgentTasks.Values.Any(t => (t.Status is AgentTaskStatus.Queued or AgentTaskStatus.RetryScheduled) && t.AvailableAt <= now &&
-            s.AgentRuns.TryGetValue(t.RunId, out var run) && run.DeletedAt is null && run.Status is "Queued" or "Running" && run.Deadline > now &&
+            s.AgentRuns.TryGetValue(t.RunId, out var run) && run.DeletedAt is null && run.Status is AgentRunStatus.Queued or AgentRunStatus.Running && run.Deadline > now &&
             s.AgentControls.PausedWorkflows?.Contains(run.Workflow) != true &&
             (t.Role != AgentRole.Review || run.TaskIds.Where(id => id != t.Id).All(id => s.AgentTasks[id].Status == AgentTaskStatus.Succeeded)));
     }
