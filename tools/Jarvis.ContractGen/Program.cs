@@ -5,7 +5,12 @@ using Jarvis.Api;
 using Jarvis.Contracts;
 
 if (args.Length != 1) throw new ArgumentException("Pass the generated Kotlin output path.");
-var roots = new[] { typeof(RegisterDeviceRequest), typeof(DeviceView), typeof(PrivacyStatus), typeof(AiCapabilityStatus), typeof(CompanionVoiceRequest), typeof(CompanionVoiceSession), typeof(VoiceStartRequest), typeof(VoiceTicket) };
+var roots = new[]
+{
+    typeof(RegisterDeviceRequest), typeof(DeviceView), typeof(PrivacyStatus), typeof(AiCapabilityStatus),
+    typeof(CompanionVoiceRequest), typeof(CompanionVoiceSession), typeof(VoiceStartRequest), typeof(VoiceTicket),
+    typeof(WakeCandidateRequest), typeof(WakeCandidateResponse)
+};
 var types = new HashSet<Type>();
 void Visit(Type type)
 {
