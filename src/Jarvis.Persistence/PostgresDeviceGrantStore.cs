@@ -10,21 +10,28 @@ public sealed class PostgresDeviceGrantStore(IDbContextFactory<SessionDbContext>
     {
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
+        var saved = await AddAsync(db, grant, ct);
+        await tx.CommitAsync(ct);
+        return saved;
+    }
+
+    internal static async Task<DeviceGrant> AddAsync(SessionDbContext db, DeviceGrant grant, CancellationToken ct)
+    {
         var row = DeviceGrantRow.From(grant);
         db.DeviceGrants.Add(row);
         try
         {
             await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
             return row.Contract();
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException
             { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "PK_DeviceGrants" })
         {
-            await tx.RollbackAsync(ct);
-            var existing = await GetAsync(grant.Id, ct);
+            // EF rolls back the unsuccessful insert to its savepoint in the shared transaction.
+            db.Entry(row).State = EntityState.Detached;
+            var existing = await db.DeviceGrants.AsNoTracking().SingleOrDefaultAsync(x => x.Id == grant.Id, ct);
             Guard.Require(existing is not null, 409, "Grant changed during the request.");
-            return existing.RequireSameRequest(row.Contract());
+            return existing.Contract().RequireSameRequest(row.Contract());
         }
     }
     public async Task<DeviceGrant?> GetAsync(Guid id, CancellationToken ct = default)
@@ -66,9 +73,15 @@ public sealed class PostgresDeviceGrantStore(IDbContextFactory<SessionDbContext>
     {
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
-        var rows = await db.DeviceGrants.Where(x => x.DeviceId == deviceId && x.RevokedAt == null).ToListAsync(ct);
-        foreach (var row in rows) row.RevokedAt = SessionRow.DatabaseTimestamp(now);
-        if (rows.Count > 0) await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return rows.Count;
+        var count = await RevokeForDeviceAsync(db, deviceId, now, ct);
+        await tx.CommitAsync(ct);
+        return count;
+    }
+    internal static Task<int> RevokeForDeviceAsync(SessionDbContext db, string deviceId, DateTimeOffset now, CancellationToken ct)
+    {
+        var timestamp = SessionRow.DatabaseTimestamp(now);
+        return db.DeviceGrants.Where(x => x.DeviceId == deviceId && x.RevokedAt == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.RevokedAt, timestamp), ct);
     }
     public async Task<int> PruneAsync(DateTimeOffset now, CancellationToken ct = default)
     {

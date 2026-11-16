@@ -85,7 +85,6 @@ public sealed class RuntimeMeasurementHarnessTests
         using var client = host.CreateClient(); // Starts the isolated API and applies its migrations.
         var services = host.Services;
         var runtime = services.GetRequiredService<IRuntimeStore>();
-        var sessions = services.GetRequiredService<ISessionStore>();
         var device = services.GetRequiredService<DeviceService>();
         var now = DateTimeOffset.UtcNow;
         const string deviceId = "measurement-phone";
@@ -176,15 +175,9 @@ public sealed class RuntimeMeasurementHarnessTests
             prepareSamples[index] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         }
 
-        var repair = services.GetRequiredService<IVoiceRepairStore>();
-        var target = syntheticSessions[1]; var voiceId = Guid.NewGuid();
-        await sessions.UpdateAsync(target.Id, current => current with
-        {
-            Messages = [.. current.Messages ?? [], new(voiceId, "user", "Synthetic orphaned voice projection", now, true, 1.0)],
-            PendingVoiceProjectionIds = [.. current.PendingVoiceProjectionIds ?? [], voiceId]
-        });
-        var pendingRepairMs = await MeasureOneAsync(() => repair.RepairTranscriptsAsync(default));
-        var idleRepairMs = await MeasureOneAsync(() => repair.RepairTranscriptsAsync(default));
+        var transcripts = services.GetRequiredService<VoiceTranscriptService>();
+        var transcriptWriteMs = await MeasureOneAsync(() =>
+            transcripts.RecordAsync(syntheticSessions[1].Id, Guid.NewGuid(), "user", "Synthetic captured speech", 1.0, default));
 
         // Count real EF/Npgsql calls from the idle AgentWorker and RuntimeWorker for one full minute.
         await Task.Delay(TimeSpan.FromSeconds(2));
@@ -205,8 +198,7 @@ public sealed class RuntimeMeasurementHarnessTests
             runtimeBytesHistogram = new { samples = byteSamples.Length, p50 = Percentile(byteSamples.Select(value => (double)value), .50), p95 = Percentile(byteSamples.Select(value => (double)value), .95) },
             currentAsyncMs = Summary(currentSamples),
             companionPrepareMs = Summary(prepareSamples),
-            voiceRepairPendingMs = pendingRepairMs,
-            voiceRepairIdleMs = idleRepairMs,
+            voiceTranscriptWriteMs = transcriptWriteMs,
             idleWorkerDbCallsPerMinute = Math.Round(idleCalls * 60.0 / idleSeconds, 2),
             idleWorkerObservationSeconds = Math.Round(idleSeconds, 2)
         };
@@ -344,7 +336,7 @@ public sealed class RuntimeMeasurementHarnessTests
         return samples;
     }
 
-    private static async Task<double> MeasureOneAsync<T>(Func<Task<T>> operation)
+    private static async Task<double> MeasureOneAsync(Func<Task> operation)
     {
         var started = Stopwatch.GetTimestamp(); await operation(); return Stopwatch.GetElapsedTime(started).TotalMilliseconds;
     }

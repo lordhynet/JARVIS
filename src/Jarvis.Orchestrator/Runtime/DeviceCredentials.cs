@@ -21,33 +21,33 @@ public static class DeviceCredentialContext
     }
 }
 
-public sealed class DeviceCredentials(IRuntimeStore store, IDeviceGrantStore grants, TimeProvider clock)
+public sealed class DeviceCredentials(IRuntimeReader store, ICoreTransaction transaction, TimeProvider clock)
 {
     public const string Prefix = "jdv1_";
-    public async Task<IssuedDeviceCredential> IssueAsync(string deviceId, CancellationToken ct)
-    {
-        var issued = await store.UpdateAsync(s => {
-        Guard.Require(s.Devices.ContainsKey(deviceId), 404, "Register the device before enrolling its credential.");
-        Guard.Require(s.DeviceCredentials.ContainsKey(deviceId) || s.DeviceCredentials.Count < 100, 409, "Device credential capacity reached.");
-        var secret = Prefix + Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        s.DeviceCredentials[deviceId] = new(deviceId, PrivacyData.Hash(secret), clock.GetUtcNow());
-        InvalidateAudio(s, deviceId);
-        return new IssuedDeviceCredential(deviceId, secret);
+    public Task<IssuedDeviceCredential> IssueAsync(string deviceId, CancellationToken ct) =>
+        transaction.ExecuteAsync(async writes =>
+        {
+            var state = writes.Runtime;
+            Guard.Require(state.Devices.ContainsKey(deviceId), 404, "Register the device before enrolling its credential.");
+            Guard.Require(state.DeviceCredentials.ContainsKey(deviceId) || state.DeviceCredentials.Count < 100, 409, "Device credential capacity reached.");
+            var now = clock.GetUtcNow();
+            var secret = Prefix + Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            state.DeviceCredentials[deviceId] = new(deviceId, PrivacyData.Hash(secret), now);
+            InvalidateAudio(state, deviceId);
+            await writes.RevokeDeviceGrantsAsync(deviceId, now);
+            return new IssuedDeviceCredential(deviceId, secret);
         }, ct);
-        await grants.RevokeForDeviceAsync(deviceId, clock.GetUtcNow(), ct);
-        return issued;
-    }
 
-    public async Task<bool> RevokeAsync(string deviceId, CancellationToken ct)
-    {
-        var revoked = await store.UpdateAsync(s => {
-        if (!s.DeviceCredentials.TryGetValue(deviceId, out var credential)) return false;
-        s.DeviceCredentials[deviceId] = credential with { Revoked = true };
-        InvalidateAudio(s, deviceId); return true;
+    public Task<bool> RevokeAsync(string deviceId, CancellationToken ct) =>
+        transaction.ExecuteAsync(async writes =>
+        {
+            var state = writes.Runtime;
+            if (!state.DeviceCredentials.TryGetValue(deviceId, out var credential)) return false;
+            state.DeviceCredentials[deviceId] = credential with { Revoked = true };
+            InvalidateAudio(state, deviceId);
+            await writes.RevokeDeviceGrantsAsync(deviceId, clock.GetUtcNow());
+            return true;
         }, ct);
-        if (revoked) await grants.RevokeForDeviceAsync(deviceId, clock.GetUtcNow(), ct);
-        return revoked;
-    }
     public async Task<CoreActor?> AuthenticateAsync(string secret, CancellationToken ct)
     {
         if (secret.Length != Prefix.Length + 64 || !secret.StartsWith(Prefix, StringComparison.Ordinal)) return null;

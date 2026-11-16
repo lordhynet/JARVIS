@@ -31,12 +31,14 @@ public sealed partial class PostgresSessionTests
         }
         var request = DeviceGrantTests.GrantRequest();
         Guid grantId;
+        string originalSecret;
         using (var host = new PostgresApiFactory(database.ConnectionString))
         {
             await host.Services.GetRequiredService<DeviceService>().RegisterAsync(new(deviceId, "Grant fixture", DeviceKind.AndroidCompanion,
                 new(true, true, false, false, [])));
             using var owner = host.AuthorisedClient();
             var credentialResponse = await owner.PostAsJsonAsync($"/api/devices/{deviceId}/credential", new { }); credentialResponse.EnsureSuccessStatusCode();
+            originalSecret = (await credentialResponse.Content.ReadFromJsonAsync<IssuedDeviceCredential>(Json))!.Secret;
             var route = $"/api/devices/{deviceId}/grants";
             var first = owner.PostAsJsonAsync(route, request);
             var retry = owner.PostAsJsonAsync(route, request with { ConstraintsJson = """{ "allowedEntityIds": [ "light.kitchen" ] }""" });
@@ -55,6 +57,11 @@ public sealed partial class PostgresSessionTests
         Assert.NotNull(legacyGrant);
         Assert.Null(legacyGrant.Audit);
         Assert.Null(await grants.FindActiveAsync("legacy-fixture", "homeassistant.turn", "1.0.0", "old-hash", now));
+        var failure = new FailBeforeCoreCommit(restarted.Services.GetRequiredService<ICoreTransaction>());
+        var failingCredentials = new DeviceCredentials(restarted.Services.GetRequiredService<IRuntimeReader>(), failure, TimeProvider.System);
+        await Assert.ThrowsAsync<IOException>(() => failingCredentials.IssueAsync(deviceId, default));
+        Assert.NotNull(await restarted.Services.GetRequiredService<DeviceCredentials>().AuthenticateAsync(originalSecret, default));
+        Assert.Null((await grants.GetAsync(grantId))!.RevokedAt);
         var revokedAt = DateTimeOffset.UtcNow;
         Assert.True(await grants.RevokeAsync(grantId, revokedAt));
         Assert.Equal(0, await grants.PruneAsync(revokedAt));
@@ -74,6 +81,34 @@ public sealed partial class PostgresSessionTests
     }
 
     [PostgresFact]
+    public async Task Concurrent_grant_creation_and_credential_rotation_leave_a_current_or_revoked_binding()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        using var host = new PostgresApiFactory(database.ConnectionString);
+        const string deviceId = "concurrent-grant-device";
+        await host.Services.GetRequiredService<DeviceService>().RegisterAsync(new(deviceId, "Grant fixture",
+            DeviceKind.AndroidCompanion, new(true, true, false, false, [])));
+        var credentials = host.Services.GetRequiredService<DeviceCredentials>();
+        var previous = await credentials.IssueAsync(deviceId, default);
+        var creation = host.Services.GetRequiredService<DeviceGrantService>().GrantAsync(deviceId, DeviceGrantTests.GrantRequest(),
+            new("fixture-owner", [DeviceGrantService.ManageScope]));
+        var rotation = credentials.IssueAsync(deviceId, default);
+        await Task.WhenAll(creation, rotation);
+
+        var view = await creation;
+        var credential = await rotation;
+        var saved = (await host.Services.GetRequiredService<IDeviceGrantStore>().GetAsync(view.Id))!;
+        if (saved.CredentialHash == PrivacyData.Hash(credential.Secret))
+            Assert.Null(saved.RevokedAt);
+        else
+        {
+            Assert.Equal(PrivacyData.Hash(previous.Secret), saved.CredentialHash);
+            Assert.NotNull(saved.RevokedAt);
+        }
+        Assert.Null(await credentials.AuthenticateAsync(previous.Secret, default));
+    }
+
+    [PostgresFact]
     public async Task Narrow_paid_pause_read_returns_only_the_effective_pause_state()
     {
         await using var database = await TestDatabase.CreateAsync();
@@ -86,30 +121,79 @@ public sealed partial class PostgresSessionTests
     }
 
     [PostgresFact]
-    public async Task Voice_projection_repair_survives_restart_is_idempotent_and_respects_erasure()
+    public async Task Failed_atomic_voice_and_session_writes_roll_back_in_postgres()
     {
-        await using var database = await TestDatabase.CreateAsync(); var sessionId = Guid.NewGuid(); var turnId = Guid.NewGuid();
-        using (var first = new PostgresApiFactory(database.ConnectionString)) {
-            var sessions = first.Services.GetRequiredService<ISessionStore>(); var now = DateTimeOffset.UtcNow;
-            await sessions.AddAsync(new(sessionId, ActivityType.General, "Crash recovery", SessionStatus.Active, "phone", null, now, now, []));
-            var failing = new VoiceTranscriptService(sessions, new FailVoiceProjection(first.Services.GetRequiredService<IRuntimeStore>()), TimeProvider.System);
-            await Assert.ThrowsAsync<IOException>(() => failing.RecordAsync(sessionId, turnId, "user", "Durable captured speech", 1.25, default));
+        await using var database = await TestDatabase.CreateAsync();
+        using var host = new PostgresApiFactory(database.ConnectionString);
+        var sessions = host.Services.GetRequiredService<ISessionStore>();
+        var runtime = host.Services.GetRequiredService<IRuntimeStore>();
+        var sessionId = Guid.NewGuid();
+        var turnId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        await sessions.AddAsync(new(sessionId, ActivityType.General, "Crash recovery", SessionStatus.Active, "phone", null, now, now, []));
+        var failure = new FailBeforeCoreCommit(host.Services.GetRequiredService<ICoreTransaction>());
+        var failing = new VoiceTranscriptService(failure, TimeProvider.System);
+        await Assert.ThrowsAsync<IOException>(() => failing.RecordAsync(sessionId, turnId, "user", "Captured speech", 1.25, default));
+        Assert.Empty((await sessions.GetAsync(sessionId))!.Messages!);
+        Assert.Empty(await runtime.ReadAsync(s => s.VoiceTurns));
+
+        var service = host.Services.GetRequiredService<VoiceTranscriptService>();
+        await service.RecordAsync(sessionId, turnId, "user", "Captured speech", 1.25, default);
+        await service.RecordAsync(sessionId, turnId, "user", "Captured speech", 1.25, default);
+        Assert.Equal(turnId, Assert.Single((await sessions.GetAsync(sessionId))!.Messages!).RequestId);
+        Assert.Equal(turnId, Assert.Single(await runtime.ReadAsync(s => s.VoiceTurns.Values.ToArray())).Id);
+        Assert.Empty((await sessions.GetAsync(sessionId))!.PendingVoiceProjectionIds!);
+        await VoiceConsistencyTests.VerifySessionAndLeaseRollbackAsync(host.Services);
+    }
+
+    [PostgresFact]
+    public async Task Migration_recovers_pending_transcripts_and_reconciles_stale_lease_and_grants()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var sessionId = Guid.NewGuid();
+        var retiredId = Guid.NewGuid();
+        var missingId = Guid.NewGuid();
+        var existingId = Guid.NewGuid();
+        var retiredTurnId = Guid.NewGuid();
+        var grantId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var orphan = new AudioLease(sessionId, "old-device", 19, now.AddMinutes(2));
+        await using (var before = new SessionDbContext(new DbContextOptionsBuilder<SessionDbContext>()
+            .UseNpgsql(database.ConnectionString).Options))
+        {
+            await before.Database.GetService<IMigrator>().MigrateAsync("20261116101533_DeviceGrantAudit");
+            before.Sessions.Add(SessionRow.FromContract(new(sessionId, ActivityType.General, "Pending", SessionStatus.Paused,
+                null, null, now, now, [], Messages: [
+                    new(missingId, "user", "Recovered speech", now, true, 1.25),
+                    new(existingId, "assistant", "Already projected", now, true),
+                    new(Guid.NewGuid(), "user", "Ordinary text", now)
+                ], PendingVoiceProjectionIds: [missingId, existingId])));
+            before.Sessions.Add(SessionRow.FromContract(new(retiredId, ActivityType.General, "Retired", SessionStatus.Ended,
+                null, null, now, now, [], Messages: [new(retiredTurnId, "user", "Retired speech", now, true)],
+                PendingVoiceProjectionIds: [retiredTurnId])));
+            var oldState = new RuntimeState { AudioLease = orphan };
+            oldState.VoiceTurns[existingId] = new(existingId, sessionId, "assistant", "Original projection", null, now);
+            oldState.RetiredSessions.Add(retiredId);
+            oldState.DeviceCredentials["old-device"] = new("old-device", "current-hash", now);
+            var runtimeRow = await before.RuntimeDocuments.SingleAsync();
+            runtimeRow.Json = System.Text.Json.JsonSerializer.Serialize(oldState);
+            before.DeviceGrants.Add(DeviceGrantRow.From(new(grantId, "old-device", "homeassistant.turn", "1.0.0",
+                "{}", "previous-hash", now, now.AddDays(1), GrantedBy: "fixture-owner", Reason: "Stale grant")));
+            await before.SaveChangesAsync();
         }
-        using var restarted = new PostgresApiFactory(database.ConnectionString); var repair = restarted.Services.GetRequiredService<IVoiceRepairStore>();
-        var counts = await Task.WhenAll(repair.RepairTranscriptsAsync(default), repair.RepairTranscriptsAsync(default)); Assert.Equal(1, counts.Sum());
-        Assert.Equal(0, await repair.RepairTranscriptsAsync(default));
-        var runtime = restarted.Services.GetRequiredService<IRuntimeStore>(); var turn = Assert.Single(await runtime.ReadAsync(s => s.VoiceTurns.Values.ToArray()));
-        Assert.Equal(turnId, turn.Id); Assert.Equal(1.25, turn.SpeechSeconds); Assert.Equal("Durable captured speech", turn.Text);
-        Assert.Empty((await restarted.Services.GetRequiredService<ISessionStore>().GetAsync(sessionId))!.PendingVoiceProjectionIds!);
-        // Idle repair has no runtime write (xmin is unchanged).
-        await using var db = await restarted.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>().CreateDbContextAsync();
-        var before = await db.Database.SqlQueryRaw<string>("SELECT xmin::text AS \"Value\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1").SingleAsync();
-        await repair.RepairTranscriptsAsync(default);
-        Assert.Equal(before, await db.Database.SqlQueryRaw<string>("SELECT xmin::text AS \"Value\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1").SingleAsync());
-        var privacy = restarted.Services.GetRequiredService<IPrivacyStore>(); var status = await privacy.StatusAsync();
-        await privacy.EraseAsync(new(Guid.NewGuid(), status.Revision, PrivacyData.ErasePhrase), PrivacyData.Hash("fixture-key"), DateTimeOffset.UtcNow);
-        using var epoch = PrivacyContext.Enter(status.Epoch);
-        await Assert.ThrowsAsync<DomainException>(() => repair.RepairTranscriptsAsync(default));
-        Assert.Empty(await db.Sessions.ToArrayAsync());
+
+        using var host = new PostgresApiFactory(database.ConnectionString);
+        var state = await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s);
+        Assert.Equal(2, state.VoiceTurns.Count);
+        Assert.Equal("Recovered speech", state.VoiceTurns[missingId].Text);
+        Assert.Equal(1.25, state.VoiceTurns[missingId].SpeechSeconds);
+        Assert.Equal("Original projection", state.VoiceTurns[existingId].Text);
+        Assert.Null(state.AudioLease);
+        Assert.Equal(orphan, state.AudioDrainLease);
+        Assert.Equal(orphan.ExpiresAt, state.AudioDrainUntil);
+        var sessions = host.Services.GetRequiredService<ISessionStore>();
+        Assert.Empty((await sessions.GetAsync(sessionId))!.PendingVoiceProjectionIds!);
+        Assert.Empty((await sessions.GetAsync(retiredId))!.PendingVoiceProjectionIds!);
+        Assert.NotNull((await host.Services.GetRequiredService<IDeviceGrantStore>().GetAsync(grantId))!.RevokedAt);
     }
 }

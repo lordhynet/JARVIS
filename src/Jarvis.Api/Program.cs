@@ -100,9 +100,9 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<ISessionStore, PostgresSessionStore>();
     builder.Services.AddSingleton<IDeviceGrantStore, PostgresDeviceGrantStore>();
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
+    builder.Services.AddSingleton<ICoreTransaction, PostgresCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
     builder.Services.AddSingleton<IPrivacyStore, PostgresPrivacyStore>();
-    builder.Services.AddSingleton<IVoiceRepairStore, PostgresVoiceRepairStore>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistryStore, PostgresDomainRegistryStore>();
     builder.Services.AddSingleton<IStorageReadiness, PostgresReadiness>();
 }
@@ -113,9 +113,9 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<ISessionStore, GuardedMemorySessions>();
     builder.Services.AddSingleton<InMemoryDeviceGrantStore>(); builder.Services.AddSingleton<IDeviceGrantStore>(s => s.GetRequiredService<InMemoryDeviceGrantStore>());
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
+    builder.Services.AddSingleton<ICoreTransaction, MemoryCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
     builder.Services.AddSingleton<IPrivacyStore, InMemoryPrivacyStore>();
-    builder.Services.AddSingleton<IVoiceRepairStore, MemoryVoiceRepairStore>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistryStore, Jarvis.Orchestrator.Domains.MemoryDomainRegistryStore>();
     builder.Services.AddSingleton<IStorageReadiness, InMemoryReadiness>();
 }

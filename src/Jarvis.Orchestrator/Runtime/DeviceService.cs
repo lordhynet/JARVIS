@@ -35,9 +35,14 @@ public sealed class DeviceService(IRuntimeStore store, TimeProvider clock)
     public Task<RegisteredDevice> VerifyAsync(string id, CancellationToken ct = default) =>
         Change(id, d => d with { CapabilitiesVerified = true }, ct);
 
-    public async Task<RegisteredDevice> RequireOnlineAsync(string id, bool voice, CancellationToken ct)
+    public async Task<RegisteredDevice> RequireOnlineAsync(string id, bool voice, CancellationToken ct) =>
+        RequireOnline(await store.ReadRegisteredDeviceAsync(id, ct), voice);
+
+    internal RegisteredDevice RequireOnline(RuntimeState state, string id, bool voice) =>
+        RequireOnline(state.Devices.GetValueOrDefault(id), voice);
+
+    private RegisteredDevice RequireOnline(RegisteredDevice? device, bool voice)
     {
-        var device = await store.ReadRegisteredDeviceAsync(id, ct);
         Guard.Require(device is not null, 404, "Device not registered.");
         Guard.Require(IsOnline(device!), 409, "Device is offline. Send a heartbeat first.");
         Guard.Require(device!.CapabilitiesVerified, 409, "Verify the device capabilities first.");

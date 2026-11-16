@@ -24,7 +24,7 @@ public sealed class LiveAudioFenceTests
         var sessions = new InMemorySessionStore(changes);
         var lease = await SeedAsync(runtime, sessions, clock);
         var reader = new DelayedLeaseReader(runtime);
-        var ownership = new AudioOwnership(reader, sessions, new DeviceService(reader, clock), clock);
+        var ownership = new AudioOwnership(reader, sessions, new DeviceService(reader, clock), clock, new MemoryCoreTransaction(runtime, sessions, new()));
         using var fence = new LiveAudioFence(lease, ownership, changes, clock);
         Assert.True(await fence.RefreshAsync(default));
 
@@ -46,7 +46,7 @@ public sealed class LiveAudioFenceTests
         var runtime = new InMemoryRuntimeStore();
         var sessions = new InMemorySessionStore(localChanges);
         var lease = await SeedAsync(runtime, sessions, clock);
-        var ownership = new AudioOwnership(runtime, sessions, new DeviceService(runtime, clock), clock);
+        var ownership = new AudioOwnership(runtime, sessions, new DeviceService(runtime, clock), clock, new MemoryCoreTransaction(runtime, sessions, new()));
         using var fence = new LiveAudioFence(lease, ownership, localChanges, clock);
         Assert.False(fence.IsCurrent());
         Assert.True(await fence.RefreshAsync(default));
@@ -74,7 +74,7 @@ public sealed class LiveAudioFenceTests
         var runtime = new InMemoryRuntimeStore(changes);
         var sessions = new InMemorySessionStore(changes);
         var lease = await SeedAsync(runtime, sessions, clock);
-        var ownership = new AudioOwnership(runtime, sessions, new DeviceService(runtime, clock), clock);
+        var ownership = new AudioOwnership(runtime, sessions, new DeviceService(runtime, clock), clock, new MemoryCoreTransaction(runtime, sessions, new()));
         using var fence = new LiveAudioFence(lease, ownership, changes, clock);
         clock.Elapsed = TimeSpan.FromMilliseconds(14_750);
         Assert.True(await fence.RefreshAsync(default));

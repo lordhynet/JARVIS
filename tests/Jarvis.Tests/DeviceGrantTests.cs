@@ -58,6 +58,11 @@ public sealed class DeviceGrantTests
         var request = GrantRequest();
         var grant = await Post<DeviceCapabilityGrantView>(owner, $"/api/devices/{deviceId}/grants", request);
         var store = host.Services.GetRequiredService<IDeviceGrantStore>();
+        var failure = new FailBeforeCoreCommit(host.Services.GetRequiredService<ICoreTransaction>());
+        var failingCredentials = new DeviceCredentials(host.Services.GetRequiredService<IRuntimeReader>(), failure, TimeProvider.System);
+        await Assert.ThrowsAsync<IOException>(() => failingCredentials.IssueAsync(deviceId, default));
+        Assert.NotNull(await host.Services.GetRequiredService<DeviceCredentials>().AuthenticateAsync(issued.Secret, default));
+        Assert.Null((await store.GetAsync(grant.Id))!.RevokedAt);
         await Post<IssuedDeviceCredential>(owner, $"/api/devices/{deviceId}/credential", new { });
         Assert.Null(await store.FindActiveAsync(deviceId, request.CapabilityId, request.CapabilityVersion,
             PrivacyData.Hash(issued.Secret), DateTimeOffset.UtcNow));

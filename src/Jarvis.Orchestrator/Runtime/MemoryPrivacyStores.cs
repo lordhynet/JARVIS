@@ -11,7 +11,7 @@ public sealed class MemoryPrivacyBoundary
     public PrivacyStatus Status { get; set; } = new(0, 1, false, null, null);
     public string? ErasureKeyFingerprint { get; set; }
     public Dictionary<Guid, PrivacyJob> Jobs { get; } = [];
-    public Dictionary<Guid, DeviceGrant> DeviceGrants { get; } = [];
+    public Dictionary<Guid, DeviceGrant> DeviceGrants { get; internal set; } = [];
     public Task<T> Run<T>(Func<Task<T>> operation)
     {
         lock (Sync) { PrivacyContext.RequireWrite(Status); return Task.FromResult(operation().GetAwaiter().GetResult()); }
@@ -32,7 +32,6 @@ public sealed class GuardedMemorySessions(InMemorySessionStore inner, MemoryPriv
     public Task<ConversationSession> AddAsync(ConversationSession value, CancellationToken ct = default) => boundary.Run(() => inner.AddAsync(value, ct));
     public Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default) => boundary.Run(() => inner.GetAsync(id, ct));
     public Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default) => boundary.Run(() => inner.ListAsync(ct));
-    public Task<IReadOnlyList<PendingVoiceProjection>> ListPendingVoiceProjectionsAsync(int limit, CancellationToken ct = default) => boundary.Run(() => inner.ListPendingVoiceProjectionsAsync(limit, ct));
     public Task<ConversationSession?> UpdateAsync(Guid id, Func<ConversationSession,ConversationSession> update, CancellationToken ct = default) => boundary.Run(() => inner.UpdateAsync(id, update, ct));
     public Task<ConversationSession?> AppendCheckpointAsync(Guid id, Func<ConversationSession,SessionCheckpoint> create, DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() => inner.AppendCheckpointAsync(id, create, now, ct));
 }
@@ -55,12 +54,13 @@ public sealed class InMemoryDeviceGrantStore(MemoryPrivacyBoundary boundary) : I
         return expired.Length;
     }
     public Task<DeviceGrant> AddAsync(DeviceGrant grant, CancellationToken ct = default) => boundary.Run(() =>
+        Task.FromResult(Add(boundary.DeviceGrants, grant)));
+    internal static DeviceGrant Add(Dictionary<Guid, DeviceGrant> grants, DeviceGrant grant)
     {
-        if (boundary.DeviceGrants.TryGetValue(grant.Id, out var existing))
-            return Task.FromResult(existing.RequireSameRequest(grant));
-        boundary.DeviceGrants.Add(grant.Id, grant);
-        return Task.FromResult(grant);
-    });
+        if (grants.TryGetValue(grant.Id, out var existing)) return existing.RequireSameRequest(grant);
+        grants.Add(grant.Id, grant);
+        return grant;
+    }
     public Task<DeviceGrant?> GetAsync(Guid id, CancellationToken ct = default) => boundary.Run(() => Task.FromResult(boundary.DeviceGrants.GetValueOrDefault(id)));
     public Task<IReadOnlyList<DeviceGrant>> ListAsync(string? deviceId = null, CancellationToken ct = default) => boundary.Run(() =>
         Task.FromResult<IReadOnlyList<DeviceGrant>>(boundary.DeviceGrants.Values.Where(x => deviceId is null || x.DeviceId == deviceId)
@@ -76,11 +76,13 @@ public sealed class InMemoryDeviceGrantStore(MemoryPrivacyBoundary boundary) : I
         boundary.DeviceGrants[id] = grant with { RevokedAt = now }; return Task.FromResult(true);
     });
     public Task<int> RevokeForDeviceAsync(string deviceId, DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
+        Task.FromResult(RevokeForDevice(boundary.DeviceGrants, deviceId, now)));
+    internal static int RevokeForDevice(Dictionary<Guid, DeviceGrant> grants, string deviceId, DateTimeOffset now)
     {
-        var grants = boundary.DeviceGrants.Values.Where(x => x.DeviceId == deviceId && x.RevokedAt is null).ToArray();
-        foreach (var grant in grants) boundary.DeviceGrants[grant.Id] = grant with { RevokedAt = now };
-        return Task.FromResult(grants.Length);
-    });
+        var active = grants.Values.Where(x => x.DeviceId == deviceId && x.RevokedAt is null).ToArray();
+        foreach (var grant in active) grants[grant.Id] = grant with { RevokedAt = now };
+        return active.Length;
+    }
     public Task<int> PruneAsync(DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
         Task.FromResult(PruneCore(now)));
 }

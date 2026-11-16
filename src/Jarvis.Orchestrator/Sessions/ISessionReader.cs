@@ -20,9 +20,7 @@ public interface ISessionReader
     }
     Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default);
     Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<PendingVoiceProjection>> ListPendingVoiceProjectionsAsync(int limit, CancellationToken ct = default);
 }
-public sealed record PendingVoiceProjection(Guid SessionId, IReadOnlyList<Guid> RequestIds);
 public sealed record SessionAudioState(SessionStatus Status, string? ActiveDeviceId);
 public sealed record SessionPreparationState(Guid Id, SessionStatus Status, string? ActiveDeviceId, string Title,
     DateTimeOffset UpdatedAt, SessionHandoff? Handoff, IReadOnlyList<Guid> CheckpointIds, int MessageCount);

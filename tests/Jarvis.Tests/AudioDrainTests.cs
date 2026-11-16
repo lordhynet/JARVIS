@@ -15,7 +15,8 @@ public sealed class AudioDrainTests
     {
         var clock = new Clock(); var store = new InMemoryRuntimeStore(); var devices = new DeviceService(store, clock);
         foreach (var id in new[] { "first", "second" }) await devices.RegisterAsync(new(id, id, DeviceKind.WindowsAgent, new(true, true, true, false, [])));
-        var audio = new AudioOwnership(store, new InMemorySessionStore(), devices, clock);
+        var sessions = new InMemorySessionStore();
+        var audio = new AudioOwnership(store, sessions, devices, clock, new MemoryCoreTransaction(store, sessions, new()));
         var first = await audio.StartCalibrationAsync("first", default);
         await store.UpdateAsync(s => { AudioFencing.Revoke(s); return true; });
         await Assert.ThrowsAsync<DomainException>(() => audio.StartCalibrationAsync("second", default));

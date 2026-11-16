@@ -109,6 +109,16 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.begin");
         await PostgresPrivacyGate.LockAsync(db, ct, accountingOnly);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.privacy_gate");
+        var updateResult = await UpdateInTransactionAsync(db, state => Task.FromResult(update(state)), started, phase, ct);
+        await tx.CommitAsync(ct);
+        audioChanges?.LeaseChanged(updateResult.Before, updateResult.After);
+        CoreTelemetry.RecordStoragePhase(updateResult.SavedAt, "runtime.update.commit");
+        return updateResult.Result;
+    }
+
+    internal static async Task<(T Result, AudioLease? Before, AudioLease? After, long SavedAt)> UpdateInTransactionAsync<T>(
+        SessionDbContext db, Func<RuntimeState, Task<T>> update, long started, long phase, CancellationToken ct)
+    {
         var rows = await db.RuntimeDocuments.FromSqlRaw(
             "SELECT * FROM \"RuntimeDocuments\" WHERE \"Id\" = 1 FOR UPDATE").ToListAsync(ct);
         var row = rows.Single();
@@ -120,17 +130,14 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         var previousLease = state.AudioLease;
         var before = JsonSerializer.Serialize(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.serialize_before");
-        var result = update(state);
+        var result = await update(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.callback");
         var after = JsonSerializer.Serialize(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.serialize_after");
         if (before != after) { row.Json = after; await db.SaveChangesAsync(ct); CoreTelemetry.RuntimeWrites.Add(1); }
         else CoreTelemetry.RuntimeNoOpWrites.Add(1);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.save");
-        await tx.CommitAsync(ct);
-        audioChanges?.LeaseChanged(previousLease, state.AudioLease);
-        CoreTelemetry.RecordStoragePhase(phase, "runtime.update.commit");
-        return result;
+        return (result, previousLease, state.AudioLease, phase);
     }
 }
 

@@ -685,3 +685,13 @@ The additive `20261116101533_DeviceGrantAudit` migration preserves existing rows
 Focused testing passed 65/65 with disposable PostgreSQL 17. It covered schema validation, exact entity and action matching, owner authorization, concurrent retries, revocation, upgrade of a database with a historical grant, persistence after restart, and privacy erasure. EF reported no pending model changes.
 
 The full backend suite passed 365 tests with zero failures and the opt-in performance harness skipped. The disposable PostgreSQL container was removed after verification.
+
+## Round 4 D2 — atomic Core lifecycle writes
+
+Core uses one PostgreSQL transaction for session and audio ownership changes, transcript and voice projection writes, and credential rotation and associated grant revocation. Grant issuance checks the current credential within the same transaction as insertion. Core locks privacy first, followed by runtime and then session or grant rows. Duplicate grant insertion uses an EF savepoint to recover the existing row for replay validation. [EF Core transaction documentation](https://learn.microsoft.com/en-us/ef/core/saving/transactions)
+
+The in-memory implementation stages changes under the privacy boundary and applies them on success. The `20261116104500_ReconcileBeforeAtomicCoreWrites` migration restores pending voice projections, preserves existing projections, drains orphaned leases, and revokes audited grants bound to stale credentials. Runtime transcript and orphaned-lease repair sweeps have been removed.
+
+Focused verification passed 74/74 tests against disposable PostgreSQL 17 and in-memory fixtures. Fault injection covered rollback of transcripts, session transitions and audio fences, and credential rotation with grants. Migration fixtures verified preservation of existing projections and exclusion of retired sessions. Concurrent grant issuance and credential rotation left either a current binding or a revoked grant.
+
+EF reported no pending model changes. The full backend suite passed 366 tests with zero failures. The opt-in `scripts/measure-runtime.ps1` harness passed separately on disposable PostgreSQL 17 and reported a transactional transcript write. Both verification containers were removed.

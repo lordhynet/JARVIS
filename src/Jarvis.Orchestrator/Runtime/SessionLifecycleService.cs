@@ -4,7 +4,7 @@ using Jarvis.Orchestrator.Sessions;
 namespace Jarvis.Orchestrator.Runtime;
 
 public sealed class SessionLifecycleService(ISessionStore store, DeviceService devices,
-    ISessionNotifier notifier, TimeProvider clock, IRuntimeStore runtime)
+    ISessionNotifier notifier, TimeProvider clock, ICoreTransaction transaction)
 {
     public Task<ConversationSession> TransitionAsync(Guid id, SessionStatus status, CancellationToken ct) =>
         Change(id, s =>
@@ -15,27 +15,26 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
             return s with { Status = status, ActiveDeviceId = status == SessionStatus.Active ? s.ActiveDeviceId : null };
         }, "session.status", ct);
 
-    public async Task<ConversationSession> ClaimAsync(Guid id, string deviceId, CancellationToken ct)
-    {
-        await devices.RequireOnlineAsync(deviceId, false, ct);
-        var lease = await runtime.ReadAudioLeaseAsync(ct);
-        Guard.Require(lease is null || lease.ExpiresAt <= clock.GetUtcNow() ||
-            lease.SessionId == id && lease.DeviceId == deviceId, 409, "Another session has an active audio lease.");
-        return await Change(id, s =>
+    public Task<ConversationSession> ClaimAsync(Guid id, string deviceId, CancellationToken ct) =>
+        Change(id, s =>
         {
             Guard.Require(s.Status == SessionStatus.Active, 409, "Session must be active.");
             Guard.Require(!Pending(s.Handoff) && (s.ActiveDeviceId is null || s.ActiveDeviceId == deviceId),
                 409, "Another device owns the session. Use handoff.");
             return s with { ActiveDeviceId = deviceId };
-        }, "session.claimed", ct);
-    }
+        }, "session.claimed", ct, state =>
+        {
+            DeviceCredentialContext.RequireCurrent(state, deviceId);
+            devices.RequireOnline(state, deviceId, false);
+            var lease = state.AudioLease;
+            Guard.Require(lease is null || lease.ExpiresAt <= clock.GetUtcNow() ||
+                lease.SessionId == id && lease.DeviceId == deviceId, 409, "Another session has an active audio lease.");
+        });
 
     public async Task<ConversationSession> StartAsync(Guid id, StartHandoffRequest request, CancellationToken ct)
     {
         var summary = Guard.Text(request.Summary, "Summary", 4000);
         Guard.Require(request.FromDeviceId != request.ToDeviceId, 400, "Choose a different target device.");
-        await devices.RequireOnlineAsync(request.FromDeviceId, false, ct);
-        await devices.RequireOnlineAsync(request.ToDeviceId, true, ct);
         return await Change(id, s =>
         {
             Guard.Require(s.Status == SessionStatus.Active && s.ActiveDeviceId == request.FromDeviceId,
@@ -48,12 +47,16 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
                 Handoff = new(Guid.NewGuid(), request.FromDeviceId, request.ToDeviceId,
                     HandoffState.Checkpointed, now, now.AddSeconds(30))
             };
-        }, "handoff.checkpointed", ct);
+        }, "handoff.checkpointed", ct, state =>
+        {
+            DeviceCredentialContext.RequireCurrent(state, request.FromDeviceId);
+            devices.RequireOnline(state, request.FromDeviceId, false);
+            devices.RequireOnline(state, request.ToDeviceId, true);
+        });
     }
 
     public async Task<ConversationSession> AdvanceAsync(Guid id, string action, HandoffActionRequest request, CancellationToken ct)
     {
-        if (action is "ready" or "complete") await devices.RequireOnlineAsync(request.DeviceId, true, ct);
         var result = await Change(id, s =>
         {
             var h = s.Handoff;
@@ -80,7 +83,11 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
                 Handoff = h with { State = next },
                 ActiveDeviceId = action == "release" ? null : action == "complete" ? h.ToDeviceId : s.ActiveDeviceId
             };
-        }, $"handoff.{action}", ct);
+        }, $"handoff.{action}", ct, state =>
+        {
+            DeviceCredentialContext.RequireCurrent(state, request.DeviceId);
+            if (action is "ready" or "complete") devices.RequireOnline(state, request.DeviceId, true);
+        });
         Guard.Require(result.Handoff?.State != HandoffState.TimedOut, 409, "Handoff timed out. Claim the session to recover.");
         return result;
     }
@@ -93,24 +100,28 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
     }
 
     private async Task<ConversationSession> Change(Guid id, Func<ConversationSession, ConversationSession> change,
-        string eventType, CancellationToken ct)
+        string eventType, CancellationToken ct, Action<RuntimeState>? validate = null)
     {
-        var result = await store.UpdateAsync(id, s =>
+        var result = await transaction.ExecuteAsync(async writes =>
         {
-            if (Pending(s.Handoff) && s.Handoff!.ExpiresAt <= clock.GetUtcNow())
-                s = s with { Handoff = s.Handoff with { State = HandoffState.TimedOut } };
-            return change(s) with { UpdatedAt = clock.GetUtcNow() };
-        }, ct);
-        Guard.Require(result is not null, 404, "Session not found.");
-        await runtime.UpdateAsync(s =>
-        {
-            if (s.AudioLease?.SessionId == id && (result.Status != SessionStatus.Active || result.ActiveDeviceId != s.AudioLease.DeviceId)) {
-                if (eventType == "handoff.release") s.AudioLease = null; // Source explicitly acknowledges stopped audio.
-                else AudioFencing.Revoke(s);
+            var state = writes.Runtime;
+            validate?.Invoke(state);
+            var updated = await writes.UpdateSessionAsync(id, s =>
+            {
+                if (Pending(s.Handoff) && s.Handoff!.ExpiresAt <= clock.GetUtcNow())
+                    s = s with { Handoff = s.Handoff with { State = HandoffState.TimedOut } };
+                return change(s) with { UpdatedAt = clock.GetUtcNow() };
+            });
+            Guard.Require(updated is not null, 404, "Session not found.");
+            if (state.AudioLease?.SessionId == id &&
+                (updated.Status != SessionStatus.Active || updated.ActiveDeviceId != state.AudioLease.DeviceId))
+            {
+                if (eventType == "handoff.release") state.AudioLease = null;
+                else AudioFencing.Revoke(state);
             }
-            return true;
+            return updated;
         }, ct);
-        await notifier.PublishAsync(new(eventType, id, result!.Status, result.ActiveDeviceId, clock.GetUtcNow()), ct);
+        await notifier.PublishAsync(new(eventType, id, result.Status, result.ActiveDeviceId, clock.GetUtcNow()), ct);
         return result;
     }
 

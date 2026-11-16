@@ -17,7 +17,8 @@ public sealed class IntelligenceRuntimeTests
     public async Task Audio_tickets_are_single_use_and_stale_fences_cannot_release_replacement()
     {
         var clock = new Clock(); var store = new InMemoryRuntimeStore(); var sessions = new InMemorySessionStore();
-        var devices = new DeviceService(store, clock); var audio = new AudioOwnership(store, sessions, devices, clock);
+        var devices = new DeviceService(store, clock);
+        var audio = new AudioOwnership(store, sessions, devices, clock, new MemoryCoreTransaction(store, sessions, new()));
         await devices.RegisterAsync(new("phone", "Test phone", DeviceKind.AndroidCompanion, new(true, true, true, false, [])));
         var id = Guid.NewGuid(); await sessions.AddAsync(new(id, ActivityType.Communication, "Voice", SessionStatus.Active, "phone", null, clock.Now, clock.Now, []));
         Assert.Equal(409, (await Assert.ThrowsAsync<DomainException>(() => audio.StartAsync(new(id, "phone", true), default))).StatusCode);

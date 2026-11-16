@@ -81,11 +81,18 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         phase = CoreTelemetry.RecordStoragePhase(phase, "session.audio.begin");
         await PostgresPrivacyGate.LockAsync(db, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "session.audio.privacy_gate");
-        var state = await db.Sessions.AsNoTracking().Where(s => s.Id == id).Select(s => new SessionAudioState(s.Status, s.ActiveDeviceId)).SingleOrDefaultAsync(ct);
+        var state = await ReadAudioStateAsync(db, id, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "session.audio.load");
         await tx.CommitAsync(ct);
         CoreTelemetry.RecordStoragePhase(phase, "session.audio.commit");
         return state;
+    }
+    internal static Task<SessionAudioState?> ReadAudioStateAsync(SessionDbContext db, Guid id, CancellationToken ct, bool lockSession = false)
+    {
+        var query = lockSession
+            ? db.Sessions.FromSqlInterpolated($"SELECT * FROM \"Sessions\" WHERE \"Id\" = {id} FOR SHARE")
+            : db.Sessions.Where(s => s.Id == id);
+        return query.AsNoTracking().Select(s => new SessionAudioState(s.Status, s.ActiveDeviceId)).SingleOrDefaultAsync(ct);
     }
     public async Task<ConversationSession> AddAsync(ConversationSession session, CancellationToken ct = default)
     {
@@ -119,24 +126,6 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         var result = rows.Select(s => s.ToContract()).ToList(); await tx.CommitAsync(ct); return result;
     }
 
-    public async Task<IReadOnlyList<PendingVoiceProjection>> ListPendingVoiceProjectionsAsync(int limit, CancellationToken ct = default)
-    {
-        await using var db = await factory.CreateDbContextAsync(ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await PostgresPrivacyGate.LockAsync(db, ct);
-        var rows = await db.Database.SqlQuery<PendingProjectionRow>($"""
-            SELECT s."Id" AS "SessionId", s."PendingVoiceProjectionIdsJson"::text AS "RequestIdsJson"
-            FROM "Sessions" s
-            WHERE s."PendingVoiceProjectionIdsJson" <> '[]'::jsonb
-            ORDER BY s."UpdatedAt", s."Id"
-            LIMIT {Math.Clamp(limit, 0, 1000)}
-            """).ToListAsync(ct);
-        await tx.CommitAsync(ct);
-        return rows.Select(r => new PendingVoiceProjection(r.SessionId,
-            JsonSerializer.Deserialize<List<Guid>>(r.RequestIdsJson) ?? [])).ToArray();
-    }
-    private sealed class PendingProjectionRow { public Guid SessionId { get; set; } public string RequestIdsJson { get; set; } = "[]"; }
-
     public async Task<ConversationSession?> AppendCheckpointAsync(Guid sessionId,
         Func<ConversationSession, SessionCheckpoint> createCheckpoint, DateTimeOffset now,
         CancellationToken ct = default)
@@ -157,6 +146,15 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
+        var changed = await UpdateInTransactionAsync(db, sessionId, update, ct);
+        await transaction.CommitAsync(ct);
+        if (changed is { } completed) audioChanges?.SessionChanged(completed.Before, completed.After);
+        return changed?.After;
+    }
+
+    internal static async Task<(ConversationSession Before, ConversationSession After)?> UpdateInTransactionAsync(
+        SessionDbContext db, Guid sessionId, Func<ConversationSession, ConversationSession> update, CancellationToken ct)
+    {
         // Lock the parent before reading checkpoints. PostgreSQL serializes writers even
         // across API processes; a process-local lock would lose updates after scaling out.
         var rows = await db.Sessions.FromSqlInterpolated(
@@ -181,8 +179,6 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         row.PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(updated.PendingVoiceProjectionIds ?? []);
         row.UpdatedAt = SessionRow.DatabaseTimestamp(updated.UpdatedAt);
         await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
-        audioChanges?.SessionChanged(current, updated);
-        return row.ToContract();
+        return (current, row.ToContract());
     }
 }
