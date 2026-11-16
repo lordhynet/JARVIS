@@ -27,12 +27,12 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
             ManagedAi.RequireSourceCurrent(s, task.ScopeId);
             if (s.ProviderAttempts.TryGetValue(task.OperationId, out var previous)) {
                 Guard.Require(previous.ScopeId == task.ScopeId && previous.Fingerprint == fingerprint, 409, "Reasoning request ID was reused for another task or route.");
-                Guard.Require(previous.Outcome is "Completed" or "Cached" && s.ProviderResults.ContainsKey(task.OperationId), 409,
+                Guard.Require(previous.Outcome is ProviderAttemptOutcome.Completed or ProviderAttemptOutcome.Cached && s.ProviderResults.ContainsKey(task.OperationId), 409,
                     "This provider attempt is pending, failed or outside its cache window. Automatic replay is blocked.");
                 return true;
             }
             var wasCached = s.ProviderResults.ContainsKey(task.OperationId);
-            s.ProviderAttempts[task.OperationId] = new(task.OperationId, task.ScopeId, fingerprint, rates.Route, task.OperationId, "Preparing", clock.GetUtcNow());
+            s.ProviderAttempts[task.OperationId] = new(task.OperationId, task.ScopeId, fingerprint, rates.Route, task.OperationId, ProviderAttemptOutcome.Preparing, clock.GetUtcNow());
             return wasCached;
         }, ct);
         try {
@@ -45,7 +45,7 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
             await store.UpdateAsync(s => {
                 ManagedAi.RequireSourceCurrent(s, task.ScopeId);
                 var attempt = s.ProviderAttempts[task.OperationId];
-                s.ProviderAttempts[task.OperationId] = attempt with { Outcome = cached ? "Cached" : "Completed", CompletedAt = clock.GetUtcNow() }; return true;
+                s.ProviderAttempts[task.OperationId] = attempt with { Outcome = cached ? ProviderAttemptOutcome.Cached : ProviderAttemptOutcome.Completed, CompletedAt = clock.GetUtcNow() }; return true;
             }, ct);
             return new(result.Text, result.Citations, rates.Route);
         }
@@ -53,7 +53,7 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
             try { await store.UpdateAsync(s => {
                 if (s.ProviderAttempts.TryGetValue(task.OperationId, out var attempt)) {
                     var charge = s.UsageReservations.GetValueOrDefault(task.OperationId);
-                    s.ProviderAttempts[task.OperationId] = attempt with { Outcome = charge is null ? "Refused" : charge.ActualUsd.HasValue ? "Failed" : "Uncertain", CompletedAt = clock.GetUtcNow() };
+                    s.ProviderAttempts[task.OperationId] = attempt with { Outcome = charge is null ? ProviderAttemptOutcome.Refused : charge.ActualUsd.HasValue ? ProviderAttemptOutcome.Failed : ProviderAttemptOutcome.Uncertain, CompletedAt = clock.GetUtcNow() };
                 }
                 return true;
             }, CancellationToken.None); } catch { /* Original error wins; the durable preparing record still prevents replay. */ }

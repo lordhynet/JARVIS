@@ -53,7 +53,7 @@ public sealed class PaidAiProvider(IConfiguration config, IRuntimeReader reader,
             x.RunId == run.Id && x.Id != run.ClaimToken && x.ActualUsd is null), ct);
         Guard.Require(!uncertainPriorAttempt, 409, "An earlier provider charge requires reconciliation; automatic replay is blocked.");
         var reusable = await reader.ReadAsync(s => s.ProviderAttempts.Values.Where(x => x.ScopeId == run.Id && x.Route.Profile == "LegacyInterview" &&
-            x.Outcome is "Completed" or "Cached" && s.ProviderResults.ContainsKey(x.Id)).OrderBy(x => x.StartedAt).FirstOrDefault(), ct);
+            x.Outcome is ProviderAttemptOutcome.Completed or ProviderAttemptOutcome.Cached && s.ProviderResults.ContainsKey(x.Id)).OrderBy(x => x.StartedAt).FirstOrDefault(), ct);
         var earlierCharge = await reader.ReadAsync(s => s.UsageReservations.Values.Any(x => x.RunId == run.Id && x.Id != run.ClaimToken), ct);
         Guard.Require(!earlierCharge || reusable is not null, 409, "Earlier paid work has no reusable completed result. Automatic replay is blocked.");
         var sources = await reader.ReadAsync(s =>
