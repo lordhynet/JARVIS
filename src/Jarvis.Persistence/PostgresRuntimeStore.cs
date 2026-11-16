@@ -19,6 +19,21 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         var lease = JsonSerializer.Deserialize<AudioLease>(json);
         await tx.CommitAsync(ct); return lease;
     }
+    public async Task<bool> ReadPaidAiPausedAsync(CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        var paused = await db.Database.SqlQueryRaw<bool>("""
+            SELECT COALESCE(
+                ("Json"->'AgentControls'->>'PaidAiPaused')::boolean,
+                ("Json"->'AgentControls'->>'Paused')::boolean,
+                false) AS "Value"
+            FROM "RuntimeDocuments" WHERE "Id"=1
+            """).SingleAsync(ct);
+        await tx.CommitAsync(ct);
+        return paused;
+    }
     public async Task<T> ReadAsync<T>(Func<RuntimeState, T> read, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);

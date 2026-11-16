@@ -238,7 +238,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             var expiry = Task.Delay(TimeSpan.FromSeconds(60), timeout.Token);
             var paidPauseRequested = 0;
             var leaseMonitor = Task.Run(async () => { while (!timeout.IsCancellationRequested) { await Task.Delay(1000, timeout.Token);
-                if (await runtime.ReadAsync(s => s.AgentControls.EffectivePaidAiPaused, timeout.Token)) { Interlocked.Exchange(ref paidPauseRequested, 1); return; }
+                if (await runtime.ReadPaidAiPausedAsync(timeout.Token)) { Interlocked.Exchange(ref paidPauseRequested, 1); return; }
                 Guard.Require(await ownership.CurrentAsync(lease, timeout.Token), 409, "Audio ownership expired."); } }, timeout.Token);
             pumps.Add(leaseMonitor);
             var finished = await Task.WhenAny(upstream, downstream, expiry, leaseMonitor);

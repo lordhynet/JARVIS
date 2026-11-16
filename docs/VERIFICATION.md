@@ -615,3 +615,15 @@ Fresh Android validation: `:app:testDebugUnitTest :app:lintRelease --no-daemon -
 Added `PendingVoiceProjectionIdsJson` to each session and an additive migration that seeds markers for existing voice transcript rows once. Transcript writes add the request ID in the same canonical session update; successful projection removes it. Repair selects only sessions with pending IDs, then loads only those marked sessions, projects idempotently, and clears the processed markers. An idle repair no longer lists sessions or reads `MessagesJson` or `RuntimeDocuments`. A failed projection leaves its marker for restart recovery.
 
 Fresh validation: `dotnet build Jarvis.sln --no-restore` succeeded with zero warnings/errors. EF `migrations has-pending-model-changes` reported no model changes, and `migrations list` discovered `20261115233000_PendingVoiceProjection`. The in-memory voice consistency tests passed 3/3, including crash recovery and an idle sweep spy that rejects transcript list/read calls. With a disposable PostgreSQL 17 test database, the restart/repair/idempotency/erasure test passed 1/1 and applied the new migration. No production database or paid provider was used.
+
+## Round 3 RR3-05 — wake restart requires user resume
+
+An Android sticky-service restart delivered without an intent now shows a normal notification reading “Tap to resume wake” and stops the service without opening the microphone. Tapping it opens JARVIS and explicitly starts the foreground wake service. The persisted wake preference remains set so the notification is offered after a restart; no background microphone restart is attempted. Mobile commit: `620f951`.
+
+Fresh validation: `:app:testDebugUnitTest :app:lintRelease --no-daemon --max-workers=1` succeeded. All 31 Android debug JVM tests passed (zero failures/errors/skips); release lint passed. Device notification delivery and tap flow still need on-device acceptance.
+
+## Round 3 RR3-04 — narrow paid-AI pause read
+
+Added `IRuntimeReader.ReadPaidAiPausedAsync`. PostgreSQL reads only the `AgentControls` pause fields in the JSON document, while in-memory storage preserves the same behavior. The realtime lease monitor now uses this narrow read once per second instead of deserializing the entire runtime state. Existing legacy `Paused` fallback semantics remain supported.
+
+Fresh validation: focused pause-control, PostgreSQL pause-read and realtime pause-flow tests passed 5/5 with a disposable PostgreSQL 17 test database; the realtime path still ends paid voice on pause and leaves local audio available. No production database or paid provider was used.

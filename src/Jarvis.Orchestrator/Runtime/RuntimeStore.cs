@@ -72,6 +72,7 @@ public sealed record HubAccessTicket(string KeyFingerprint, long Epoch, DateTime
 public interface IRuntimeReader
 {
     Task<AudioLease?> ReadAudioLeaseAsync(CancellationToken ct = default) => ReadAsync(s => s.AudioLease, ct);
+    Task<bool> ReadPaidAiPausedAsync(CancellationToken ct = default) => ReadAsync(s => s.AgentControls.EffectivePaidAiPaused, ct);
     Task<T> ReadAsync<T>(Func<RuntimeState, T> read, CancellationToken ct = default);
 }
 
@@ -95,6 +96,8 @@ public sealed class InMemoryRuntimeStore : IRuntimeStore
         ct.ThrowIfCancellationRequested();
         lock (_gate) return Task.FromResult(read(Copy(_state)));
     }
+
+    public Task<bool> ReadPaidAiPausedAsync(CancellationToken ct = default) => ReadAsync(s => s.AgentControls.EffectivePaidAiPaused, ct);
 
     public Task<T> UpdateAsync<T>(Func<RuntimeState, T> update, CancellationToken ct = default)
     {

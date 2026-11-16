@@ -8,6 +8,16 @@ namespace Jarvis.Tests;
 public sealed class PauseControlTests
 {
     [Fact]
+    public async Task Narrow_paid_pause_read_preserves_legacy_and_independent_flags()
+    {
+        var store = new InMemoryRuntimeStore();
+        await store.UpdateAsync(s => { s.AgentControls = new(Paused: true); return true; });
+        Assert.True(await store.ReadPaidAiPausedAsync());
+        await store.UpdateAsync(s => { s.AgentControls = new(PaidAiPaused: false, AgentsPaused: true); return true; });
+        Assert.False(await store.ReadPaidAiPausedAsync());
+    }
+
+    [Fact]
     public async Task Historical_pause_loads_both_controls_and_new_flags_resume_independently()
     {
         var legacy = JsonSerializer.Deserialize<AgentControls>("{\"Paused\":true}")!;

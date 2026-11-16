@@ -23,6 +23,7 @@ public sealed class GuardedMemoryRuntime(InMemoryRuntimeStore inner, MemoryPriva
         lock (boundary.Sync) return inner.UpdateAsync(s => UsageAccounting.Settle(s, id, actual, input, output), ct);
     }
     public Task<T> ReadAsync<T>(Func<RuntimeState,T> read, CancellationToken ct = default) => boundary.Run(() => inner.ReadAsync(read, ct));
+    public Task<bool> ReadPaidAiPausedAsync(CancellationToken ct = default) => boundary.Run(() => inner.ReadPaidAiPausedAsync(ct));
     public Task<T> UpdateAsync<T>(Func<RuntimeState,T> update, CancellationToken ct = default) => boundary.Run(() => inner.UpdateAsync(update, ct));
 }
 public sealed class GuardedMemorySessions(InMemorySessionStore inner, MemoryPrivacyBoundary boundary) : ISessionStore

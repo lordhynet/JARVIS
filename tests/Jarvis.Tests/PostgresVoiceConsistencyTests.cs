@@ -10,6 +10,18 @@ namespace Jarvis.Tests;
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
+    public async Task Narrow_paid_pause_read_returns_only_the_effective_pause_state()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        using var host = new PostgresApiFactory(database.ConnectionString);
+        var runtime = host.Services.GetRequiredService<IRuntimeStore>();
+        await runtime.UpdateAsync(state => { state.AgentControls = new(Paused: true); return true; });
+        Assert.True(await runtime.ReadPaidAiPausedAsync());
+        await runtime.UpdateAsync(state => { state.AgentControls = new(PaidAiPaused: false, AgentsPaused: true); return true; });
+        Assert.False(await runtime.ReadPaidAiPausedAsync());
+    }
+
+    [PostgresFact]
     public async Task Voice_projection_repair_survives_restart_is_idempotent_and_respects_erasure()
     {
         await using var database = await TestDatabase.CreateAsync(); var sessionId = Guid.NewGuid(); var turnId = Guid.NewGuid();
