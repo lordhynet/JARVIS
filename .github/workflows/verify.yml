@@ -1,0 +1,177 @@
+name: Verify JARVIS
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.paths.outputs.backend }}
+      android: ${{ steps.paths.outputs.android }}
+      browser: ${{ steps.paths.outputs.browser }}
+      parity: ${{ steps.paths.outputs.parity }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select affected components
+        id: paths
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          backend=false android=false browser=false parity=false
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch || -z "$BASE" || "$BASE" =~ ^0+$ ]] ||
+             ! git cat-file -e "$BASE^{commit}"; then
+            backend=true android=true browser=true parity=true
+          else
+            git diff --no-renames --name-only -z "$BASE" "$HEAD" -- > "$RUNNER_TEMP/jarvis-changes"
+            while IFS= read -r -d '' file; do
+              case "$file" in
+                .github/workflows/verify.yml) backend=true android=true browser=true parity=true ;;
+                JARVIS.CORE/*) backend=true parity=true ;;
+                JARVIS.MOBILE/*) android=true parity=true ;;
+                JARVIS.FRONTEND/*) browser=true parity=true ;;
+              esac
+              case "$file" in
+                JARVIS.CORE/src/Jarvis.Api/wwwroot/*) browser=true ;;
+                JARVIS.CORE/src/Jarvis.Contracts/*|JARVIS.CORE/tools/Jarvis.ContractGen/*|\
+                JARVIS.CORE/src/Jarvis.Api/CoreRoutes.cs|JARVIS.CORE/src/Jarvis.Api/CoreHeaders.cs|\
+                JARVIS.CORE/src/Jarvis.Api/Endpoints/CompanionEndpoints.cs) android=true ;;
+              esac
+            done < "$RUNNER_TEMP/jarvis-changes"
+          fi
+          printf 'backend=%s\nandroid=%s\nbrowser=%s\nparity=%s\n' \
+            "$backend" "$android" "$browser" "$parity" >> "$GITHUB_OUTPUT"
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17@sha256:0d938e975177bef9f1f61f3f9dbcf2e0aa0a139568f66d3415ed8892eb97f6ac
+        env:
+          POSTGRES_USER: jarvis_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: postgres
+        ports: ['127.0.0.1:5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U jarvis_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: JARVIS.CORE/global.json
+      - name: Core and PostgreSQL tests
+        working-directory: JARVIS.CORE
+        run: dotnet test Jarvis.sln --logger 'trx;LogFileName=ci.trx' -- xUnit.MaxParallelThreads=2
+        env:
+          JARVIS_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=postgres;Username=jarvis_ci;GSS Encryption Mode=Disable
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: backend-results
+          path: JARVIS.CORE/tests/Jarvis.Tests/TestResults/*.trx
+          retention-days: 7
+
+  android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+      - name: Install Android SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Debug tests, lint and APK
+        working-directory: JARVIS.MOBILE
+        run: bash ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: android-results
+          path: |
+            JARVIS.MOBILE/app/build/test-results/testDebugUnitTest/*.xml
+            JARVIS.MOBILE/app/build/reports/lint-results-debug.*
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-debug-apk
+          path: JARVIS.MOBILE/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  browser:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: JARVIS.CORE
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: JARVIS.CORE/global.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: JARVIS.CORE/package-lock.json
+      - name: Browser regression
+        run: |
+          dotnet build src/Jarvis.Api/Jarvis.Api.csproj
+          npm ci --no-fund
+          npx playwright install --with-deps chromium
+          npm run test:browser
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: browser-results
+          path: |
+            JARVIS.CORE/playwright-report/
+            JARVIS.CORE/test-results/
+          retention-days: 7
+
+  parity:
+    needs: changes
+    if: needs.changes.outputs.parity == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: JARVIS.CORE/global.json
+      - name: Android contract, route and header parity
+        shell: pwsh
+        run: ./JARVIS.CORE/scripts/check-mobile-contracts.ps1
+      - name: Frontend bundle parity
+        shell: pwsh
+        run: ./JARVIS.CORE/scripts/sync-frontend.ps1 -Check

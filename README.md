@@ -16,3 +16,5 @@ Start with the component READMEs. From the repository root, run the two packagin
 ~~~
 
 GitHub Actions checks the affected components and uses disposable test databases, fake providers and a debug Android build. Keep local settings, credentials, signing material and backups outside Git.
+
+Use `development` for ongoing work and `master` for stable releases. CI checks pull requests and pushes to `master`.
