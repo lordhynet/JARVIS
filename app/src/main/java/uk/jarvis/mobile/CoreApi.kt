@@ -1,11 +1,12 @@
 package uk.jarvis.mobile
 
-import uk.jarvis.mobile.contracts.CoreCompanionRoutes
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import uk.jarvis.mobile.contracts.CoreCompanionHeaders
+import uk.jarvis.mobile.contracts.CoreCompanionRoutes
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
@@ -46,9 +47,9 @@ class CoreApi(rawUrl: String, private val token: String, certificateSha256: Stri
             if (connection is HttpsURLConnection && pinnedSockets != null) connection.sslSocketFactory = pinnedSockets
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 10_000; connection.readTimeout = 60_000; connection.requestMethod = method
-            connection.setRequestProperty("X-Jarvis-Key", token)
+            connection.setRequestProperty(CoreCompanionHeaders.API_KEY, token)
             connection.setRequestProperty("Accept", "application/json")
-            if (!privacyStatus) connection.setRequestProperty("X-Jarvis-Data-Epoch", privacy.epoch.toString())
+            if (!privacyStatus) connection.setRequestProperty(CoreCompanionHeaders.DATA_EPOCH, privacy.epoch.toString())
             if (body != null) {
                 connection.setRequestProperty("Content-Type", "application/json"); connection.doOutput = true
                 connection.outputStream.use { it.write(gson.toJson(body).toByteArray(Charsets.UTF_8)) }
@@ -62,7 +63,7 @@ class CoreApi(rawUrl: String, private val token: String, certificateSha256: Stri
             } ?: byteArrayOf()
             check(bytes.size <= responseLimit) { "Core response exceeds this phone's safe download limit." }
             val text = bytes.toString(Charsets.UTF_8)
-            val responseEpoch = connection.getHeaderField("X-Jarvis-Data-Epoch")?.toLongOrNull()
+            val responseEpoch = connection.getHeaderField(CoreCompanionHeaders.DATA_EPOCH)?.toLongOrNull()
             val privacyError = if (code !in 200..299) runCatching {
                 val json = JsonParser.parseString(text).asJsonObject
                 json.get("coreErased")?.asBoolean == true || json.get("coreEpochChanged")?.asBoolean == true

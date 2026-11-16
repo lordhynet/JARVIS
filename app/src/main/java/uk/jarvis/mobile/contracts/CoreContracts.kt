@@ -18,6 +18,11 @@ internal object CoreCompanionRoutes {
     fun heartbeat(deviceId: String) = DEVICE_HEARTBEAT.replace("{id}", deviceId)
 }
 
+internal object CoreCompanionHeaders {
+    const val API_KEY = "X-Jarvis-Key"
+    const val DATA_EPOCH = "X-Jarvis-Data-Epoch"
+}
+
 data class AiCapabilityStatus(
     val ready: Boolean = false,
     val model: String = "",
