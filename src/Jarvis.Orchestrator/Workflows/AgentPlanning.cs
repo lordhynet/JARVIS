@@ -101,7 +101,7 @@ public sealed partial class AgentRuntime
     private static void Supersede(RuntimeState s, Guid runId, string reason)
     {
         if (!s.AgentRuns.TryGetValue(runId, out var run)) return;
-        s.AgentRuns[runId] = run with { Status = AgentRunStatus.Cancelled};
+        s.AgentRuns[runId] = run with { Status = AgentRunStatus.Cancelled };
         foreach (var id in run.TaskIds)
         {
             var task = s.AgentTasks[id]; s.AgentTasks[id] = task with { Status = AgentTaskStatus.Cancelled, ClaimToken = null, LeaseExpiresAt = null, Input = "", Output = null, ErrorCode = reason };
