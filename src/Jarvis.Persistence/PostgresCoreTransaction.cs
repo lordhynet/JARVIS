@@ -61,5 +61,14 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
             PostgresDeviceCommandStore.ReadPendingAsync(db, deviceId, credentialHash, now, after, ct);
 
         public Task SaveDeviceCommandAsync(DeviceCommand command) => PostgresDeviceCommandStore.SaveAsync(db, command, ct);
+
+        public Task<IReadOnlyList<DeviceReceiptView>> ReadDeviceReceiptsAsync(Guid commandId) =>
+            PostgresDeviceReceiptStore.ListAsync(db, commandId, ct);
+
+        public async Task AddDeviceReceiptAsync(DeviceReceiptView receipt)
+        {
+            db.DeviceReceipts.Add(DeviceReceiptRow.From(receipt));
+            await db.SaveChangesAsync(ct);
+        }
     }
 }

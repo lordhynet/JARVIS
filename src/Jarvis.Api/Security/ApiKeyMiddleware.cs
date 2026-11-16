@@ -34,7 +34,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
             return;
         }
 
-        var supplied = context.Request.Headers[CoreHeaders.ApiKey].FirstOrDefault() ?? BearerToken(context.Request);
+        var supplied = SuppliedCredential(context.Request);
         if (supplied is null && context.Request.Path.StartsWithSegments("/hubs") && context.Request.Query[QueryName].Count > 0)
         {
             Guard.Require(context.WebSockets.IsWebSocketRequest && context.Request.Path.Equals(new PathString("/hubs/status")) &&
@@ -79,6 +79,9 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
     }
 
     // The .NET SignalR client sends AccessTokenProvider values as "Authorization: Bearer <key>".
+    internal static string? SuppliedCredential(HttpRequest request) =>
+        request.Headers[CoreHeaders.ApiKey].FirstOrDefault() ?? BearerToken(request);
+
     private static string? BearerToken(HttpRequest request)
     {
         var auth = request.Headers.Authorization.FirstOrDefault();

@@ -715,3 +715,9 @@ The additive `20261116121125_DeviceCommandDelivery` migration stores a dispatch 
 All 64 focused tests passed with disposable PostgreSQL 17 and in-memory fixtures. Coverage includes credential isolation, concurrent competing claims, rollback, restart recovery, revoked grants, expired commands and paging past ineligible commands. EF reported no pending model changes. The Android route, header and DTO parity check passed.
 
 The full backend suite passed 380 tests with zero failures and the opt-in performance harness skipped. The disposable PostgreSQL container was removed after verification.
+
+## Round 4 Item 3 — signed device receipts
+
+Core validates an HMAC-SHA256 signature over the exact receipt payload, command ID, dispatch ID, receipt request ID and outcome. The paired credential must match the command's original binding. The installed capability schema validates receipt data. The additive `20261116123244_DeviceReceipts` migration commits a receipt and its command transition together and cascades removal when the command is erased or retained out.
+
+All 12 focused checks passed with disposable PostgreSQL 17 and in-memory fixtures. They cover cross-device denial, payload and signature tampering, late receipts, credential rotation, concurrent and conflicting retries, rollback, restart, retention and erasure. EF reported no pending model changes.

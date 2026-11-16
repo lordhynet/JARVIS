@@ -9,7 +9,8 @@ public sealed record DeviceCommand(Guid Id, Guid GrantId, string DeviceId, strin
     DateTimeOffset? CancelledAt = null, string? CancelledBy = null, Guid? DispatchRequestId = null, DateTimeOffset? DispatchedAt = null)
 {
     public DeviceCommandStatus StatusAt(DateTimeOffset now) =>
-        ExpiresAt <= now && Status is DeviceCommandStatus.Pending or DeviceCommandStatus.AwaitingConfirmation or DeviceCommandStatus.Dispatched
+        ExpiresAt <= now && Status is DeviceCommandStatus.Pending or DeviceCommandStatus.AwaitingConfirmation or
+            DeviceCommandStatus.Dispatched or DeviceCommandStatus.Acknowledged
             ? DeviceCommandStatus.Expired : Status;
 
     public DeviceCommandView View(DateTimeOffset now) => new(Id, GrantId, DeviceId, CapabilityId, CapabilityVersion,
@@ -119,13 +120,14 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
 
     public Task<DeliveredDeviceCommand?> ClaimAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default)
     {
-        var actor = DeviceCredentialContext.CurrentActor;
-        Guard.Require(actor is { DeviceId: not null, CredentialHash: not null }, 403, "A paired device credential is required.");
+        var actor = DeviceCredentialContext.RequirePairedActor();
+        var deviceId = actor.DeviceId!;
+        var credentialHash = actor.CredentialHash!;
         Guard.Require(request.RequestId != Guid.Empty, 400, "A dispatch request ID is required.");
         return transaction.ExecuteAsync<DeliveredDeviceCommand?>(async writes =>
         {
-            DeviceCredentialContext.RequireCurrent(writes.Runtime, actor.DeviceId);
-            var previous = await writes.ReadDeviceDispatchAsync(actor.DeviceId, actor.CredentialHash, request.RequestId);
+            DeviceCredentialContext.RequireCurrent(writes.Runtime, deviceId);
+            var previous = await writes.ReadDeviceDispatchAsync(deviceId, credentialHash, request.RequestId);
             if (previous is not null)
             {
                 if (previous.StatusAt(clock.GetUtcNow()) != DeviceCommandStatus.Dispatched || previous.DispatchedAt is not { } dispatchedAt)
@@ -138,7 +140,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             DeviceCommand? after = null;
             while (true)
             {
-                var pending = await writes.ReadPendingDeviceCommandsAsync(actor.DeviceId, actor.CredentialHash, clock.GetUtcNow(), after);
+                var pending = await writes.ReadPendingDeviceCommandsAsync(deviceId, credentialHash, clock.GetUtcNow(), after);
                 if (pending.Count == 0) return null;
                 foreach (var command in pending)
                 {

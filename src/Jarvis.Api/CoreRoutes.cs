@@ -11,6 +11,7 @@ public static class CoreRoutes
     public const string DeviceCommandClaim = "/api/device-commands/claim";
     public const string DeviceCommand = "/api/device-commands/{id:guid}";
     public const string DeviceCommandConfirm = DeviceCommand + "/confirm";
+    public const string DeviceCommandReceipts = DeviceCommand + "/receipts";
     public const string DeviceCapabilities = "/api/device-capabilities";
 
     public const string Privacy = "/api/privacy";
@@ -36,5 +37,5 @@ public static class CoreRoutes
         Array.AsReadOnly(new[] { Devices, VoicePrepare, VoiceWakeCandidates, VoiceTickets, VoiceLocalRelease, DeviceHeartbeat });
 
     // Command executors use paired credentials. This contract is separate from the Android audio client.
-    public static IReadOnlyList<string> CompanionCommandPost { get; } = Array.AsReadOnly(new[] { DeviceCommandClaim });
+    public static IReadOnlyList<string> CompanionCommandPost { get; } = Array.AsReadOnly(new[] { DeviceCommandClaim, DeviceCommandReceipts });
 }

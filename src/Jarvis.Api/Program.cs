@@ -100,6 +100,7 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<ISessionStore, PostgresSessionStore>();
     builder.Services.AddSingleton<IDeviceGrantStore, PostgresDeviceGrantStore>();
     builder.Services.AddSingleton<IDeviceCommandReader, PostgresDeviceCommandStore>();
+    builder.Services.AddSingleton<IDeviceReceiptReader, PostgresDeviceReceiptStore>();
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
     builder.Services.AddSingleton<ICoreTransaction, PostgresCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
@@ -114,6 +115,7 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<ISessionStore, GuardedMemorySessions>();
     builder.Services.AddSingleton<InMemoryDeviceGrantStore>(); builder.Services.AddSingleton<IDeviceGrantStore>(s => s.GetRequiredService<InMemoryDeviceGrantStore>());
     builder.Services.AddSingleton<IDeviceCommandReader, InMemoryDeviceCommandStore>();
+    builder.Services.AddSingleton<IDeviceReceiptReader, InMemoryDeviceReceiptStore>();
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
     builder.Services.AddSingleton<ICoreTransaction, MemoryCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
@@ -175,6 +177,7 @@ builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();
 builder.Services.AddSingleton<DeviceGrantService>();
 builder.Services.AddSingleton<DeviceCommandService>();
+builder.Services.AddSingleton<DeviceReceiptService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Runtime.IDeviceCapabilityCatalog>(
     _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All));
 builder.Services.AddSingleton<OwnerAuthorization>();

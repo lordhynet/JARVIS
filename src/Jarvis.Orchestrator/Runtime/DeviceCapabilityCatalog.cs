@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Jarvis.Contracts;
 
 namespace Jarvis.Orchestrator.Runtime;
 
@@ -27,13 +28,14 @@ public interface IDeviceCapabilityCatalog
     DeviceCapabilityDescriptor Get(string id, string version);
     bool HasValidConstraints(string id, string version, string? constraintsJson);
     bool Permits(string id, string version, string? constraintsJson, string? argumentsJson);
+    bool AcceptsReceipt(string id, string version, DeviceReceiptKind kind, string? payloadJson);
 }
 
 /// <summary>Only descriptors supplied by application code exist. Database rows and device claims cannot install behavior.</summary>
 public sealed class DeviceCapabilityCatalog : IDeviceCapabilityCatalog
 {
     private static readonly Regex IdPattern = new("^[a-z][a-z0-9_.-]{0,99}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    private sealed record Entry(DeviceCapabilityDescriptor Descriptor, JsonElement Arguments, JsonElement Constraints);
+    private sealed record Entry(DeviceCapabilityDescriptor Descriptor, JsonElement Arguments, JsonElement Constraints, JsonElement Receipt);
     private readonly IReadOnlyDictionary<(string Id, string Version), Entry> entries;
 
     public DeviceCapabilityCatalog(IEnumerable<DeviceCapabilityDescriptor> installed)
@@ -52,8 +54,8 @@ public sealed class DeviceCapabilityCatalog : IDeviceCapabilityCatalog
                 "Sensitive and irreversible device capabilities require owner confirmation.");
             var arguments = DeviceJsonSchema.Read(descriptor.ArgumentSchemaJson);
             var constraints = DeviceJsonSchema.Read(descriptor.ConstraintSchemaJson);
-            _ = DeviceJsonSchema.Read(descriptor.ReceiptSchemaJson);
-            Guard.Require(entries.TryAdd((descriptor.Id, descriptor.Version), new(descriptor, arguments, constraints)),
+            var receipt = DeviceJsonSchema.Read(descriptor.ReceiptSchemaJson);
+            Guard.Require(entries.TryAdd((descriptor.Id, descriptor.Version), new(descriptor, arguments, constraints, receipt)),
                 409, "Duplicate installed device capability version.");
         }
         this.entries = new ReadOnlyDictionary<(string Id, string Version), Entry>(entries);
@@ -67,6 +69,13 @@ public sealed class DeviceCapabilityCatalog : IDeviceCapabilityCatalog
 
     public bool HasValidConstraints(string id, string version, string? constraintsJson) =>
         TryReadAllowlist(id, version, constraintsJson, out _, out _);
+
+    public bool AcceptsReceipt(string id, string version, DeviceReceiptKind kind, string? payloadJson) =>
+        entries.TryGetValue((id, version), out var entry) &&
+        DeviceJsonSchema.TryReadObject(payloadJson, 8_000, out var payload) && DeviceJsonSchema.Accepts(entry.Receipt, payload) &&
+        (id != BuiltInDeviceCapabilities.HomeAssistantTurn || version != BuiltInDeviceCapabilities.HomeAssistantTurnVersion ||
+            payload.TryGetProperty("accepted", out var accepted) &&
+            accepted.ValueKind == (kind == DeviceReceiptKind.Failed ? JsonValueKind.False : JsonValueKind.True));
 
     public bool Permits(string id, string version, string? constraintsJson, string? argumentsJson) =>
         TryReadAllowlist(id, version, constraintsJson, out var entry, out var allowed) &&

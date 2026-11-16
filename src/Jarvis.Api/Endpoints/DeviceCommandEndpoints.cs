@@ -18,6 +18,17 @@ public static class DeviceCommandEndpoints
             return delivery is null ? Results.NoContent() : Results.Ok(delivery);
         }).WithTags("Device commands").RequireAuthorization(CorePolicies.Companion);
 
+        app.MapPost(CoreRoutes.DeviceCommandReceipts, (Guid id, SubmitDeviceReceiptRequest request, HttpContext context,
+            ICommandHandler<RecordDeviceReceipt, DeviceReceiptView> handler, CancellationToken ct) =>
+            handler.HandleAsync(new RecordDeviceReceipt(VerifiedDeviceReceipt.Verify(id, request,
+                ApiKeyMiddleware.SuppliedCredential(context.Request))), ct))
+            .WithTags("Device commands").RequireAuthorization(CorePolicies.Companion);
+
+        app.MapGet(CoreRoutes.DeviceCommandReceipts, (Guid id,
+            IQueryHandler<ListDeviceReceipts, IReadOnlyList<DeviceReceiptView>> handler, CancellationToken ct) =>
+            handler.HandleAsync(new ListDeviceReceipts(id), ct))
+            .WithTags("Device commands").RequireAuthorization(CorePolicies.Owner);
+
         app.MapPost(CoreRoutes.DeviceCommandProposals, (string id, ProposeDeviceCommandRequest request,
             ICommandHandler<ProposeDeviceCommand, DeviceCommandView> handler, CancellationToken ct) =>
             handler.HandleAsync(new ProposeDeviceCommand(id, request), ct))

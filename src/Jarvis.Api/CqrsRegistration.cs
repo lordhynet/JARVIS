@@ -92,6 +92,8 @@ public static class CqrsRegistration
         services.AddSingleton<DeviceQueryHandler>();
         services.AddSingleton<DeviceCommandLifecycleHandlers>();
         services.AddSingleton<DeviceCommandQueryHandler>();
+        services.AddSingleton<DeviceReceiptCommandHandler>();
+        services.AddSingleton<DeviceReceiptQueryHandler>();
         services.AddSingleton<DeviceGrantCommandHandlers>();
         services.AddSingleton<DeviceGrantQueryHandlers>();
         services.AddSingleton<LearningCommandHandlers>();
@@ -125,6 +127,8 @@ public static class CqrsRegistration
         Command<ConfirmDeviceCommand, DeviceCommandView, DeviceCommandLifecycleHandlers>(services);
         Command<ClaimDeviceCommand, DeliveredDeviceCommand?, DeviceCommandLifecycleHandlers>(services);
         Query<GetDeviceCommand, DeviceCommandView, DeviceCommandQueryHandler>(services);
+        Command<RecordDeviceReceipt, DeviceReceiptView, DeviceReceiptCommandHandler>(services);
+        Query<ListDeviceReceipts, IReadOnlyList<DeviceReceiptView>, DeviceReceiptQueryHandler>(services);
         Command<CreateLearningItem, LearningItem, LearningCommandHandlers>(services);
         Command<ReviewLearningItem, LearningItem, LearningCommandHandlers>(services);
         Command<CreateStory, Story, StoryCommandHandlers>(services);

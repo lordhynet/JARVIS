@@ -13,6 +13,12 @@ public static class DeviceCredentialContext
     public static CoreActor? CurrentActor => Current.Value;
     public static IDisposable Enter(CoreActor actor) { var previous = Current.Value; Current.Value = actor; return new Scope(() => Current.Value = previous); }
     private sealed class Scope(Action close) : IDisposable { public void Dispose() => close(); }
+    public static CoreActor RequirePairedActor()
+    {
+        var actor = Current.Value;
+        Guard.Require(actor is { DeviceId: not null, CredentialHash: not null }, 403, "A paired device credential is required.");
+        return actor;
+    }
     public static void RequireCurrent(RuntimeState state, string deviceId)
     {
         if (Current.Value is not { DeviceId: { } bound } actor) return;

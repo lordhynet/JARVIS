@@ -23,6 +23,8 @@ public interface ICoreTransactionWrites
     Task<IReadOnlyList<DeviceCommand>> ReadPendingDeviceCommandsAsync(string deviceId, string credentialHash, DateTimeOffset now,
         DeviceCommand? after);
     Task SaveDeviceCommandAsync(DeviceCommand command);
+    Task<IReadOnlyList<DeviceReceiptView>> ReadDeviceReceiptsAsync(Guid commandId);
+    Task AddDeviceReceiptAsync(DeviceReceiptView receipt);
 }
 
 public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemorySessionStore sessions,
@@ -46,6 +48,7 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
         private readonly Dictionary<Guid, ConversationSession> stagedSessions = [];
         private Dictionary<Guid, DeviceGrant>? stagedGrants;
         private readonly Dictionary<Guid, DeviceCommand> stagedCommands = [];
+        private readonly List<DeviceReceiptView> stagedReceipts = [];
 
         public RuntimeState Runtime => state;
 
@@ -96,10 +99,26 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
             return Task.CompletedTask;
         }
 
+        public Task<IReadOnlyList<DeviceReceiptView>> ReadDeviceReceiptsAsync(Guid commandId) =>
+            Task.FromResult<IReadOnlyList<DeviceReceiptView>>((boundary.DeviceReceipts.GetValueOrDefault(commandId) ?? [])
+                .Concat(stagedReceipts.Where(x => x.CommandId == commandId)).ToArray());
+
+        public Task AddDeviceReceiptAsync(DeviceReceiptView receipt)
+        {
+            stagedReceipts.Add(receipt);
+            return Task.CompletedTask;
+        }
+
         public void Commit()
         {
             if (stagedGrants is not null) boundary.DeviceGrants = stagedGrants;
             foreach (var (id, command) in stagedCommands) boundary.DeviceCommands[id] = command;
+            foreach (var receipt in stagedReceipts)
+            {
+                if (!boundary.DeviceReceipts.TryGetValue(receipt.CommandId, out var receipts))
+                    boundary.DeviceReceipts[receipt.CommandId] = receipts = [];
+                receipts.Add(receipt);
+            }
             foreach (var (id, session) in stagedSessions)
                 sessions.UpdateAsync(id, _ => session).GetAwaiter().GetResult();
         }

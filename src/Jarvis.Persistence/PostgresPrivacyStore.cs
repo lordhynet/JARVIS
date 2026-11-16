@@ -46,9 +46,11 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var (_, state) = await Runtime(db, ct);
         var sessions = (await db.Sessions.AsNoTracking().Include(x => x.Checkpoints).ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
+        var commands = PostgresDeviceCommandStore.Prunable(db, policy, asOf);
         var counts = PrivacyData.Counts(state, sessions, runs, policy, asOf) with
         {
-            DeviceCommands = await PostgresDeviceCommandStore.Prunable(db, policy, asOf).CountAsync(ct)
+            DeviceCommands = await commands.CountAsync(ct),
+            DeviceReceipts = await db.DeviceReceipts.CountAsync(x => commands.Any(command => command.Id == x.CommandId), ct)
         };
         var result = new RetentionPreview(asOf, PrivacyData.PolicyHash(policy), policy, counts);
         await tx.CommitAsync(ct); return result;
@@ -75,7 +77,8 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var counts = AllCounts(state, await db.Sessions.CountAsync(ct), runs) with
         {
             DeviceGrants = await db.DeviceGrants.CountAsync(ct),
-            DeviceCommands = await db.DeviceCommands.CountAsync(ct)
+            DeviceCommands = await db.DeviceCommands.CountAsync(ct),
+            DeviceReceipts = await db.DeviceReceipts.CountAsync(ct)
         };
         row.Json = JsonSerializer.Serialize(PrivacyData.EmptyAfterErase(state));
         await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
@@ -137,9 +140,11 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             }
         }
         var grantsPruned = await PostgresDeviceGrantStore.Prunable(db, request.AsOf).ExecuteDeleteAsync(ct);
-        var commandsPruned = await PostgresDeviceCommandStore.Prunable(db, policy, request.AsOf).ExecuteDeleteAsync(ct);
+        var commands = PostgresDeviceCommandStore.Prunable(db, policy, request.AsOf);
+        var receiptsPruned = await db.DeviceReceipts.CountAsync(x => commands.Any(command => command.Id == x.CommandId), ct);
+        var commandsPruned = await commands.ExecuteDeleteAsync(ct);
         row.Json = JsonSerializer.Serialize(state);
-        counts = counts with { DeviceGrants = grantsPruned, DeviceCommands = commandsPruned };
+        counts = counts with { DeviceGrants = grantsPruned, DeviceCommands = commandsPruned, DeviceReceipts = receiptsPruned };
         var job = new PrivacyJobRow { Id = request.RequestId, Kind = "retention", Fingerprint = fingerprint, CompletedAt = now, CountsJson = JsonSerializer.Serialize(counts) };
         db.PrivacyJobs.Add(job); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return job.Contract();
     }

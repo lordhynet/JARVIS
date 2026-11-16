@@ -101,6 +101,14 @@ An executor polls `POST /api/device-commands/claim` with its paired credential i
 
 Reuse the same poll request ID after a lost response. While the command and grant are active, a retry can recover the original dispatch for capabilities marked `CallerKey` or `SafeReplay`. A `NeverReplay` capability returns HTTP 204 on retry. An executor must follow the descriptor's replay policy, use the returned command ID as the action idempotency key when required, and check the expiry before executing. Use a fresh request ID for the next poll after a received response.
 
+### Signed device receipts
+
+The paired executor posts to `POST /api/device-commands/{id}/receipts` with the credential that claimed the command. The body contains a new UUID in `requestId`, the successful poll's UUID in `dispatchRequestId`, a `kind` of `Acknowledged`, `Succeeded` or `Failed`, `payloadJson` as a JSON string that matches the installed receipt schema, and `signature` as 64 hex characters.
+
+Sign with HMAC-SHA256 using the UTF-8 paired credential as the key. The message is UTF-8 with six LF-separated lines and no trailing newline. Write `jarvis-device-receipt-v1`, the command ID, the dispatch request ID, the receipt request ID, the case-sensitive kind above, and the uppercase SHA-256 of the exact UTF-8 payload string. Format UUIDs in lowercase with hyphens.
+
+Core accepts one acknowledgement and one terminal receipt per command. A terminal receipt can arrive directly after dispatch. Retrying the same receipt ID and payload returns the original receipt. A receipt received after expiry is marked `late` and cannot change the expired outcome. The owner can list receipts with `GET /api/device-commands/{id}/receipts`. Command retention and erasure remove their receipts.
+
 ## Primary API references
 
 - [OpenAI text generation](https://developers.openai.com/api/docs/guides/text)

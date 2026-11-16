@@ -191,6 +191,41 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("DeviceGrants", (string)null);
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.DeviceReceiptRow", b =>
+                {
+                    b.Property<Guid>("CommandId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DispatchRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsFinal")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Late")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("CommandId", "Id");
+
+                    b.HasIndex("CommandId", "IsFinal")
+                        .IsUnique();
+
+                    b.ToTable("DeviceReceipts", (string)null);
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.DomainApprovalRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -639,6 +674,15 @@ namespace Jarvis.Persistence.Migrations
                     b.HasOne("Jarvis.Persistence.SessionRow", null)
                         .WithMany("Checkpoints")
                         .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.DeviceReceiptRow", b =>
+                {
+                    b.HasOne("Jarvis.Persistence.DeviceCommandRow", null)
+                        .WithMany()
+                        .HasForeignKey("CommandId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

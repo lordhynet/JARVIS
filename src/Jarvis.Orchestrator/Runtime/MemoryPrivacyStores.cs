@@ -13,6 +13,7 @@ public sealed class MemoryPrivacyBoundary
     public Dictionary<Guid, PrivacyJob> Jobs { get; } = [];
     public Dictionary<Guid, DeviceGrant> DeviceGrants { get; internal set; } = [];
     internal Dictionary<Guid, DeviceCommand> DeviceCommands { get; } = [];
+    internal Dictionary<Guid, List<DeviceReceiptView>> DeviceReceipts { get; } = [];
     public Task<T> Run<T>(Func<Task<T>> operation)
     {
         lock (Sync) { PrivacyContext.RequireWrite(Status); return Task.FromResult(operation().GetAwaiter().GetResult()); }
@@ -96,6 +97,15 @@ public sealed class InMemoryDeviceCommandStore(MemoryPrivacyBoundary boundary) :
     });
 }
 
+public sealed class InMemoryDeviceReceiptStore(MemoryPrivacyBoundary boundary) : IDeviceReceiptReader
+{
+    public Task<IReadOnlyList<DeviceReceiptView>> ListAsync(Guid commandId, CancellationToken ct = default) => boundary.Run(() =>
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult<IReadOnlyList<DeviceReceiptView>>(boundary.DeviceReceipts.GetValueOrDefault(commandId)?.ToArray() ?? []);
+    });
+}
+
 public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemorySessionStore sessions, InMemoryWorkflowStore workflows,
     MemoryPrivacyBoundary boundary, InMemoryDeviceGrantStore deviceGrants) : IPrivacyStore
 {
@@ -118,9 +128,11 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
         lock (boundary.Sync)
         {
             RequireEpoch(); PrivacyData.Validate(policy);
+            var commands = PrunableCommands(policy, asOf).ToArray();
             var counts = PrivacyData.Counts(State(), Sessions(), workflows.PrivacySnapshot().Runs, policy, asOf) with
             {
-                DeviceCommands = PrunableCommands(policy, asOf).Count()
+                DeviceCommands = commands.Length,
+                DeviceReceipts = commands.Sum(id => boundary.DeviceReceipts.GetValueOrDefault(id)?.Count ?? 0)
             };
             return Task.FromResult(new RetentionPreview(asOf, PrivacyData.PolicyHash(policy), policy, counts));
         }
@@ -142,9 +154,14 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var state = State(); var snapshot = workflows.PrivacySnapshot();
             var counts = new PrivacyCounts(Sessions().Count, state.TrainingAttempts.Values.Count(x => x.DeletedAt is null), state.CoachingAttempts.Values.Count(x => x.DeletedAt is null),
                 state.VoiceTurns.Count, state.ProviderResults.Count, snapshot.Runs.Count(x => x.DeletedAt is null), state.AgentRuns.Values.Count(x => x.DeletedAt is null));
-            var removed = counts with { DeviceGrants = boundary.DeviceGrants.Count, DeviceCommands = boundary.DeviceCommands.Count };
+            var removed = counts with
+            {
+                DeviceGrants = boundary.DeviceGrants.Count, DeviceCommands = boundary.DeviceCommands.Count,
+                DeviceReceipts = boundary.DeviceReceipts.Values.Sum(x => x.Count)
+            };
             runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear(); deviceGrants.Clear();
             boundary.DeviceCommands.Clear();
+            boundary.DeviceReceipts.Clear();
             boundary.Status = new(boundary.Status.Epoch + 1, boundary.Status.Revision + 1, true, now, request.RequestId); boundary.ErasureKeyFingerprint = fingerprint;
             boundary.Jobs[request.RequestId] = new(request.RequestId, "erasure", PrivacyData.Hash("erasure:" + boundary.Status.Epoch), now, removed);
             return Task.FromResult(boundary.Status);
@@ -179,8 +196,13 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             runtime.ReplacePrivacyData(state); sessions.ReplacePrivacyData(kept); workflows.ReplacePrivacyData(runs, events);
             var prunedGrants = deviceGrants.PruneCore(request.AsOf);
             var prunedCommands = PrunableCommands(policy, request.AsOf).ToArray();
-            foreach (var id in prunedCommands) boundary.DeviceCommands.Remove(id);
-            var removed = selection.Counts with { DeviceGrants = prunedGrants, DeviceCommands = prunedCommands.Length };
+            var prunedReceipts = 0;
+            foreach (var id in prunedCommands)
+            {
+                boundary.DeviceCommands.Remove(id);
+                if (boundary.DeviceReceipts.Remove(id, out var receipts)) prunedReceipts += receipts.Count;
+            }
+            var removed = selection.Counts with { DeviceGrants = prunedGrants, DeviceCommands = prunedCommands.Length, DeviceReceipts = prunedReceipts };
             var job = new PrivacyJob(request.RequestId, "retention", fingerprint, now, removed); boundary.Jobs.Add(job.Id, job); return Task.FromResult(job);
         }
     }

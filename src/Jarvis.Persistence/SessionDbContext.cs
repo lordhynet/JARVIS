@@ -22,6 +22,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<DomainAuditEventRow> DomainAuditEvents => Set<DomainAuditEventRow>();
     public DbSet<DeviceGrantRow> DeviceGrants => Set<DeviceGrantRow>();
     public DbSet<DeviceCommandRow> DeviceCommands => Set<DeviceCommandRow>();
+    public DbSet<DeviceReceiptRow> DeviceReceipts => Set<DeviceReceiptRow>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -86,6 +87,13 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.HasIndex(x => x.CreatedAt);
             b.HasIndex(x => new { x.DeviceId, x.CredentialHash, x.Status, x.CreatedAt, x.Id });
             b.HasIndex(x => new { x.DeviceId, x.CredentialHash, x.DispatchRequestId }).IsUnique();
+        });
+        model.Entity<DeviceReceiptRow>(b =>
+        {
+            b.ToTable("DeviceReceipts");
+            b.HasKey(x => new { x.CommandId, x.Id });
+            b.HasIndex(x => new { x.CommandId, x.IsFinal }).IsUnique();
+            b.HasOne<DeviceCommandRow>().WithMany().HasForeignKey(x => x.CommandId).OnDelete(DeleteBehavior.Cascade);
         });
         model.Entity<CheckpointRow>(b =>
         {
