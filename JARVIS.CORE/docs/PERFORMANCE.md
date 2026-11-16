@@ -67,15 +67,18 @@ After removing the recurring transcript and orphaned-lease repair sweeps, the de
 
 ## Round 5 runtime extraction
 
-The baseline on Core `5931b61` ran on 16 November 2026 with disposable PostgreSQL 17 and `measure-runtime.ps1 -VoiceProfile`. The synthetic document was 6,063,976 bytes. Each timing used 200 measured calls after warm-up.
+The comparison on 16 November 2026 used Core `5931b61` before extraction and `aed820e` after extraction, disposable PostgreSQL 17, and `measure-runtime.ps1 -VoiceProfile`. The document was 6,063,976 bytes in both runs. Each timing used 200 measured calls after warm-up.
 
-| Operation | Before p50 | Before p95 |
-|---|---:|---:|
-| Authoritative audio lease check | 41.049 ms | 73.015 ms |
-| Companion prepare | 1,466.215 ms | 2,637.059 ms |
-| General runtime update | 1,623.353 ms | 2,729.158 ms |
+| Operation | Before p50 | After p50 | Before p95 | After p95 |
+|---|---:|---:|---:|---:|
+| Audio lease database load | 11.275 ms | 4.532 ms | 18.812 ms | 12.253 ms |
+| Authoritative audio lease check | 41.049 ms | 33.171 ms | 73.015 ms | 80.478 ms |
+| Companion prepare | 1,466.215 ms | 1,416.896 ms | 2,637.059 ms | 2,171.978 ms |
+| General runtime update | 1,623.353 ms | 1,506.281 ms | 2,729.158 ms | 2,299.909 ms |
 
 The first extraction stores the active and draining audio leases, drain deadline, and next fence in a separate PostgreSQL row. Lease reads and release use that row directly. Existing composite writes still commit runtime, session, and lease changes together. The migration copies legacy audio state and retains the old JSON fields for rollback. A migration downgrade copies the current lease fields back before dropping the new table.
+
+The database load phase improved, and the end-to-end lease check had a higher p95 in the second run. General updates still read and save the full document and exceed the 50 ms p95 target. Voice and hub tickets are the next extraction in the review order.
 
 ## Seven-day owner soak
 
