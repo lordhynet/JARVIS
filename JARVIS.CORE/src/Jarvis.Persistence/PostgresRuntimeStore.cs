@@ -7,11 +7,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Jarvis.Persistence;
 
-// A single JSON document is deliberately simple for a personal assistant. The database
-// lock, not a process semaphore, coordinates multiple hosts. Split hot tables as needed.
+// The database locks coordinate runtime updates across Core processes.
 public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges? audioChanges = null) : IRuntimeStore
 {
-    public async Task<AudioLease?> ReadAudioLeaseAsync(CancellationToken ct = default)
+    public async Task<AudioLease?> ReadAudioLeaseAsync(CancellationToken ct = default) => (await ReadAudioStateAsync(ct)).Lease;
+
+    public async Task<AudioLeaseState> ReadAudioLeaseStateAsync(CancellationToken ct = default)
+    {
+        var audio = await ReadAudioStateAsync(ct);
+        return new(audio.Lease, audio.DrainUntil);
+    }
+
+    private async Task<RuntimeAudioLeaseState> ReadAudioStateAsync(CancellationToken ct)
     {
         var phase = Stopwatch.GetTimestamp();
         await using var db = await factory.CreateDbContextAsync(ct);
@@ -20,21 +27,34 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         phase = CoreTelemetry.RecordStoragePhase(phase, "lease.begin");
         await PostgresPrivacyGate.LockAsync(db, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "lease.privacy_gate");
-        var json = await db.Database.SqlQueryRaw<string>("SELECT COALESCE(\"Json\"->>'AudioLease', 'null') AS \"Value\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1").SingleAsync(ct);
+        var row = await db.RuntimeAudioStates.AsNoTracking().SingleAsync(r => r.Id == 1, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "lease.load");
-        var lease = JsonSerializer.Deserialize<AudioLease>(json);
-        phase = CoreTelemetry.RecordStoragePhase(phase, "lease.deserialize");
+        var audio = row.ToState();
         await tx.CommitAsync(ct);
         CoreTelemetry.RecordStoragePhase(phase, "lease.commit");
-        return lease;
+        return audio;
     }
-    public async Task<AudioLeaseState> ReadAudioLeaseStateAsync(CancellationToken ct = default)
+
+    public async Task<bool> ReleaseAudioAsync(AudioLease lease, CancellationToken ct = default)
     {
-        var json = await ReadProjectionAsync($"""
-            SELECT jsonb_build_object('Lease', "Json"->'AudioLease', 'DrainUntil', "Json"->'AudioDrainUntil')::text AS "Value"
-            FROM "RuntimeDocuments" WHERE "Id"=1
-            """, ct);
-        return JsonSerializer.Deserialize<AudioLeaseState>(json);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        var row = await RuntimeAudioRow.LockAsync(db, ct);
+        var before = row.ToState();
+        var after = before.Release(lease);
+        if (before == after)
+        {
+            CoreTelemetry.RuntimeNoOpWrites.Add(1);
+            await tx.CommitAsync(ct);
+            return false;
+        }
+        row.Apply(after);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        CoreTelemetry.RuntimeWrites.Add(1);
+        audioChanges?.LeaseChanged(before.Lease, after.Lease);
+        return true;
     }
 
     public async Task<RegisteredDevice?> ReadRegisteredDeviceAsync(string id, CancellationToken ct = default)
@@ -84,9 +104,13 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.read.begin");
         await PostgresPrivacyGate.LockAsync(db, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.read.privacy_gate");
-        var row = await db.RuntimeDocuments.AsNoTracking().SingleAsync(r => r.Id == 1, ct);
+        var row = await (from document in db.RuntimeDocuments.AsNoTracking()
+                         from audio in db.RuntimeAudioStates.AsNoTracking()
+                         where document.Id == 1 && audio.Id == 1
+                         select new { document.Json, Audio = audio }).SingleAsync(ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.read.load");
         var state = JsonSerializer.Deserialize<RuntimeState>(row.Json)!;
+        row.Audio.ToState().Apply(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.read.deserialize");
         var result = read(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.read.callback");
@@ -122,22 +146,35 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         var rows = await db.RuntimeDocuments.FromSqlRaw(
             "SELECT * FROM \"RuntimeDocuments\" WHERE \"Id\" = 1 FOR UPDATE").ToListAsync(ct);
         var row = rows.Single();
+        var audioRow = await RuntimeAudioRow.LockAsync(db, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.lock_and_load");
         CoreTelemetry.RuntimeLockWait.Record(Stopwatch.GetElapsedTime(started, phase).TotalSeconds);
         CoreTelemetry.RuntimeBytes.Record(System.Text.Encoding.UTF8.GetByteCount(row.Json));
         var state = JsonSerializer.Deserialize<RuntimeState>(row.Json)!;
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.deserialize");
-        var previousLease = state.AudioLease;
+        // Keep the migrated audio fields in the document readable for rollback.
+        var legacyAudio = RuntimeAudioLeaseState.From(state);
         var before = JsonSerializer.Serialize(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.serialize_before");
+        var beforeAudio = audioRow.ToState();
+        beforeAudio.Apply(state);
         var result = await update(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.callback");
+        var afterAudio = RuntimeAudioLeaseState.From(state);
+        legacyAudio.Apply(state);
         var after = JsonSerializer.Serialize(state);
+        afterAudio.Apply(state);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.serialize_after");
-        if (before != after) { row.Json = after; await db.SaveChangesAsync(ct); CoreTelemetry.RuntimeWrites.Add(1); }
+        if (before != after) row.Json = after;
+        if (beforeAudio != afterAudio) audioRow.Apply(afterAudio);
+        if (before != after || beforeAudio != afterAudio)
+        {
+            await db.SaveChangesAsync(ct);
+            CoreTelemetry.RuntimeWrites.Add(1);
+        }
         else CoreTelemetry.RuntimeNoOpWrites.Add(1);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.save");
-        return (result, previousLease, state.AudioLease, phase);
+        return (result, beforeAudio.Lease, afterAudio.Lease, phase);
     }
 }
 

@@ -73,6 +73,8 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         if (control.Erased && control.ErasureRequestId == request.RequestId) return control.Status();
         RequireEpoch(control); Guard.Require(!control.Erased && control.Revision == request.ExpectedRevision, 409, "Privacy state changed. Reload before erasing.");
         var (row, state) = await Runtime(db, ct);
+        var audioRow = await db.RuntimeAudioStates.SingleAsync(x => x.Id == 1, ct);
+        audioRow.ToState().Apply(state);
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var counts = AllCounts(state, await db.Sessions.CountAsync(ct), runs) with
         {
@@ -80,7 +82,9 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             DeviceCommands = await db.DeviceCommands.CountAsync(ct),
             DeviceReceipts = await db.DeviceReceipts.CountAsync(ct)
         };
-        row.Json = JsonSerializer.Serialize(PrivacyData.EmptyAfterErase(state));
+        var erased = PrivacyData.EmptyAfterErase(state);
+        row.Json = JsonSerializer.Serialize(erased);
+        audioRow.Apply(RuntimeAudioLeaseState.From(erased));
         await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
         await db.DomainDefinitions.ExecuteDeleteAsync(ct);
         await db.Sessions.ExecuteDeleteAsync(ct); await db.WorkflowRuns.ExecuteDeleteAsync(ct); await db.DeviceGrants.ExecuteDeleteAsync(ct); await db.PrivacyJobs.ExecuteDeleteAsync(ct);

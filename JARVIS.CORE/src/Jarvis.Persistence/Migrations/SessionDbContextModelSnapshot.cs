@@ -521,6 +521,53 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("PrivacyJobs");
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.RuntimeAudioRow", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DrainDeviceId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("DrainExpiresAt")
+                        .HasColumnType("character varying(48)");
+
+                    b.Property<long?>("DrainFence")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("DrainSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DrainUntil")
+                        .HasColumnType("character varying(48)");
+
+                    b.Property<string>("LeaseDeviceId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LeaseExpiresAt")
+                        .HasColumnType("character varying(48)");
+
+                    b.Property<long?>("LeaseFence")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("LeaseSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("NextFence")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("RuntimeAudioStates", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            NextFence = 1L
+                        });
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.RuntimeDocument", b =>
                 {
                     b.Property<int>("Id")

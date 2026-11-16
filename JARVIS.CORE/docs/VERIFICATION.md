@@ -777,3 +777,7 @@ Core `8447c56` limits the reversible grant pre-approval exemption to Voice. The 
 The full backend run passed 409 tests with zero failures on disposable PostgreSQL 17. The opt-in runtime benchmark was the only skip. Playwright passed all 52 tests across desktop and mobile, 26 per project. EF found no pending model changes and discovered 14 migrations. The Android route, header and DTO parity check passed.
 
 Android release 0.10.2 (version code 13, source `c4c23fe`) passed all 33 unit tests and release lint. The signed APK embeds that revision. Its SHA-256 is `ADDD4D0CCBBE37051737551C0F8523AE1FB87E96C43E1F65461AF821E2F8477F`, and its signing certificate matches 0.10.1. Physical handset and Home Assistant checks remain owner-run.
+
+## Round 5 — relational audio leases
+
+All 56 focused PostgreSQL, voice consistency, privacy, and realtime protocol checks passed with disposable PostgreSQL 17. The upgrade fixture confirmed that a legacy draining lease migrates with its deadline and that release clears the authoritative row while the legacy JSON stays byte-for-byte intact. EF reported no pending model changes.

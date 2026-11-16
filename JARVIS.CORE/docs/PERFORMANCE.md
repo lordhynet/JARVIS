@@ -65,6 +65,18 @@ The 16 November 2026 result uses the same workstation and workload as the previo
 
 After removing the recurring transcript and orphaned-lease repair sweeps, the default harness passed on disposable PostgreSQL 17. With a 6,063,976-byte runtime document it measured one transactional transcript write at 2,979.90 ms and 681.91 idle worker database calls per minute over 60.01 seconds.
 
+## Round 5 runtime extraction
+
+The baseline on Core `5931b61` ran on 16 November 2026 with disposable PostgreSQL 17 and `measure-runtime.ps1 -VoiceProfile`. The synthetic document was 6,063,976 bytes. Each timing used 200 measured calls after warm-up.
+
+| Operation | Before p50 | Before p95 |
+|---|---:|---:|
+| Authoritative audio lease check | 41.049 ms | 73.015 ms |
+| Companion prepare | 1,466.215 ms | 2,637.059 ms |
+| General runtime update | 1,623.353 ms | 2,729.158 ms |
+
+The first extraction stores the active and draining audio leases, drain deadline, and next fence in a separate PostgreSQL row. Lease reads and release use that row directly. Existing composite writes still commit runtime, session, and lease changes together. The migration copies legacy audio state and retains the old JSON fields for rollback. A migration downgrade copies the current lease fields back before dropping the new table.
+
 ## Seven-day owner soak
 
 This is a runbook for the owner. Do not run it against production or leave Core exposed beyond the LAN for the soak.

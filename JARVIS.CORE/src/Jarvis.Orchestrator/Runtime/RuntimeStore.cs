@@ -89,6 +89,13 @@ public readonly record struct AudioLeaseState(AudioLease? Lease, DateTimeOffset?
 public interface IRuntimeStore : IRuntimeReader
 {
     Task<T> UpdateAsync<T>(Func<RuntimeState, T> update, CancellationToken ct = default);
+    Task<bool> ReleaseAudioAsync(AudioLease lease, CancellationToken ct = default) => UpdateAsync(state =>
+    {
+        var before = RuntimeAudioLeaseState.From(state);
+        var after = before.Release(lease);
+        after.Apply(state);
+        return before != after;
+    }, ct);
     Task<UsageReservation> SettleUsageAsync(Guid id, decimal actual, int input, int output, CancellationToken ct = default) =>
         UpdateAsync(s => Jarvis.Orchestrator.Workflows.UsageAccounting.Settle(s, id, actual, input, output), ct);
 }
