@@ -142,6 +142,24 @@ public sealed class DeviceCommandTests
         }
     }
 
+    [Theory]
+    [InlineData(InvocationOrigin.Agent, DeviceCommandStatus.AwaitingConfirmation)]
+    [InlineData(InvocationOrigin.Voice, DeviceCommandStatus.Pending)]
+    public async Task Pre_approved_reversible_grant_skips_confirmation_only_for_voice(
+        InvocationOrigin origin, DeviceCommandStatus expectedStatus)
+    {
+        using var host = new JarvisApiFactory();
+        var (grantId, _) = await SetupAsync(host.Services, DeviceId, preApproved: true);
+        var service = host.Services.GetRequiredService<DeviceCommandService>();
+        var request = Request(grantId, DateTimeOffset.UtcNow);
+
+        using var invocation = CoreInvocationContext.Enter(origin);
+        var proposal = await service.ProposeAsync(DeviceId, request);
+
+        Assert.Equal(expectedStatus, proposal.Status);
+        Assert.Null(proposal.ConfirmedAt);
+    }
+
     [Fact]
     public async Task Device_command_expires_without_reopening_and_retention_removes_aged_arguments()
     {
@@ -175,19 +193,21 @@ public sealed class DeviceCommandTests
     internal static ProposeDeviceCommandRequest Request(Guid grantId, DateTimeOffset now) =>
         new(Guid.NewGuid(), grantId, Arguments, now.AddMinutes(2));
 
-    internal static async Task<(Guid GrantId, string Secret)> SetupAsync(IServiceProvider services, string deviceId)
+    internal static async Task<(Guid GrantId, string Secret)> SetupAsync(
+        IServiceProvider services, string deviceId, bool preApproved = false)
     {
         await services.GetRequiredService<DeviceService>().RegisterAsync(new(deviceId, "Command fixture", DeviceKind.AndroidCompanion,
             new(true, true, false, false, [])));
         var credential = await services.GetRequiredService<DeviceCredentials>().IssueAsync(deviceId, default);
-        return (await GrantAsync(services, deviceId), credential.Secret);
+        return (await GrantAsync(services, deviceId, preApproved), credential.Secret);
     }
 
-    private static async Task<Guid> GrantAsync(IServiceProvider services, string deviceId)
+    private static async Task<Guid> GrantAsync(IServiceProvider services, string deviceId, bool preApproved = false)
     {
         var now = services.GetRequiredService<TimeProvider>().GetUtcNow();
         var grant = await services.GetRequiredService<DeviceGrantService>().GrantAsync(deviceId,
-            DeviceGrantTests.GrantRequest() with { ExpiresAt = now.AddDays(4) }, new("fixture-owner", [DeviceGrantService.ManageScope]));
+            DeviceGrantTests.GrantRequest() with { ExpiresAt = now.AddDays(4), PreApproved = preApproved },
+            new("fixture-owner", [DeviceGrantService.ManageScope]));
         return grant.Id;
     }
 

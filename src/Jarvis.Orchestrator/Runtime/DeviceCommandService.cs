@@ -319,7 +319,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
     private static bool AutomaticOrigin(InvocationOrigin origin) => origin is InvocationOrigin.Voice or InvocationOrigin.Agent;
 
     private static bool RequiresConfirmation(InvocationOrigin origin, DeviceCapabilityDescriptor descriptor, bool preApproved) =>
-        !(preApproved && AutomaticOrigin(origin) && descriptor.Risk == DeviceCapabilityRisk.Reversible) &&
+        !(preApproved && origin == InvocationOrigin.Voice && descriptor.Risk == DeviceCapabilityRisk.Reversible) &&
         (origin != InvocationOrigin.ManualClient || descriptor.ConfirmationPolicy == DeviceConfirmationPolicy.Owner ||
             descriptor.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible);
 
