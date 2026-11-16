@@ -68,11 +68,11 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         RequireEpoch(control); Guard.Require(!control.Erased && control.Revision == request.ExpectedRevision, 409, "Privacy state changed. Reload before erasing.");
         var (row, state) = await Runtime(db, ct);
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
-        var counts = AllCounts(state, await db.Sessions.CountAsync(ct), runs);
+        var counts = AllCounts(state, await db.Sessions.CountAsync(ct), runs) with { DeviceGrants = await db.DeviceGrants.CountAsync(ct) };
         row.Json = JsonSerializer.Serialize(PrivacyData.EmptyAfterErase(state));
         await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
         await db.DomainDefinitions.ExecuteDeleteAsync(ct);
-        await db.Sessions.ExecuteDeleteAsync(ct); await db.WorkflowRuns.ExecuteDeleteAsync(ct); await db.PrivacyJobs.ExecuteDeleteAsync(ct);
+        await db.Sessions.ExecuteDeleteAsync(ct); await db.WorkflowRuns.ExecuteDeleteAsync(ct); await db.DeviceGrants.ExecuteDeleteAsync(ct); await db.PrivacyJobs.ExecuteDeleteAsync(ct);
         control.Epoch = checked(control.Epoch + 1); control.Revision++; control.Erased = true; control.ErasedAt = now;
         control.ErasureRequestId = request.RequestId; control.ErasureKeyFingerprint = keyFingerprint;
         db.PrivacyJobs.Add(new() { Id = request.RequestId, Kind = "erasure", Fingerprint = PrivacyData.Hash("erasure:" + control.Epoch), CompletedAt = now, CountsJson = JsonSerializer.Serialize(counts) });
@@ -125,7 +125,9 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
                 db.WorkflowEvents.Add(new() { EventId = Guid.NewGuid(), RunId = purged.Id, Revision = purged.Revision, Status = purged.Status, OccurredAt = purged.UpdatedAt });
             }
         }
+        var grantsPruned = await db.DeviceGrants.Where(x => x.ExpiresAt <= request.AsOf || x.RevokedAt != null).ExecuteDeleteAsync(ct);
         row.Json = JsonSerializer.Serialize(state);
+        counts = counts with { DeviceGrants = grantsPruned };
         var job = new PrivacyJobRow { Id = request.RequestId, Kind = "retention", Fingerprint = fingerprint, CompletedAt = now, CountsJson = JsonSerializer.Serialize(counts) };
         db.PrivacyJobs.Add(job); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return job.Contract();
     }

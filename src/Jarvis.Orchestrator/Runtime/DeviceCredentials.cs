@@ -10,6 +10,7 @@ public sealed record CoreActor(string SubjectId, string? DeviceId, string? Crede
 public static class DeviceCredentialContext
 {
     private static readonly AsyncLocal<CoreActor?> Current = new();
+    public static CoreActor? CurrentActor => Current.Value;
     public static IDisposable Enter(CoreActor actor) { var previous = Current.Value; Current.Value = actor; return new Scope(() => Current.Value = previous); }
     private sealed class Scope(Action close) : IDisposable { public void Dispose() => close(); }
     public static void RequireCurrent(RuntimeState state, string deviceId)
@@ -20,23 +21,33 @@ public static class DeviceCredentialContext
     }
 }
 
-public sealed class DeviceCredentials(IRuntimeStore store, TimeProvider clock)
+public sealed class DeviceCredentials(IRuntimeStore store, IDeviceGrantStore grants, TimeProvider clock)
 {
     public const string Prefix = "jdv1_";
-    public Task<IssuedDeviceCredential> IssueAsync(string deviceId, CancellationToken ct) => store.UpdateAsync(s => {
+    public async Task<IssuedDeviceCredential> IssueAsync(string deviceId, CancellationToken ct)
+    {
+        var issued = await store.UpdateAsync(s => {
         Guard.Require(s.Devices.ContainsKey(deviceId), 404, "Register the device before enrolling its credential.");
         Guard.Require(s.DeviceCredentials.ContainsKey(deviceId) || s.DeviceCredentials.Count < 100, 409, "Device credential capacity reached.");
         var secret = Prefix + Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         s.DeviceCredentials[deviceId] = new(deviceId, PrivacyData.Hash(secret), clock.GetUtcNow());
         InvalidateAudio(s, deviceId);
         return new IssuedDeviceCredential(deviceId, secret);
-    }, ct);
+        }, ct);
+        await grants.RevokeForDeviceAsync(deviceId, clock.GetUtcNow(), ct);
+        return issued;
+    }
 
-    public Task<bool> RevokeAsync(string deviceId, CancellationToken ct) => store.UpdateAsync(s => {
+    public async Task<bool> RevokeAsync(string deviceId, CancellationToken ct)
+    {
+        var revoked = await store.UpdateAsync(s => {
         if (!s.DeviceCredentials.TryGetValue(deviceId, out var credential)) return false;
         s.DeviceCredentials[deviceId] = credential with { Revoked = true };
         InvalidateAudio(s, deviceId); return true;
-    }, ct);
+        }, ct);
+        if (revoked) await grants.RevokeForDeviceAsync(deviceId, clock.GetUtcNow(), ct);
+        return revoked;
+    }
     public async Task<CoreActor?> AuthenticateAsync(string secret, CancellationToken ct)
     {
         if (secret.Length != Prefix.Length + 64 || !secret.StartsWith(Prefix, StringComparison.Ordinal)) return null;

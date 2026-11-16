@@ -90,6 +90,8 @@ public static class CqrsRegistration
         services.AddSingleton<SessionQueryHandlers>();
         services.AddSingleton<DeviceCommandHandlers>();
         services.AddSingleton<DeviceQueryHandler>();
+        services.AddSingleton<DeviceGrantCommandHandlers>();
+        services.AddSingleton<DeviceGrantQueryHandlers>();
         services.AddSingleton<LearningCommandHandlers>();
         services.AddSingleton<LearningQueryHandlers>();
         services.AddSingleton<StoryCommandHandlers>();
@@ -114,6 +116,9 @@ public static class CqrsRegistration
         Command<VerifyDevice, RegisteredDevice, DeviceCommandHandlers>(services);
         Command<IssueDeviceCredential, IssuedDeviceCredential, DeviceCommandHandlers>(services);
         Command<RevokeDeviceCredential, bool, DeviceCommandHandlers>(services);
+        Command<GrantDeviceCapability, DeviceCapabilityGrantView, DeviceGrantCommandHandlers>(services);
+        Command<RevokeDeviceCapabilityGrant, bool, DeviceGrantCommandHandlers>(services);
+        Query<ListDeviceCapabilityGrants, IReadOnlyList<DeviceCapabilityGrantView>, DeviceGrantQueryHandlers>(services);
         Command<CreateLearningItem, LearningItem, LearningCommandHandlers>(services);
         Command<ReviewLearningItem, LearningItem, LearningCommandHandlers>(services);
         Command<CreateStory, Story, StoryCommandHandlers>(services);

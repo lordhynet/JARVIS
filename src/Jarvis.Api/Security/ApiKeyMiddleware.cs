@@ -98,6 +98,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
         if (request.Method == "GET" && path == "/api/privacy/export" || request.Method == "POST" &&
             path is "/api/privacy/erase" or "/api/privacy/reopen" or "/api/privacy/retention/apply") return "privacy.manage";
         if (request.Method == "POST" && path.StartsWith("/api/devices/", StringComparison.Ordinal) && path.EndsWith("/verify", StringComparison.Ordinal)) return "device.verify";
+        if (path.StartsWith("/api/device-grants", StringComparison.Ordinal) || path.StartsWith("/api/devices/", StringComparison.Ordinal) && path.Contains("/grants", StringComparison.Ordinal)) return "device.grants";
         if (request.Method is "POST" or "DELETE" && path.StartsWith("/api/devices/", StringComparison.Ordinal) && path.EndsWith("/credential", StringComparison.Ordinal)) return "device.manage";
         if (request.Method == "POST" && path.StartsWith("/api/tools/", StringComparison.Ordinal) && path.EndsWith("/confirm", StringComparison.Ordinal)) return "tool.confirm";
         if (request.Method == "POST" && System.Text.RegularExpressions.Regex.IsMatch(path, "^/api/domains/[^/]+/(activate|disable|rollback)$")) return "domain.manage";

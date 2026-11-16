@@ -10,6 +10,33 @@ namespace Jarvis.Tests;
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
+    public async Task Device_grants_persist_and_erasure_removes_them_with_an_audit_count()
+    {
+        await using var database = await TestDatabase.CreateAsync(); const string deviceId = "persistent-grant-device";
+        Guid grantId; var now = DateTimeOffset.UtcNow;
+        using (var host = new PostgresApiFactory(database.ConnectionString))
+        {
+            await host.Services.GetRequiredService<DeviceService>().RegisterAsync(new(deviceId, "Grant fixture", DeviceKind.AndroidCompanion,
+                new(true, true, false, false, [])));
+            using var owner = host.AuthorisedClient();
+            var credentialResponse = await owner.PostAsJsonAsync($"/api/devices/{deviceId}/credential", new { }); credentialResponse.EnsureSuccessStatusCode();
+            var grantResponse = await owner.PostAsJsonAsync($"/api/devices/{deviceId}/grants",
+                new GrantDeviceCapabilityRequest("homeassistant.turn", "1.0.0", "{}", now.AddDays(20)));
+            grantResponse.EnsureSuccessStatusCode();
+            grantId = (await grantResponse.Content.ReadFromJsonAsync<DeviceCapabilityGrantView>(Json))!.Id;
+        }
+        using var restarted = new PostgresApiFactory(database.ConnectionString);
+        Assert.NotNull(await restarted.Services.GetRequiredService<IDeviceGrantStore>().GetAsync(grantId));
+        var privacy = restarted.Services.GetRequiredService<IPrivacyStore>(); var status = await privacy.StatusAsync();
+        var erased = await privacy.EraseAsync(new(Guid.NewGuid(), status.Revision, PrivacyData.ErasePhrase),
+            PrivacyData.Hash("fixture-owner-key"), now, default);
+        Assert.True(erased.Erased);
+        Assert.Equal(1, (await privacy.JobsAsync()).Single().Removed.DeviceGrants);
+        await using var db = await restarted.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>().CreateDbContextAsync();
+        Assert.Empty(await db.DeviceGrants.ToArrayAsync());
+    }
+
+    [PostgresFact]
     public async Task Narrow_paid_pause_read_returns_only_the_effective_pause_state()
     {
         await using var database = await TestDatabase.CreateAsync();

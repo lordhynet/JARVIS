@@ -11,6 +11,7 @@ public sealed class MemoryPrivacyBoundary
     public PrivacyStatus Status { get; set; } = new(0, 1, false, null, null);
     public string? ErasureKeyFingerprint { get; set; }
     public Dictionary<Guid, PrivacyJob> Jobs { get; } = [];
+    public Dictionary<Guid, DeviceGrant> DeviceGrants { get; } = [];
     public Task<T> Run<T>(Func<Task<T>> operation)
     {
         lock (Sync) { PrivacyContext.RequireWrite(Status); return Task.FromResult(operation().GetAwaiter().GetResult()); }
@@ -44,8 +45,41 @@ public sealed class GuardedMemoryWorkflows(InMemoryWorkflowStore inner, MemoryPr
     public Task<WorkflowRun?> ClaimAsync(DateTimeOffset now, Func<WorkflowRun,WorkflowRun> claim, CancellationToken ct = default) => boundary.Run(() => inner.ClaimAsync(now, claim, ct));
     public Task<WorkflowRun?> UpdateAsync(Guid id, Func<WorkflowRun,WorkflowRun> update, CancellationToken ct = default) => boundary.Run(() => inner.UpdateAsync(id, update, ct));
 }
+public sealed class InMemoryDeviceGrantStore(MemoryPrivacyBoundary boundary) : IDeviceGrantStore
+{
+    internal void Clear() => boundary.DeviceGrants.Clear();
+    internal int PruneCore(DateTimeOffset now)
+    {
+        var expired = boundary.DeviceGrants.Values.Where(x => x.ExpiresAt <= now || x.RevokedAt is not null).Select(x => x.Id).ToArray();
+        foreach (var id in expired) boundary.DeviceGrants.Remove(id);
+        return expired.Length;
+    }
+    public Task<DeviceGrant> AddAsync(DeviceGrant grant, CancellationToken ct = default) => boundary.Run(() =>
+    { boundary.DeviceGrants.Add(grant.Id, grant); return Task.FromResult(grant); });
+    public Task<DeviceGrant?> GetAsync(Guid id, CancellationToken ct = default) => boundary.Run(() => Task.FromResult(boundary.DeviceGrants.GetValueOrDefault(id)));
+    public Task<IReadOnlyList<DeviceGrant>> ListAsync(string? deviceId = null, CancellationToken ct = default) => boundary.Run(() =>
+        Task.FromResult<IReadOnlyList<DeviceGrant>>(boundary.DeviceGrants.Values.Where(x => deviceId is null || x.DeviceId == deviceId)
+            .OrderBy(x => x.DeviceId).ThenBy(x => x.CapabilityId).ToArray()));
+    public Task<DeviceGrant?> FindActiveAsync(string deviceId, string capabilityId, string capabilityVersion, string credentialHash, DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
+        Task.FromResult(boundary.DeviceGrants.Values.Where(x => x.DeviceId == deviceId && x.CapabilityId == capabilityId &&
+            x.CapabilityVersion == capabilityVersion && x.CredentialHash == credentialHash && x.RevokedAt is null && x.ExpiresAt > now)
+            .OrderByDescending(x => x.GrantedAt).FirstOrDefault()));
+    public Task<bool> RevokeAsync(Guid id, DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
+    {
+        if (!boundary.DeviceGrants.TryGetValue(id, out var grant) || grant.RevokedAt is not null) return Task.FromResult(false);
+        boundary.DeviceGrants[id] = grant with { RevokedAt = now }; return Task.FromResult(true);
+    });
+    public Task<int> RevokeForDeviceAsync(string deviceId, DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
+    {
+        var grants = boundary.DeviceGrants.Values.Where(x => x.DeviceId == deviceId && x.RevokedAt is null).ToArray();
+        foreach (var grant in grants) boundary.DeviceGrants[grant.Id] = grant with { RevokedAt = now };
+        return Task.FromResult(grants.Length);
+    });
+    public Task<int> PruneAsync(DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
+        Task.FromResult(PruneCore(now)));
+}
 public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemorySessionStore sessions, InMemoryWorkflowStore workflows,
-    MemoryPrivacyBoundary boundary) : IPrivacyStore
+    MemoryPrivacyBoundary boundary, InMemoryDeviceGrantStore deviceGrants) : IPrivacyStore
 {
     private RuntimeState State() => runtime.ReadAsync(x => x).GetAwaiter().GetResult();
     private List<ConversationSession> Sessions() => sessions.ListAsync().GetAwaiter().GetResult().ToList();
@@ -77,9 +111,10 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var state = State(); var snapshot = workflows.PrivacySnapshot();
             var counts = new PrivacyCounts(Sessions().Count, state.TrainingAttempts.Values.Count(x => x.DeletedAt is null), state.CoachingAttempts.Values.Count(x => x.DeletedAt is null),
                 state.VoiceTurns.Count, state.ProviderResults.Count, snapshot.Runs.Count(x => x.DeletedAt is null), state.AgentRuns.Values.Count(x => x.DeletedAt is null));
-            runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear();
+            var countsWithGrants = counts with { DeviceGrants = boundary.DeviceGrants.Count };
+            runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear(); deviceGrants.Clear();
             boundary.Status = new(boundary.Status.Epoch + 1, boundary.Status.Revision + 1, true, now, request.RequestId); boundary.ErasureKeyFingerprint = fingerprint;
-            boundary.Jobs[request.RequestId] = new(request.RequestId, "erasure", PrivacyData.Hash("erasure:" + boundary.Status.Epoch), now, counts);
+            boundary.Jobs[request.RequestId] = new(request.RequestId, "erasure", PrivacyData.Hash("erasure:" + boundary.Status.Epoch), now, countsWithGrants);
             return Task.FromResult(boundary.Status);
         }
     }
@@ -110,7 +145,8 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var runs = snapshot.Runs.Select(x => selection.Workflows.Contains(x.Id) ? PrivacyData.PurgeWorkflow(x, request.AsOf) : x).ToList();
             foreach (var run in runs.Where(x => selection.Workflows.Contains(x.Id))) events.Add(new(Guid.NewGuid(), run.Id, run.Revision, run.Status, run.UpdatedAt));
             runtime.ReplacePrivacyData(state); sessions.ReplacePrivacyData(kept); workflows.ReplacePrivacyData(runs, events);
-            var job = new PrivacyJob(request.RequestId, "retention", fingerprint, now, selection.Counts); boundary.Jobs.Add(job.Id, job); return Task.FromResult(job);
+            var prunedGrants = deviceGrants.PruneCore(request.AsOf);
+            var job = new PrivacyJob(request.RequestId, "retention", fingerprint, now, selection.Counts with { DeviceGrants = prunedGrants }); boundary.Jobs.Add(job.Id, job); return Task.FromResult(job);
         }
     }
 }

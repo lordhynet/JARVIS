@@ -6,7 +6,7 @@ public sealed record ReopenCoreRequest(int ExpectedRevision, string Confirmation
 public sealed record RetentionPolicy(bool Enabled = false, int SessionDays = 180, int AnswerDays = 180, int VoiceDays = 30,
     int ProviderCacheDays = 7, int ArtifactDays = 30, int SweepMinutes = 60);
 public sealed record PrivacyCounts(int Sessions, int TrainingAnswers, int CoachingAnswers, int VoiceTurns, int ProviderResults,
-    int WorkflowArtifacts, int AgentArtifacts, int Imports = 0);
+    int WorkflowArtifacts, int AgentArtifacts, int Imports = 0, int DeviceGrants = 0);
 public sealed record RetentionPreview(DateTimeOffset AsOf, string PolicyFingerprint, RetentionPolicy Policy, PrivacyCounts Eligible);
 public sealed record ApplyRetentionRequest(Guid RequestId, DateTimeOffset AsOf, string PolicyFingerprint, string Confirmation);
 public sealed record PrivacyJob(Guid Id, string Kind, string Fingerprint, DateTimeOffset CompletedAt, PrivacyCounts Removed);

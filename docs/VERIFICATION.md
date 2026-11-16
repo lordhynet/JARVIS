@@ -643,3 +643,9 @@ Fresh validation: after restoring the existing solution packages, `scripts/measu
 Added a versioned device-capability catalog with bounded argument and receipt object schemas, four risk levels, confirmation policy and idempotency rule. `GET /api/device-capabilities` exposes only code-installed descriptors and is available to a scoped paired-device credential. Initial v1 descriptor is `homeassistant.turn` 1.0.0; discovery does not grant execution. Sensitive and irreversible descriptors cannot be installed without owner confirmation policy.
 
 Fresh validation: the focused catalog and paired-device discovery tests passed 4/4 with no skips. No database migration or provider call was needed for this descriptor slice.
+
+## Round 3 Item 3 — owner device grants
+
+Added owner-managed, expiring grants stored in the relational `DeviceGrants` table and matching in-memory store. A grant is bound to the current device credential hash; credential rotation/revocation revokes existing grants, active lookup checks expiry and credential binding, and owner privacy erasure/retention removes grant records with counts. Owner-only API supports grant, list and revoke; device credentials cannot grant permissions, and credential hashes are omitted from responses.
+
+Fresh validation: focused in-memory/API grant tests passed 3/3; the PostgreSQL 17 migration, persistence and privacy-erasure test passed 1/1; after separating query and command handlers, CQRS architecture and grant API tests passed 11/11. The full suite built cleanly (0 warnings/errors); a run before the handler split reported 308 passed, 30 environment-gated skips and the CQRS boundary failure that prompted the split. The focused rerun passes. The PostgreSQL test database was disposable and stopped after the run. No production data or paid provider was used.

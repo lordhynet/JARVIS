@@ -20,6 +20,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<DomainApprovalRow> DomainApprovals => Set<DomainApprovalRow>();
     public DbSet<UserDomainStateRow> UserDomainState => Set<UserDomainStateRow>();
     public DbSet<DomainAuditEventRow> DomainAuditEvents => Set<DomainAuditEventRow>();
+    public DbSet<DeviceGrantRow> DeviceGrants => Set<DeviceGrantRow>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -54,6 +55,18 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.HasIndex(s => s.UpdatedAt);
             b.HasMany(s => s.Checkpoints).WithOne().HasForeignKey(c => c.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+        model.Entity<DeviceGrantRow>(b =>
+        {
+            b.ToTable("DeviceGrants");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.DeviceId).HasMaxLength(80);
+            b.Property(x => x.CapabilityId).HasMaxLength(100);
+            b.Property(x => x.CapabilityVersion).HasMaxLength(30);
+            b.Property(x => x.ConstraintsJson).HasColumnType("jsonb");
+            b.Property(x => x.CredentialHash).HasMaxLength(64);
+            b.HasIndex(x => new { x.DeviceId, x.CapabilityId, x.CapabilityVersion, x.ExpiresAt });
+            b.HasIndex(x => x.CredentialHash);
         });
         model.Entity<CheckpointRow>(b =>
         {
@@ -102,6 +115,29 @@ public sealed class SessionRow
     // them so a subsequent read (including after restart) has identical timestamps.
     internal static DateTimeOffset DatabaseTimestamp(DateTimeOffset value) =>
         new(value.UtcTicks - value.UtcTicks % 10, TimeSpan.Zero);
+}
+
+public sealed class DeviceGrantRow
+{
+    public Guid Id { get; set; }
+    public string DeviceId { get; set; } = "";
+    public string CapabilityId { get; set; } = "";
+    public string CapabilityVersion { get; set; } = "";
+    public string ConstraintsJson { get; set; } = "{}";
+    public string CredentialHash { get; set; } = "";
+    public DateTimeOffset GrantedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+
+    public Jarvis.Orchestrator.Runtime.DeviceGrant Contract() => new(Id, DeviceId, CapabilityId, CapabilityVersion,
+        ConstraintsJson, CredentialHash, GrantedAt, ExpiresAt, RevokedAt);
+    public static DeviceGrantRow From(Jarvis.Orchestrator.Runtime.DeviceGrant grant) => new()
+    {
+        Id = grant.Id, DeviceId = grant.DeviceId, CapabilityId = grant.CapabilityId,
+        CapabilityVersion = grant.CapabilityVersion, ConstraintsJson = grant.ConstraintsJson,
+        CredentialHash = grant.CredentialHash, GrantedAt = grant.GrantedAt, ExpiresAt = grant.ExpiresAt,
+        RevokedAt = grant.RevokedAt
+    };
 }
 
 public sealed class CheckpointRow

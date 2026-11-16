@@ -53,6 +53,54 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("Checkpoints", (string)null);
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.DeviceGrantRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CapabilityId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("CapabilityVersion")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("ConstraintsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("CredentialHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("DeviceId")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("GrantedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CredentialHash");
+
+                    b.HasIndex("DeviceId", "CapabilityId", "CapabilityVersion", "ExpiresAt");
+
+                    b.ToTable("DeviceGrants", (string)null);
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.DomainApprovalRow", b =>
                 {
                     b.Property<Guid>("Id")

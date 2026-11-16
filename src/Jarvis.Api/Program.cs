@@ -95,6 +95,7 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
         throw new InvalidOperationException("Postgres storage requires ConnectionStrings:Jarvis.");
     builder.Services.AddDbContextFactory<SessionDbContext>(o => o.UseNpgsql(connection));
     builder.Services.AddSingleton<ISessionStore, PostgresSessionStore>();
+    builder.Services.AddSingleton<IDeviceGrantStore, PostgresDeviceGrantStore>();
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
     builder.Services.AddSingleton<IPrivacyStore, PostgresPrivacyStore>();
@@ -107,6 +108,7 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<InMemorySessionStore>(); builder.Services.AddSingleton<InMemoryRuntimeStore>(); builder.Services.AddSingleton<InMemoryWorkflowStore>();
     builder.Services.AddSingleton<MemoryPrivacyBoundary>();
     builder.Services.AddSingleton<ISessionStore, GuardedMemorySessions>();
+    builder.Services.AddSingleton<InMemoryDeviceGrantStore>(); builder.Services.AddSingleton<IDeviceGrantStore>(s => s.GetRequiredService<InMemoryDeviceGrantStore>());
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
     builder.Services.AddSingleton<IPrivacyStore, InMemoryPrivacyStore>();
@@ -166,6 +168,7 @@ builder.Services.AddSingleton<WakeCandidateArbiter>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Training.VoicePracticeService>();
 builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();
+builder.Services.AddSingleton<DeviceGrantService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Runtime.IDeviceCapabilityCatalog>(
     _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All));
 builder.Services.AddSingleton<OwnerAuthorization>();
@@ -278,6 +281,7 @@ app.MapSessionEndpoints();
 app.MapRuntimeEndpoints();
 app.MapHub<StatusHub>("/hubs/status");
 app.MapDeviceCapabilityEndpoints();
+app.MapDeviceGrantEndpoints();
 
 app.Run();
 
