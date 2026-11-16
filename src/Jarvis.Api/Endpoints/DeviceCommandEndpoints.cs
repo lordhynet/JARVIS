@@ -38,6 +38,13 @@ public static class DeviceCommandEndpoints
             handler.HandleAsync(new GetDeviceCommand(id), ct))
             .WithTags("Device commands").RequireAuthorization(CorePolicies.Owner);
 
+        app.MapGet(CoreRoutes.DeviceCommands, (HttpContext context,
+            IQueryHandler<ListDeviceCommandsForReview, IReadOnlyList<DeviceCommandView>> handler, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return handler.HandleAsync(new ListDeviceCommandsForReview(), ct);
+        }).WithTags("Device commands").RequireAuthorization(CorePolicies.Owner);
+
         app.MapPost(CoreRoutes.DeviceCommandConfirm, (Guid id, ConfirmDeviceCommandRequest request,
             HttpContext context, OwnerAuthorization owner, ICommandHandler<ConfirmDeviceCommand, DeviceCommandView> handler, CancellationToken ct) =>
             handler.HandleAsync(new ConfirmDeviceCommand(id, request, owner.Require(context, DeviceCommandService.ConfirmScope)), ct))

@@ -86,6 +86,13 @@ public sealed class DeviceCapabilityCatalog : IDeviceCapabilityCatalog
 
     private static bool WithinConstraints(string id, JsonElement arguments, JsonElement constraints)
     {
+        if (BuiltInDeviceCapabilities.IsSensitiveHomeAssistant(id))
+        {
+            var action = arguments.GetProperty("action").GetString()!;
+            return constraints.GetProperty("allowedActions").EnumerateArray().Any(x => x.ValueEquals(action)) &&
+                (id != BuiltInDeviceCapabilities.HomeAssistantCoverSet ||
+                    arguments.TryGetProperty("position", out _) == (action == "set_cover_position"));
+        }
         if (id == BuiltInDeviceCapabilities.HomeAssistantClimateSet)
         {
             var temperature = arguments.GetProperty("temperatureC").GetDecimal();
@@ -115,7 +122,14 @@ public sealed class DeviceCapabilityCatalog : IDeviceCapabilityCatalog
             entities.EnumerateArray().All(entity => entity.ValueKind == JsonValueKind.String && entity.GetString() is { } entityId &&
                 BuiltInDeviceCapabilities.IsEntityFor(id, entityId) && entityIds.Add(entityId)) && entityIds.Count > 0 &&
             (id != BuiltInDeviceCapabilities.HomeAssistantClimateSet ||
-                constraints.GetProperty("minC").GetDecimal() <= constraints.GetProperty("maxC").GetDecimal());
+                constraints.GetProperty("minC").GetDecimal() <= constraints.GetProperty("maxC").GetDecimal()) &&
+            (!BuiltInDeviceCapabilities.IsSensitiveHomeAssistant(id) || HasUniqueActions(constraints));
+    }
+
+    private static bool HasUniqueActions(JsonElement constraints)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        return constraints.GetProperty("allowedActions").EnumerateArray().All(x => names.Add(x.GetString()!));
     }
 }
 
@@ -126,20 +140,32 @@ public static class BuiltInDeviceCapabilities
     public const string HomeAssistantLightSet = "homeassistant.light.set";
     public const string HomeAssistantSceneActivate = "homeassistant.scene.activate";
     public const string HomeAssistantClimateSet = "homeassistant.climate.set";
+    public const string HomeAssistantCoverSet = "homeassistant.cover.set";
+    public const string HomeAssistantLockSet = "homeassistant.lock.set";
+    public const string HomeAssistantAlarmSet = "homeassistant.alarm.set";
 
     private const string Allowlist = """{"type":"object","properties":{"allowedEntityIds":{"type":"array","items":{"type":"string","maxLength":120},"minItems":1,"maxItems":50}},"required":["allowedEntityIds"],"additionalProperties":false}""";
     private const string Receipt = """{"type":"object","properties":{"accepted":{"type":"boolean"},"detail":{"type":"string","maxLength":1000}},"required":["accepted"],"additionalProperties":false}""";
+    private const string CoverActions = """["open_cover","close_cover","set_cover_position"]""";
+    private const string LockActions = """["lock","unlock"]""";
+    private const string AlarmActions = """["alarm_arm_home","alarm_arm_away","alarm_arm_night","alarm_disarm"]""";
+
+    public static bool IsSensitiveHomeAssistant(string id) => id is HomeAssistantCoverSet or HomeAssistantLockSet or HomeAssistantAlarmSet;
 
     public static bool IsHomeAssistant(string id, string version) => version == HomeAssistantTurnVersion &&
-        id is HomeAssistantTurn or HomeAssistantLightSet or HomeAssistantSceneActivate or HomeAssistantClimateSet;
+        (id is HomeAssistantTurn or HomeAssistantLightSet or HomeAssistantSceneActivate or HomeAssistantClimateSet || IsSensitiveHomeAssistant(id));
 
-    private static readonly Regex Entity = new(@"\A(light|switch|scene|climate)\.[a-z0-9_]{1,100}\z", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+    private static readonly Regex Entity = new(@"\A(light|switch|scene|climate|cover|lock|alarm_control_panel)\.[a-z0-9_]{1,100}\z",
+        RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
     internal static bool IsEntityFor(string capability, string entity) => Entity.IsMatch(entity) && (capability switch
     {
         HomeAssistantTurn => entity.StartsWith("light.", StringComparison.Ordinal) || entity.StartsWith("switch.", StringComparison.Ordinal),
         HomeAssistantLightSet => entity.StartsWith("light.", StringComparison.Ordinal),
         HomeAssistantSceneActivate => entity.StartsWith("scene.", StringComparison.Ordinal),
         HomeAssistantClimateSet => entity.StartsWith("climate.", StringComparison.Ordinal),
+        HomeAssistantCoverSet => entity.StartsWith("cover.", StringComparison.Ordinal),
+        HomeAssistantLockSet => entity.StartsWith("lock.", StringComparison.Ordinal),
+        HomeAssistantAlarmSet => entity.StartsWith("alarm_control_panel.", StringComparison.Ordinal),
         _ => false
     });
 
@@ -161,6 +187,16 @@ public static class BuiltInDeviceCapabilities
             DeviceCapabilityRisk.Reversible, DeviceConfirmationPolicy.Owner, DeviceIdempotencyRule.CallerKey,
             """{"type":"object","properties":{"entityId":{"type":"string","maxLength":120},"temperatureC":{"type":"number","minimum":-273.15,"maximum":1000}},"required":["entityId","temperatureC"],"additionalProperties":false}""",
             Receipt,
-            """{"type":"object","properties":{"allowedEntityIds":{"type":"array","items":{"type":"string","maxLength":120},"minItems":1,"maxItems":50},"minC":{"type":"number","minimum":-273.15,"maximum":1000},"maxC":{"type":"number","minimum":-273.15,"maximum":1000}},"required":["allowedEntityIds","minC","maxC"],"additionalProperties":false}""")
+            """{"type":"object","properties":{"allowedEntityIds":{"type":"array","items":{"type":"string","maxLength":120},"minItems":1,"maxItems":50},"minC":{"type":"number","minimum":-273.15,"maximum":1000},"maxC":{"type":"number","minimum":-273.15,"maximum":1000}},"required":["allowedEntityIds","minC","maxC"],"additionalProperties":false}"""),
+        Sensitive(HomeAssistantCoverSet, "Control an approved cover", "Open, close or position a cover after owner confirmation.", CoverActions,
+            ""","position":{"type":"integer","minimum":0,"maximum":100}"""),
+        Sensitive(HomeAssistantLockSet, "Control an approved lock", "Lock or unlock a granted lock after owner confirmation.", LockActions),
+        Sensitive(HomeAssistantAlarmSet, "Control an approved alarm", "Arm or disarm a granted alarm panel after owner confirmation.", AlarmActions)
     ];
+
+    private static DeviceCapabilityDescriptor Sensitive(string id, string name, string description, string actions, string extra = "") =>
+        new(id, HomeAssistantTurnVersion, name, description, DeviceCapabilityRisk.Sensitive, DeviceConfirmationPolicy.Owner, DeviceIdempotencyRule.NeverReplay,
+            $$$"""{"type":"object","properties":{"entityId":{"type":"string","maxLength":120},"action":{"type":"string","enum":{{{actions}}}}{{{extra}}}},"required":["entityId","action"],"additionalProperties":false}""",
+            Receipt,
+            $$$"""{"type":"object","properties":{"allowedEntityIds":{"type":"array","items":{"type":"string","maxLength":120},"minItems":1,"maxItems":50},"allowedActions":{"type":"array","items":{"type":"string","enum":{{{actions}}}},"minItems":1,"maxItems":4}},"required":["allowedEntityIds","allowedActions"],"additionalProperties":false}""");
 }

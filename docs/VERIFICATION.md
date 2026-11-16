@@ -761,3 +761,11 @@ The new versioned Home Assistant descriptors share the existing grant, dispatch 
 All 90 focused checks passed with mocked Home Assistant, disposable PostgreSQL 17 and in-memory fixtures. Coverage includes actual serialized service requests, state verification, unchanged scene timestamps, zero brightness, out-of-range thermostat targets, and older Home Assistant temperature-unit metadata. EF reported no pending model changes.
 
 The full backend suite passed 401 tests with zero failures and the opt-in measurement harness skipped. The Android route, header and DTO parity check passed. The disposable PostgreSQL container was removed after verification.
+
+## Item 3b — owner-approved covers, locks and alarms
+
+Core installs sensitive Home Assistant capabilities for cover open, close and position, lock and unlock, and alarm mode changes. Owner grants constrain the permitted entities and actions. Voice only proposes these commands. The Tools tab shows the exact arguments and submits their hash for separate owner approval or rejection. The paired executor sends one action and verifies the resulting state within the command's deadline. Protected action codes only enter the Home Assistant request.
+
+All 95 focused backend checks passed with disposable PostgreSQL 17 and mocked Home Assistant. They include pre-approval denial, grant scope, voice proposal isolation, owner argument-hash matching, cover movement and position, alarm outcome and code isolation, and the bounded owner review query. The four focused Playwright checks passed on desktop and mobile against an isolated in-memory API.
+
+The full backend suite passed 407 tests with zero failures and the opt-in measurement harness skipped. EF reported no pending model changes, and Android route, header and DTO parity passed. The disposable PostgreSQL instance was removed after verification.

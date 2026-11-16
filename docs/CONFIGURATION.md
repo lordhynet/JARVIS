@@ -135,6 +135,22 @@ Issue a separate version `1.0.0` grant for each capability below. Grant constrai
 
 For exact RGB input, say “Set the kitchen light colour to RGB 23 45 67.” For thermostat requests, “degrees” means Celsius. An unavailable or mismatched state produces an unverified outcome, and Core never repeats a scene activation automatically.
 
+### Owner-approved covers, locks and alarms
+
+The owner issues a version `1.0.0` grant for the paired Home Assistant executor. Each grant requires a non-empty `allowedEntityIds` and `allowedActions` list. The entities also need to be in `HomeAssistant:AllowedEntities`. For example, a grant scoped to locking the front door uses `{"allowedEntityIds":["lock.front"],"allowedActions":["lock"]}`. Sensitive grants require a new owner confirmation for every command and reject `preApproved: true`.
+
+| Capability | Allowed actions | Example spoken proposal |
+| --- | --- | --- |
+| `homeassistant.cover.set` | `open_cover`, `close_cover`, `set_cover_position` | “Close the garage door” or “Set the bedroom blind position to 40 percent” |
+| `homeassistant.lock.set` | `lock`, `unlock` | “Lock the front door” |
+| `homeassistant.alarm.set` | `alarm_arm_home`, `alarm_arm_away`, `alarm_arm_night`, `alarm_disarm` | “Arm the house alarm in away mode” |
+
+In **Home & tools → Device commands**, review the entity and exact arguments, then approve or reject with the separate owner key. The dashboard sends the displayed proposal's argument hash. The owner can also list commands with `GET /api/device-commands`, which returns up to 50 commands and puts active proposals first. Refresh the dashboard to see the executor's outcome.
+
+If a lock or alarm requires a code, configure it in the owner's protected deployment settings at `HomeAssistant:ActionCodes:<entity_id>`. Core places it only in the Home Assistant action request. The voice tool never requests an action code, and the code stays out of command arguments and receipts. [Home Assistant alarm PIN documentation](https://www.home-assistant.io/integrations/alarm_control_panel/#using-an-alarm-pin-code-in-actions)
+
+The executor sends at most one action per dispatch. It can check state for up to 30 seconds within the command's remaining lifetime, and it requires the expected final state and the exact position where requested. An expired or unverified dispatch does not run again automatically. [Home Assistant cover states](https://www.home-assistant.io/integrations/cover/#cover-states)
+
 ## Primary API references
 
 - [OpenAI text generation](https://developers.openai.com/api/docs/guides/text)

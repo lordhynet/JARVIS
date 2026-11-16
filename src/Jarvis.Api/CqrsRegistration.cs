@@ -127,6 +127,7 @@ public static class CqrsRegistration
         Command<ConfirmDeviceCommand, DeviceCommandView, DeviceCommandLifecycleHandlers>(services);
         Command<ClaimDeviceCommand, DeliveredDeviceCommand?, DeviceCommandLifecycleHandlers>(services);
         Query<GetDeviceCommand, DeviceCommandView, DeviceCommandQueryHandler>(services);
+        Query<ListDeviceCommandsForReview, IReadOnlyList<DeviceCommandView>, DeviceCommandQueryHandler>(services);
         Command<RecordDeviceReceipt, DeviceReceiptView, DeviceReceiptCommandHandler>(services);
         Query<ListDeviceReceipts, IReadOnlyList<DeviceReceiptView>, DeviceReceiptQueryHandler>(services);
         Command<CreateLearningItem, LearningItem, LearningCommandHandlers>(services);

@@ -10,7 +10,7 @@ namespace Jarvis.Api.Integrations;
 public sealed partial class ProviderGateway
 {
     internal async Task<string> ExecuteVerifiedHomeCommandAsync(DeliveredDeviceCommand delivery,
-        Func<CancellationToken, Task> authorizeDispatch, CancellationToken ct)
+        Func<CancellationToken, Task> authorizeDispatch, TimeProvider clock, CancellationToken ct)
     {
         using var json = JsonDocument.Parse(delivery.ArgumentsJson);
         var arguments = json.RootElement;
@@ -28,9 +28,81 @@ public sealed partial class ProviderGateway
                 return await ActivateSceneAsync(entity, authorizeDispatch, ct);
             case BuiltInDeviceCapabilities.HomeAssistantClimateSet:
                 return await SetClimateAsync(entity, arguments.GetProperty("temperatureC").GetDecimal(), authorizeDispatch, ct);
+            case BuiltInDeviceCapabilities.HomeAssistantCoverSet:
+            case BuiltInDeviceCapabilities.HomeAssistantLockSet:
+            case BuiltInDeviceCapabilities.HomeAssistantAlarmSet:
+                return await SetSensitiveEntityAsync(entity, delivery, arguments, authorizeDispatch, clock, ct);
             default:
                 throw new DomainException(409, "The Home Assistant executor does not support this capability.");
         }
+    }
+
+    private async Task<string> SetSensitiveEntityAsync(string entity, DeliveredDeviceCommand delivery, JsonElement arguments,
+        Func<CancellationToken, Task> authorizeDispatch, TimeProvider clock, CancellationToken ct)
+    {
+        var action = arguments.GetProperty("action").GetString()!;
+        var domain = delivery.CapabilityId switch
+        {
+            BuiltInDeviceCapabilities.HomeAssistantCoverSet => "cover",
+            BuiltInDeviceCapabilities.HomeAssistantLockSet => "lock",
+            _ => "alarm_control_panel"
+        };
+        int? position = arguments.TryGetProperty("position", out var value) ? value.GetInt32() : null;
+        var expected = action switch
+        {
+            "open_cover" => "open",
+            "close_cover" => "closed",
+            "set_cover_position" => position == 0 ? "closed" : "open",
+            "lock" => "locked",
+            "unlock" => "unlocked",
+            "alarm_arm_home" => "armed_home",
+            "alarm_arm_away" => "armed_away",
+            "alarm_arm_night" => "armed_night",
+            "alarm_disarm" => "disarmed",
+            _ => throw new DomainException(409, "Unsupported sensitive Home Assistant action.")
+        };
+        bool Matches(JsonElement state) => HasState(state, expected) && (domain != "cover" ||
+            MatchesCoverPosition(state, position, expected == "closed" ? 0 : 100));
+        var before = await HomeStateAsync(entity, ct);
+        Guard.Require(before.TryGetProperty("state", out var status) && status.ValueKind == JsonValueKind.String &&
+            status.GetString() is not (null or "unavailable" or "unknown" or "jammed"),
+            502, "Home Assistant did not report a usable state for the approved entity.");
+        await authorizeDispatch(ct);
+        var remaining = delivery.ExpiresAt - clock.GetUtcNow();
+        Guard.Require(remaining > TimeSpan.Zero, 409, "The approved Home Assistant command expired before execution.");
+        if (Matches(before)) return "Home Assistant already reports the requested state.";
+
+        var data = new Dictionary<string, object> { ["entity_id"] = entity };
+        if (position is { } target) data["position"] = target;
+        if ((domain is "lock" or "alarm_control_panel") && config[$"HomeAssistant:ActionCodes:{entity}"] is { Length: > 0 } code)
+            data["code"] = code;
+        using var verification = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        verification.CancelAfter(remaining < TimeSpan.FromSeconds(30) ? remaining : TimeSpan.FromSeconds(30));
+        try
+        {
+            await HomeActionAsync(entity, domain, action, data, verification.Token);
+            while (true)
+            {
+                var state = await HomeStateAsync(entity, verification.Token);
+                if (Matches(state)) return "Home Assistant reports the requested state.";
+                Guard.Require(!HasState(state, "unavailable") && !HasState(state, "unknown") && !HasState(state, "jammed"),
+                    502, "Home Assistant did not confirm the approved action.");
+                await Task.Delay(TimeSpan.FromMilliseconds(500), verification.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new DomainException(502, "Home Assistant did not confirm the approved action before the verification deadline.");
+        }
+    }
+
+    private static bool MatchesCoverPosition(JsonElement state, int? explicitPosition, int endpoint)
+    {
+        if (state.TryGetProperty("attributes", out var attributes) && attributes.ValueKind == JsonValueKind.Object &&
+            attributes.TryGetProperty("current_position", out var position) && position.ValueKind != JsonValueKind.Null)
+            return position.ValueKind == JsonValueKind.Number && position.TryGetInt32(out var actual) &&
+                actual == (explicitPosition ?? endpoint);
+        return explicitPosition is null;
     }
 
     private async Task<string> SetLightAsync(string entity, JsonElement arguments,

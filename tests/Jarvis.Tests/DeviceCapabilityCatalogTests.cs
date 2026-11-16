@@ -113,4 +113,28 @@ public sealed class DeviceCapabilityCatalogTests
         Assert.False(catalog.Permits(id, "1.0.0", allow, """{"entityId":"climate.hall","temperatureC":22.01}"""));
         Assert.False(catalog.Permits(id, "1.0.0", allow, """{"entityId":"climate.hall","temperatureC":"21.5"}"""));
     }
+
+    [Fact]
+    public void Sensitive_capabilities_require_owner_confirmation_and_explicit_actions()
+    {
+        var catalog = new DeviceCapabilityCatalog(BuiltInDeviceCapabilities.All);
+        Assert.All(catalog.Installed.Where(x => BuiltInDeviceCapabilities.IsSensitiveHomeAssistant(x.Id)), descriptor =>
+        {
+            Assert.Equal(DeviceCapabilityRisk.Sensitive, descriptor.Risk);
+            Assert.Equal(DeviceConfirmationPolicy.Owner, descriptor.ConfirmationPolicy);
+            Assert.Equal(DeviceIdempotencyRule.NeverReplay, descriptor.IdempotencyRule);
+        });
+        const string lockId = BuiltInDeviceCapabilities.HomeAssistantLockSet;
+        const string allow = """{"allowedEntityIds":["lock.front"],"allowedActions":["lock"]}""";
+        Assert.True(catalog.Permits(lockId, "1.0.0", allow, """{"entityId":"lock.front","action":"lock"}"""));
+        Assert.False(catalog.Permits(lockId, "1.0.0", allow, """{"entityId":"lock.front","action":"unlock"}"""));
+        Assert.False(catalog.Permits(lockId, "1.0.0", allow, """{"entityId":"lock.front","action":"lock","code":"secret"}"""));
+        Assert.False(catalog.HasValidConstraints(lockId, "1.0.0", """{"allowedEntityIds":["lock.front"],"allowedActions":[]}"""));
+        Assert.False(catalog.HasValidConstraints(lockId, "1.0.0", """{"allowedEntityIds":["lock.front"],"allowedActions":["lock","lock"]}"""));
+        const string coverId = BuiltInDeviceCapabilities.HomeAssistantCoverSet;
+        const string cover = """{"allowedEntityIds":["cover.garage"],"allowedActions":["close_cover","set_cover_position"]}""";
+        Assert.True(catalog.Permits(coverId, "1.0.0", cover, """{"entityId":"cover.garage","action":"set_cover_position","position":41}"""));
+        Assert.False(catalog.Permits(coverId, "1.0.0", cover, """{"entityId":"cover.garage","action":"set_cover_position"}"""));
+        Assert.False(catalog.Permits(coverId, "1.0.0", cover, """{"entityId":"cover.garage","action":"close_cover","position":41}"""));
+    }
 }

@@ -20,6 +20,7 @@ internal sealed record HomeVoiceRequest(string Name, string Capability, string A
     public string Arguments(string entityId)
     {
         var payload = new Dictionary<string, object> { ["entityId"] = entityId };
+        if (BuiltInDeviceCapabilities.IsSensitiveHomeAssistant(Capability)) payload["action"] = Action;
         if (Setting is not null) payload[Setting] = Value!;
         return JsonSerializer.Serialize(payload);
     }
@@ -30,6 +31,9 @@ internal sealed record HomeVoiceRequest(string Name, string Capability, string A
         "light_set" => BuiltInDeviceCapabilities.HomeAssistantLightSet,
         "scene" => BuiltInDeviceCapabilities.HomeAssistantSceneActivate,
         "climate_set" => BuiltInDeviceCapabilities.HomeAssistantClimateSet,
+        "cover" => BuiltInDeviceCapabilities.HomeAssistantCoverSet,
+        "lock" => BuiltInDeviceCapabilities.HomeAssistantLockSet,
+        "alarm" => BuiltInDeviceCapabilities.HomeAssistantAlarmSet,
         _ => throw new DomainException(400, "The voice home tool does not support that action.")
     };
 
@@ -48,6 +52,14 @@ internal sealed record HomeVoiceRequest(string Name, string Capability, string A
         var command = words[start..end];
         var capability = CapabilityFor(action);
         if (action == "turn") return Turn(command, capability);
+        if (action == "lock")
+        {
+            Guard.Require(command.Length >= 2 && (Is(command[0], "lock") || Is(command[0], "unlock")), 400, Invalid);
+            return new(ReadName(WithoutArticle(command[1..])), capability, command[0].ToLowerInvariant());
+        }
+        if (action == "alarm") return Alarm(command, capability);
+        if (action == "cover" && (Is(command[0], "open") || Is(command[0], "close")))
+            return new(ReadName(WithoutArticle(command[1..])), capability, Is(command[0], "open") ? "open_cover" : "close_cover");
         if (action == "scene")
         {
             Guard.Require(command.Length >= 2 && Is(command[0], "activate"), 400, Invalid);
@@ -60,7 +72,25 @@ internal sealed record HomeVoiceRequest(string Name, string Capability, string A
         Guard.Require(Is(command[0], "set") && to >= 2 && to < command.Length - 1, 400, Invalid);
         var target = WithoutArticle(command[1..to]);
         var value = command[(to + 1)..];
+        if (action == "cover")
+        {
+            var explicitPercent = Percent(value);
+            Guard.Require(explicitPercent is not null, 400, "Say the cover position as a percentage.");
+            return new(ReadName(WithoutSuffix(target, "position")), capability, "set_cover_position",
+                "position", Integer(explicitPercent, 0, 100));
+        }
         return action == "light_set" ? Light(target, value, capability) : Climate(target, value, capability);
+    }
+
+    private static HomeVoiceRequest Alarm(string[] words, string capability)
+    {
+        if (Is(words[0], "disarm"))
+            return new(ReadName(WithoutArticle(words[1..])), capability, "alarm_disarm");
+        Guard.Require(words.Length >= 5 && Is(words[0], "arm") && Is(words[^3], "in") && Is(words[^1], "mode"),
+            400, "Say which granted alarm to arm and say home, away or night mode.");
+        var mode = words[^2].ToLowerInvariant();
+        Guard.Require(mode is "home" or "away" or "night", 400, "The alarm mode must be home, away or night.");
+        return new(ReadName(WithoutArticle(words[1..^3])), capability, "alarm_arm_" + mode);
     }
 
     private static HomeVoiceRequest Turn(string[] words, string capability)
@@ -79,12 +109,8 @@ internal sealed record HomeVoiceRequest(string Name, string Capability, string A
         const string action = "light_set";
         Guard.Require(name.Length > 0, 400, Invalid);
         var last = value[^1];
-        if (Is(last, "percent") || (value.Length > 1 && Is(last, "cent") && Is(value[^2], "per")) || last.EndsWith('%'))
-        {
-            var numeric = last.EndsWith('%') ? value[..^1].Append(last[..^1]).ToArray() :
-                Is(last, "percent") ? value[..^1] : value[..^2];
+        if (Percent(value) is { } numeric)
             return new(ReadName(WithoutSuffix(name, "brightness")), capability, action, "brightnessPct", Integer(numeric, 0, 100));
-        }
         if (Is(last, "kelvin") || Is(last, "k"))
         {
             name = WithoutSuffix(name, "temperature");
@@ -97,6 +123,14 @@ internal sealed record HomeVoiceRequest(string Name, string Capability, string A
         Guard.Require(value.Length == 4 && Is(value[0], "rgb"), 400, Invalid);
         var components = value.Skip(1).Select(word => Integer([word.TrimEnd(',')], 0, 255)).ToArray();
         return new(ReadName(name), capability, action, "rgbColor", components);
+    }
+
+    private static string[]? Percent(string[] words)
+    {
+        var last = words[^1];
+        if (last.EndsWith('%')) return words[..^1].Append(last[..^1]).ToArray();
+        if (Is(last, "percent")) return words[..^1];
+        return words.Length > 1 && Is(last, "cent") && Is(words[^2], "per") ? words[..^2] : null;
     }
 
     private static HomeVoiceRequest Climate(string[] name, string[] value, string capability)

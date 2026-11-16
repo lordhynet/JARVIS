@@ -78,7 +78,7 @@ const planning = initPlanning({ api, node, button, notice });
 const privacy = initPrivacy({ api, node, button, notice, onErased: () => {
   connectionGeneration++;
   stopAudio(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); imports.clear(); notifications.clear(); state.session = null; state.devices = []; state.registered = false;
-  for (const id of ['session-list', 'device-list', 'learning-list', 'tool-list', 'messages', 'checkpoints', 'briefing-content', 'integration-list']) $(id)?.replaceChildren();
+  for (const id of ['session-list', 'device-list', 'learning-list', 'tool-list', 'device-command-list', 'messages', 'checkpoints', 'briefing-content', 'integration-list']) $(id)?.replaceChildren();
   for (const field of document.querySelectorAll('[data-panel] input,[data-panel] textarea')) { if (field.type === 'checkbox' || field.type === 'radio') field.checked = false; else field.value = ''; }
   for (const id of ['selected-title', 'owner', 'handoff-state']) $(id).textContent = '';
   for (const id of ['session-controls', 'chat-form', 'checkpoint-panel', 'handoff-controls']) $(id).hidden = true;
@@ -190,7 +190,54 @@ async function loadLearning() {
 on('learning-form', 'submit', async () => { await api('/learning', { domain: $('learning-domain').value, prompt: $('learning-prompt').value, answer: $('learning-answer').value }); $('learning-prompt').value = ''; $('learning-answer').value = ''; await loadLearning(); notice('Learning card added.'); });
 on('refresh-learning', 'click', loadLearning);
 on('refresh-briefing', 'click', async () => { notice('Loading live sources…'); const briefing = await api('/briefing'); $('briefing-content').replaceChildren(); for (const section of briefing.sections) { const div = node('div', '', 'card'); div.append(node('h2', section.name)); if (!section.available) div.append(node('p', section.error, 'muted')); else if (!section.data.length) div.append(node('p', 'Nothing scheduled in this window.', 'muted')); else for (const item of section.data) div.append(node('p', item.name ? `${item.name}: ${item.status.join('; ')}` : item.title ? `${item.title}\n${item.start} → ${item.end}` : `${item.domain}: ${item.prompt}`, 'list-item')); $('briefing-content').append(div); } notice(`Updated ${new Date(briefing.generatedAt).toLocaleTimeString()}.`); });
-async function loadTools() { const tools = await api('/tools'); $('tool-list').replaceChildren(); if (!tools.length) $('tool-list').append(node('p', 'No actions yet.', 'muted')); for (const tool of tools) { const div = node('div', '', 'list-item'); const invocation = tool.invocation; const args = JSON.parse(invocation.argumentsJson); div.append(node('strong', `${args.action} · ${args.entityId}`), node('p', invocation.status), node('small', tool.result || 'Awaiting your decision.')); if (invocation.status === 'AwaitingConfirmation') for (const approve of [true, false]) div.append(button(approve ? 'Confirm action' : 'Reject', async () => { await api(`/tools/${invocation.id}/confirm`, { approve }); await loadTools(); })); $('tool-list').append(div); } }
+async function loadTools() {
+  const [tools, commands] = await Promise.all([api('/tools'), api('/device-commands')]);
+  const history = $('tool-list');
+  history.replaceChildren();
+  if (!tools.length) history.append(node('p', 'No actions yet.', 'muted'));
+  for (const tool of tools) {
+    const div = node('div', '', 'list-item');
+    const invocation = tool.invocation;
+    const args = JSON.parse(invocation.argumentsJson);
+    div.append(node('strong', `${args.action} · ${args.entityId}`), node('p', invocation.status), node('small', tool.result || 'Awaiting your decision.'));
+    if (invocation.status === 'AwaitingConfirmation') for (const approve of [true, false])
+      div.append(button(approve ? 'Confirm action' : 'Reject', async () => {
+        await api(`/tools/${invocation.id}/confirm`, { approve });
+        await loadTools();
+      }));
+    history.append(div);
+  }
+  renderDeviceCommands(commands);
+}
+
+function renderDeviceCommands(commands) {
+  const list = $('device-command-list');
+  list.replaceChildren();
+  if (!commands.length) list.append(node('p', 'No device commands yet.', 'muted'));
+  for (const command of commands) {
+    const row = node('div', '', 'list-item');
+    row.append(node('strong', command.capabilityId),
+      node('p', `${command.status} · ${command.origin} · ${command.deviceId}`),
+      node('pre', command.argumentsJson, 'device-command-arguments'));
+    if (command.status === 'AwaitingConfirmation') {
+      row.append(node('small', `Expires ${new Date(command.expiresAt).toLocaleTimeString()}`));
+      const decisions = node('div', '', 'actions');
+      for (const approve of [true, false]) {
+        decisions.append(button(approve ? 'Approve device command' : 'Reject device command', async () => {
+          for (const control of decisions.children) control.disabled = true;
+          try {
+            await api(`/device-commands/${encodeURIComponent(command.id)}/confirm`, { argumentHash: command.argumentHash, approve });
+            await loadTools();
+          } finally {
+            for (const control of decisions.children) control.disabled = false;
+          }
+        }));
+      }
+      row.append(decisions);
+    }
+    list.append(row);
+  }
+}
 on('home-form', 'submit', async () => { await api('/tools/home', { requestId: crypto.randomUUID(), sessionId: selected().id, entityId: $('home-entity').value, action: $('home-action').value }); await loadTools(); notice('Action prepared. Review the entity and action, then confirm.'); });
 on('refresh-tools', 'click', loadTools);
 function renderIntegrations(integrations) { $('integration-list').replaceChildren(...integrations.map(i => { const div = node('div', '', 'list-item'); div.append(node('strong', `${i.name} · ${i.configured ? 'Configured' : 'Needs setup'}`), node('p', i.detail, 'muted')); return div; })); }

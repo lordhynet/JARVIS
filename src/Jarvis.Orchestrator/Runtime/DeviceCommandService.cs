@@ -22,7 +22,9 @@ public sealed record DeviceCommand(Guid Id, Guid GrantId, string DeviceId, strin
 
 public interface IDeviceCommandReader
 {
+    const int ReviewLimit = 50;
     Task<DeviceCommand?> GetAsync(Guid id, CancellationToken ct = default);
+    Task<IReadOnlyList<DeviceCommand>> ListForReviewAsync(DateTimeOffset now, CancellationToken ct = default);
 }
 
 public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, ICoreTransaction transaction, TimeProvider clock)
@@ -178,7 +180,8 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             DeviceCredentialContext.RequireCurrent(writes.Runtime, actor.DeviceId!);
             var command = await writes.ReadDeviceCommandAsync(id);
             if (command is null || command.Status != DeviceCommandStatus.Pending || command.Origin != InvocationOrigin.Voice ||
-                command.DeviceId != actor.DeviceId || command.CredentialHash != actor.CredentialHash || !IsHomeAssistant(command))
+                command.DeviceId != actor.DeviceId || command.CredentialHash != actor.CredentialHash || !IsHomeAssistant(command) ||
+                BuiltInDeviceCapabilities.IsSensitiveHomeAssistant(command.CapabilityId))
                 return (null, false);
             var attempted = await TryDispatchAsync(writes, command, Guid.NewGuid());
             if (attempted.Limited)
@@ -196,10 +199,18 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
         DeviceCommand command, Guid requestId)
     {
         if (await ReadDeliveryCapabilityAsync(writes, command) is null) return (null, false);
-        if (IsHomeAssistant(command) && AutomaticOrigin(command.Origin) &&
+        var sensitive = BuiltInDeviceCapabilities.IsSensitiveHomeAssistant(command.CapabilityId);
+        if (IsHomeAssistant(command) && (AutomaticOrigin(command.Origin) || sensitive) &&
             !await writes.HasHomeDispatchCapacityAsync(command.DeviceId, HomeEntity(command.ArgumentsJson),
                 clock.GetUtcNow().AddMinutes(-1), HomeActionsPerMinute))
+        {
+            if (sensitive)
+                await writes.SaveDeviceCommandAsync(command with
+                {
+                    Status = DeviceCommandStatus.Cancelled, CancelledAt = Timestamp(clock.GetUtcNow()), CancelledBy = "core:home-rate-limit"
+                });
             return (null, true);
+        }
         var now = clock.GetUtcNow();
         if (command.ExpiresAt <= now) return (null, false);
         var dispatched = Dispatch(command, requestId, now);

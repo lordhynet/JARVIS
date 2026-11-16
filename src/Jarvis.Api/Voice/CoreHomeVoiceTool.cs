@@ -65,9 +65,10 @@ public sealed class CoreHomeVoiceTool(IRuntimeReader runtime, DeviceGrantService
             Guard.Require(currentAudio is not null && await currentAudio(token), 409, "The voice window no longer owns audio.");
             var proposal = await commands.ProposeAsync(deviceId, new(id, grant.Id, arguments, expires), token);
             if (proposal.Status == DeviceCommandStatus.AwaitingConfirmation)
-                return new { status = "awaiting_confirmation", commandId = id, name = target.Label };
+                return new { status = "awaiting_confirmation", commandId = id, name = target.Label,
+                    detail = "The owner can review the exact request in the Core dashboard's Tools tab." };
 
-            if (proposal.Status == DeviceCommandStatus.Pending)
+            if (proposal.Status == DeviceCommandStatus.Pending && !BuiltInDeviceCapabilities.IsSensitiveHomeAssistant(spoken.Capability))
                 await adapter.ExecuteVoiceCommandAsync(id, currentAudio, token);
             var stored = await commandReader.GetAsync(id, token);
             var recorded = await receipts.ListAsync(id, token);

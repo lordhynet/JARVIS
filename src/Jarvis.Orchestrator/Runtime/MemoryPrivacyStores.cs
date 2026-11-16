@@ -90,6 +90,14 @@ public sealed class InMemoryDeviceGrantStore(MemoryPrivacyBoundary boundary) : I
 }
 public sealed class InMemoryDeviceCommandStore(MemoryPrivacyBoundary boundary) : IDeviceCommandReader
 {
+    public Task<IReadOnlyList<DeviceCommand>> ListForReviewAsync(DateTimeOffset now, CancellationToken ct = default) => boundary.Run(() =>
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult<IReadOnlyList<DeviceCommand>>(boundary.DeviceCommands.Values
+            .OrderByDescending(x => x.Status == DeviceCommandStatus.AwaitingConfirmation && x.ExpiresAt > now)
+            .ThenByDescending(x => x.CreatedAt).ThenBy(x => x.Id).Take(IDeviceCommandReader.ReviewLimit).ToArray());
+    });
+
     public Task<DeviceCommand?> GetAsync(Guid id, CancellationToken ct = default) => boundary.Run(() =>
     {
         ct.ThrowIfCancellationRequested();

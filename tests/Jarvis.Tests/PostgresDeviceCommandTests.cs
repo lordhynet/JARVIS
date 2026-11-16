@@ -9,6 +9,31 @@ namespace Jarvis.Tests;
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
+    public async Task Device_command_review_prioritizes_active_proposals_and_uses_a_bounded_history()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        using var host = new PostgresApiFactory(database.ConnectionString);
+        const string deviceId = "persistent-command-review";
+        var (grantId, _) = await DeviceCommandTests.SetupAsync(host.Services, deviceId);
+        using var manual = CoreInvocationContext.Enter(InvocationOrigin.ManualClient);
+        var service = host.Services.GetRequiredService<DeviceCommandService>();
+        var now = DateTimeOffset.UtcNow;
+        var pending = await service.ProposeAsync(deviceId, DeviceCommandTests.Request(grantId, now));
+        var transactions = host.Services.GetRequiredService<ICoreTransaction>();
+        await transactions.ExecuteAsync(async writes =>
+        {
+            var earlier = (await writes.ReadDeviceCommandAsync(pending.Id))!;
+            for (var index = 0; index < IDeviceCommandReader.ReviewLimit; index++)
+                await writes.SaveDeviceCommandAsync(earlier with { Id = Guid.NewGuid(), CreatedAt = now.AddSeconds(index),
+                    Status = DeviceCommandStatus.Cancelled });
+            return true;
+        });
+        var review = await host.Services.GetRequiredService<IDeviceCommandReader>().ListForReviewAsync(now);
+        Assert.Equal(IDeviceCommandReader.ReviewLimit, review.Count);
+        Assert.Equal(pending.Id, review[0].Id);
+    }
+
+    [PostgresFact]
     public async Task Device_command_replays_are_atomic_and_survive_restart_with_exact_arguments()
     {
         await using var database = await TestDatabase.CreateAsync();

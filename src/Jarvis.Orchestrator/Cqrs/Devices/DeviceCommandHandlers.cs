@@ -7,6 +7,7 @@ public sealed record ProposeDeviceCommand(string DeviceId, ProposeDeviceCommandR
 public sealed record ConfirmDeviceCommand(Guid Id, ConfirmDeviceCommandRequest Request, BudgetActor Actor) : ICommand<DeviceCommandView>;
 public sealed record ClaimDeviceCommand(ClaimDeviceCommandRequest Request) : ICommand<DeliveredDeviceCommand?>;
 public sealed record GetDeviceCommand(Guid Id) : IQuery<DeviceCommandView>;
+public sealed record ListDeviceCommandsForReview : IQuery<IReadOnlyList<DeviceCommandView>>;
 
 public sealed class DeviceCommandLifecycleHandlers(DeviceCommandService commands) :
     ICommandHandler<ProposeDeviceCommand, DeviceCommandView>,
@@ -23,8 +24,16 @@ public sealed class DeviceCommandLifecycleHandlers(DeviceCommandService commands
         commands.ClaimAsync(command.Request, ct);
 }
 
-public sealed class DeviceCommandQueryHandler(IDeviceCommandReader commands, TimeProvider clock) : IQueryHandler<GetDeviceCommand, DeviceCommandView>
+public sealed class DeviceCommandQueryHandler(IDeviceCommandReader commands, TimeProvider clock) :
+    IQueryHandler<GetDeviceCommand, DeviceCommandView>, IQueryHandler<ListDeviceCommandsForReview, IReadOnlyList<DeviceCommandView>>
 {
+    public async Task<IReadOnlyList<DeviceCommandView>> HandleAsync(ListDeviceCommandsForReview query, CancellationToken ct = default)
+    {
+        var rows = await commands.ListForReviewAsync(clock.GetUtcNow(), ct);
+        var now = clock.GetUtcNow();
+        return rows.Select(x => x.View(now)).ToArray();
+    }
+
     public async Task<DeviceCommandView> HandleAsync(GetDeviceCommand query, CancellationToken ct = default)
     {
         var command = await commands.GetAsync(query.Id, ct);

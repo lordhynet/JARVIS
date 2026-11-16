@@ -6,7 +6,7 @@ namespace Jarvis.Api.Integrations;
 
 public sealed class HomeAssistantCommandAdapter(ProviderGateway gateway, IConfiguration config, IPrivacyReader privacy,
     DeviceCredentials credentials, IDeviceGrantStore grants, DeviceCommandService commands, DeviceReceiptService receipts,
-    ILogger<HomeAssistantCommandAdapter> logger) : IHomeControl
+    ILogger<HomeAssistantCommandAdapter> logger, TimeProvider clock) : IHomeControl
 {
     public const string ExecutorDeviceId = "HomeAssistant:ExecutorDeviceId";
     public const string ExecutorCredential = "HomeAssistant:ExecutorCredential";
@@ -86,7 +86,7 @@ public sealed class HomeAssistantCommandAdapter(ProviderGateway gateway, IConfig
             {
                 await commands.EnsureHomeAssistantExecutionAllowedAsync(delivery, token);
                 Guard.Require(currentAudio is null || await currentAudio(token), 409, "The voice window no longer owns audio.");
-            }, ct);
+            }, clock, ct);
         }
         catch (Exception error) when (error is DomainException or HttpRequestException or OperationCanceledException)
         {

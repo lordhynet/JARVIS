@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { randomUUID } = require('node:crypto');
 const key = 'browser-test-only-key';
 async function connect(page) {
   await page.goto('/');
@@ -43,6 +44,45 @@ test('home action is reviewable and rejecting it has no side effect', async ({ p
   const tool = page.locator('#tool-list .list-item').filter({ hasText: 'AwaitingConfirmation' });
   await expect(tool).toContainText('turn_on'); await tool.getByRole('button', { name: 'Reject', exact: true }).click();
   await expect(page.locator('#tool-list')).toContainText('Rejected by user.');
+});
+
+test('sensitive commands show exact arguments and require owner approval', async ({ page }) => {
+  const headers = { 'X-Jarvis-Key': key, 'X-Jarvis-Owner-Key': 'browser-test-only-owner-management-123456789' };
+  const fixture = test.info().project.name;
+  const deviceId = `review-executor-${fixture}`;
+  const entityId = `lock.review_${fixture}`;
+  async function post(path, data) {
+    const response = await page.request.post(path, { headers, data });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return response.json();
+  }
+  await post('/api/devices', { deviceId, name: 'Review executor', kind: 'HomeAssistant',
+    capabilities: { canListen: false, canSpeak: false, hasDisplay: false, canControlHome: true, extra: [] } });
+  await post(`/api/devices/${deviceId}/credential`, {});
+  const grant = await post(`/api/devices/${deviceId}/grants`, { requestId: randomUUID(),
+    capabilityId: 'homeassistant.lock.set', capabilityVersion: '1.0.0', reason: 'Review fixture',
+    expiresAt: new Date(Date.now() + 86400000).toISOString(),
+    constraintsJson: JSON.stringify({ allowedEntityIds: [entityId], allowedActions: ['lock', 'unlock'] }) });
+  async function propose(action) {
+    return post(`/api/devices/${deviceId}/commands`, { requestId: randomUUID(), grantId: grant.id,
+      expiresAt: new Date(Date.now() + 120000).toISOString(), argumentsJson: JSON.stringify({ entityId, action }) });
+  }
+  const unlock = await propose('unlock');
+  const lock = await propose('lock');
+  await connect(page);
+  await page.getByRole('button', { name: 'Home & tools' }).click();
+  const list = page.locator('#device-command-list .list-item');
+  const unlockRow = list.filter({ hasText: unlock.argumentsJson });
+  await expect(unlockRow).toContainText('AwaitingConfirmation');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  const confirmation = page.waitForRequest(request => request.url().endsWith(`/device-commands/${unlock.id}/confirm`));
+  await unlockRow.getByRole('button', { name: 'Approve device command' }).click();
+  expect((await confirmation).postDataJSON()).toEqual({ argumentHash: unlock.argumentHash, approve: true });
+  await expect(unlockRow).toContainText('Pending');
+
+  const lockRow = list.filter({ hasText: lock.argumentsJson });
+  await lockRow.getByRole('button', { name: 'Reject device command' }).click();
+  await expect(lockRow).toContainText('Cancelled');
 });
 test('register browser and refuse voice before hardware verification', async ({ page }) => {
   await connect(page); await page.getByRole('button', { name: 'Devices', exact: true }).click();

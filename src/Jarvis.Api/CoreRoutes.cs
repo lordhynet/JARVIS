@@ -9,7 +9,8 @@ public static class CoreRoutes
     public const string DeviceGrants = Devices + "/{id}/grants";
     public const string DeviceCommandProposals = Devices + "/{id}/commands";
     public const string DeviceCommandClaim = "/api/device-commands/claim";
-    public const string DeviceCommand = "/api/device-commands/{id:guid}";
+    public const string DeviceCommands = "/api/device-commands";
+    public const string DeviceCommand = DeviceCommands + "/{id:guid}";
     public const string DeviceCommandConfirm = DeviceCommand + "/confirm";
     public const string DeviceCommandReceipts = DeviceCommand + "/receipts";
     public const string DeviceCapabilities = "/api/device-capabilities";
