@@ -21,6 +21,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<UserDomainStateRow> UserDomainState => Set<UserDomainStateRow>();
     public DbSet<DomainAuditEventRow> DomainAuditEvents => Set<DomainAuditEventRow>();
     public DbSet<DeviceGrantRow> DeviceGrants => Set<DeviceGrantRow>();
+    public DbSet<DeviceCommandRow> DeviceCommands => Set<DeviceCommandRow>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -69,6 +70,20 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.Property(x => x.Reason).HasMaxLength(1000);
             b.HasIndex(x => new { x.DeviceId, x.CapabilityId, x.CapabilityVersion, x.ExpiresAt });
             b.HasIndex(x => x.CredentialHash);
+        });
+        model.Entity<DeviceCommandRow>(b =>
+        {
+            b.ToTable("DeviceCommands");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.DeviceId).HasMaxLength(80);
+            b.Property(x => x.CapabilityId).HasMaxLength(100);
+            b.Property(x => x.CapabilityVersion).HasMaxLength(30);
+            b.Property(x => x.CredentialHash).HasMaxLength(64);
+            b.Property(x => x.ArgumentsJson).HasColumnType("text");
+            b.Property(x => x.ArgumentHash).HasMaxLength(64);
+            b.Property(x => x.ConfirmedBy).HasMaxLength(80);
+            b.Property(x => x.CancelledBy).HasMaxLength(80);
+            b.HasIndex(x => x.CreatedAt);
         });
         model.Entity<CheckpointRow>(b =>
         {

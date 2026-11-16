@@ -23,6 +23,7 @@ async function api(path, body, method) {
     ['POST', 'DELETE'].includes(verb) && /^\/devices\/[^/]+\/(verify|credential)$/.test(path) ||
     verb === 'POST' && /^\/devices\/[^/]+\/grants$/.test(path) ||
     ['GET', 'DELETE'].includes(verb) && /^\/device-grants(?:\/[^/]+)?$/.test(path) ||
+    verb === 'POST' && /^\/device-commands\/[^/]+\/confirm$/.test(path) ||
     verb === 'POST' && /^\/domains\/[^/]+\/(activate|disable|rollback)$/.test(path) ||
     verb === 'POST' && /^\/tools\/[^/]+\/confirm$/.test(path) ||
     verb === 'POST' && /^\/budget\/(approvals(?:\/[^/]+\/revoke)?|legacy\/[^/]+\/classify)$/.test(path) ||

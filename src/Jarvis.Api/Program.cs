@@ -99,6 +99,7 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddDbContextFactory<SessionDbContext>(o => o.UseNpgsql(connection));
     builder.Services.AddSingleton<ISessionStore, PostgresSessionStore>();
     builder.Services.AddSingleton<IDeviceGrantStore, PostgresDeviceGrantStore>();
+    builder.Services.AddSingleton<IDeviceCommandReader, PostgresDeviceCommandStore>();
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
     builder.Services.AddSingleton<ICoreTransaction, PostgresCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
@@ -112,6 +113,7 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<MemoryPrivacyBoundary>();
     builder.Services.AddSingleton<ISessionStore, GuardedMemorySessions>();
     builder.Services.AddSingleton<InMemoryDeviceGrantStore>(); builder.Services.AddSingleton<IDeviceGrantStore>(s => s.GetRequiredService<InMemoryDeviceGrantStore>());
+    builder.Services.AddSingleton<IDeviceCommandReader, InMemoryDeviceCommandStore>();
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
     builder.Services.AddSingleton<ICoreTransaction, MemoryCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
@@ -172,6 +174,7 @@ builder.Services.AddSingleton<Jarvis.Orchestrator.Training.VoicePracticeService>
 builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();
 builder.Services.AddSingleton<DeviceGrantService>();
+builder.Services.AddSingleton<DeviceCommandService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Runtime.IDeviceCapabilityCatalog>(
     _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All));
 builder.Services.AddSingleton<OwnerAuthorization>();
@@ -289,6 +292,7 @@ app.MapRuntimeEndpoints();
 app.MapHub<StatusHub>("/hubs/status").RequireAuthorization(CorePolicies.Owner);
 app.MapDeviceCapabilityEndpoints();
 app.MapDeviceGrantEndpoints();
+app.MapDeviceCommandEndpoints();
 
 app.Run();
 

@@ -41,6 +41,13 @@ public sealed class PostgresDeviceGrantStore(IDbContextFactory<SessionDbContext>
         var row = await db.DeviceGrants.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct); await tx.CommitAsync(ct);
         return row?.Contract();
     }
+
+    internal static async Task<DeviceGrant?> ReadLockedAsync(SessionDbContext db, Guid id, CancellationToken ct)
+    {
+        var rows = await db.DeviceGrants.FromSql($"""SELECT * FROM "DeviceGrants" WHERE "Id" = {id} FOR SHARE""")
+            .AsNoTracking().ToListAsync(ct);
+        return rows.SingleOrDefault()?.Contract();
+    }
     public async Task<IReadOnlyList<DeviceGrant>> ListAsync(string? deviceId = null, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);

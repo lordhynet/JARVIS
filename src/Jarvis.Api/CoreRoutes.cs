@@ -7,6 +7,9 @@ public static class CoreRoutes
     public const string DeviceHeartbeat = Devices + DeviceHeartbeatSuffix;
     public const string DeviceCredentialSuffix = "/{id}/credential";
     public const string DeviceGrants = Devices + "/{id}/grants";
+    public const string DeviceCommandProposals = Devices + "/{id}/commands";
+    public const string DeviceCommand = "/api/device-commands/{id:guid}";
+    public const string DeviceCommandConfirm = DeviceCommand + "/confirm";
     public const string DeviceCapabilities = "/api/device-capabilities";
 
     public const string Privacy = "/api/privacy";

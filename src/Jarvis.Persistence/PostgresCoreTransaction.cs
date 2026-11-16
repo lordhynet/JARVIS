@@ -16,7 +16,7 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         var phase = CoreTelemetry.RecordStoragePhase(started, "runtime.update.context");
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.begin");
-        // Lock in the order privacy, runtime, session or grants across all composite writes.
+        // Lock privacy and runtime first across all composite writes.
         await PostgresPrivacyGate.LockAsync(db, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.privacy_gate");
         var sessions = new List<(ConversationSession Before, ConversationSession After)>();
@@ -48,5 +48,11 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
 
         public Task<int> RevokeDeviceGrantsAsync(string deviceId, DateTimeOffset now) =>
             PostgresDeviceGrantStore.RevokeForDeviceAsync(db, deviceId, now, ct);
+
+        public Task<DeviceGrant?> ReadDeviceGrantAsync(Guid id) => PostgresDeviceGrantStore.ReadLockedAsync(db, id, ct);
+
+        public Task<DeviceCommand?> ReadDeviceCommandAsync(Guid id) => PostgresDeviceCommandStore.ReadLockedAsync(db, id, ct);
+
+        public Task SaveDeviceCommandAsync(DeviceCommand command) => PostgresDeviceCommandStore.SaveAsync(db, command, ct);
     }
 }

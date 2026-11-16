@@ -87,6 +87,14 @@ Core records the verified owner subject, reason and request ID. An identical ret
 
 Revoked audited grants stay eligible for lookup by request ID through their original expiry to keep retries from reactivating them. Expired grants are eligible for retention pruning. Core erasure removes grant records and their audit data.
 
+### Device command proposals
+
+- `POST /api/devices/{id}/commands` takes a caller-generated UUID in `requestId`, the approved `grantId`, `argumentsJson` as a JSON string, and a UTC or offset-aware `expiresAt`. Choose an expiry within five minutes and within the grant's lifetime. Core returns the existing record when the same request ID is retried with the same device, grant, exact argument text, expiry and invocation origin. Changing any of those fields returns HTTP 409.
+- `GET /api/device-commands/{id}` returns the current command and its exact argument text. The proposal and lookup routes use the ordinary Core owner session.
+- `POST /api/device-commands/{id}/confirm` requires the separate owner key and an explicit `approve` value. Send the returned `argumentHash`, which is the uppercase SHA-256 of the UTF-8 argument text. Core rechecks the grant, credential and allowed arguments before accepting approval. Approval moves an awaiting command to `Pending`. A negative decision cancels an awaiting or pending command. The response retains the verified owner's decision timestamps and subject.
+
+Agent, voice and external-content proposals require manual owner confirmation. The installed Home Assistant descriptor also requires confirmation for manual proposals. The proposal API records commands for subsequent device delivery. Expired commands are eligible for removal under the configured artifact retention period. Core erasure removes all command records.
+
 ## Primary API references
 
 - [OpenAI text generation](https://developers.openai.com/api/docs/guides/text)

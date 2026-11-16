@@ -16,6 +16,9 @@ public interface ICoreTransactionWrites
     Task<ConversationSession?> UpdateSessionAsync(Guid sessionId, Func<ConversationSession, ConversationSession> update);
     Task<DeviceGrant> AddDeviceGrantAsync(DeviceGrant grant);
     Task<int> RevokeDeviceGrantsAsync(string deviceId, DateTimeOffset now);
+    Task<DeviceGrant?> ReadDeviceGrantAsync(Guid id);
+    Task<DeviceCommand?> ReadDeviceCommandAsync(Guid id);
+    Task SaveDeviceCommandAsync(DeviceCommand command);
 }
 
 public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemorySessionStore sessions,
@@ -38,6 +41,7 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
     {
         private readonly Dictionary<Guid, ConversationSession> stagedSessions = [];
         private Dictionary<Guid, DeviceGrant>? stagedGrants;
+        private readonly Dictionary<Guid, DeviceCommand> stagedCommands = [];
 
         public RuntimeState Runtime => state;
 
@@ -62,9 +66,22 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
         public Task<int> RevokeDeviceGrantsAsync(string deviceId, DateTimeOffset now) =>
             Task.FromResult(InMemoryDeviceGrantStore.RevokeForDevice(Grants(), deviceId, now));
 
+        public Task<DeviceGrant?> ReadDeviceGrantAsync(Guid id) =>
+            Task.FromResult((stagedGrants ?? boundary.DeviceGrants).GetValueOrDefault(id));
+
+        public Task<DeviceCommand?> ReadDeviceCommandAsync(Guid id) =>
+            Task.FromResult(stagedCommands.GetValueOrDefault(id) ?? boundary.DeviceCommands.GetValueOrDefault(id));
+
+        public Task SaveDeviceCommandAsync(DeviceCommand command)
+        {
+            stagedCommands[command.Id] = command;
+            return Task.CompletedTask;
+        }
+
         public void Commit()
         {
             if (stagedGrants is not null) boundary.DeviceGrants = stagedGrants;
+            foreach (var (id, command) in stagedCommands) boundary.DeviceCommands[id] = command;
             foreach (var (id, session) in stagedSessions)
                 sessions.UpdateAsync(id, _ => session).GetAwaiter().GetResult();
         }

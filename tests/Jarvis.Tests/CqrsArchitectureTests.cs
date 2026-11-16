@@ -70,6 +70,7 @@ public sealed class CqrsArchitectureTests
             "path === '/privacy/export'", "['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply']",
             "/^\\/devices\\/[^/]+\\/(verify|credential)$/", "/^\\/devices\\/[^/]+\\/grants$/",
             "/^\\/device-grants(?:\\/[^/]+)?$/", "/^\\/domains\\/[^/]+\\/(activate|disable|rollback)$/",
+            "/^\\/device-commands\\/[^/]+\\/confirm$/",
             "/^\\/tools\\/[^/]+\\/confirm$/", "/^\\/budget\\/legacy\\/[^/]+\\/preview$/",
             "/^\\/budget\\/(approvals(?:\\/[^/]+\\/revoke)?|legacy\\/[^/]+\\/classify)$/",
             "/^\\/usage\\/charges\\/[^/]+\\/reconcile$/"

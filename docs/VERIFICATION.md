@@ -695,3 +695,13 @@ The in-memory implementation stages changes under the privacy boundary and appli
 Focused verification passed 74/74 tests against disposable PostgreSQL 17 and in-memory fixtures. Fault injection covered rollback of transcripts, session transitions and audio fences, and credential rotation with grants. Migration fixtures verified preservation of existing projections and exclusion of retired sessions. Concurrent grant issuance and credential rotation left either a current binding or a revoked grant.
 
 EF reported no pending model changes. The full backend suite passed 366 tests with zero failures. The opt-in `scripts/measure-runtime.ps1` harness passed separately on disposable PostgreSQL 17 and reported a transactional transcript write. Both verification containers were removed.
+
+## Round 4 Item 3 — device command proposals and confirmation
+
+Core stores proposals in the relational `DeviceCommands` table added by `20261116114656_DeviceCommands`. The caller's UUID identifies the command across retries. Core retains the exact UTF-8 argument text and hash, checks the explicit grant against the device's current credential, and returns HTTP 409 for changed arguments under the same UUID. Proposals expire within five minutes and within the grant's lifetime.
+
+The owner confirms or cancels using the stored hash and separate owner authorization. Core rechecks the live binding before approval. An approved command becomes pending for delivery. Agent, voice and external-content proposals await a manual owner decision. Retention preview and apply count expired commands older than the artifact retention period. Erasure clears all command rows.
+
+All 59 focused tests passed with disposable PostgreSQL 17 and in-memory fixtures. Coverage includes endpoint authorization, exact argument binding, concurrent retries, rollback of proposal and approval, persistence after restart, expiry, retention and erasure. EF reported no pending model changes. Device delivery and signed receipts are the next protocol steps.
+
+The full backend suite passed 375 tests with zero failures and the opt-in performance harness skipped. The disposable PostgreSQL container was removed after verification.
