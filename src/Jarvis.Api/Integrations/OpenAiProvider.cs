@@ -50,7 +50,7 @@ public sealed class OpenAiProvider(ProviderGateway gateway, ManagedAi ai, IAudio
         var rate = transcription.PerMinute;
 
         var reservation = await budget.ReserveAsync(Guid.NewGuid(), Guid.Empty, transcription.Model,
-            (decimal)Math.Ceiling(seconds) / 60m * rate * 2m, ai.Limits, ct, UsageLane.Interactive, "openai");
+            (decimal)Math.Ceiling(seconds) / 60m * rate * 2m, ai.Limits, ct, UsageLane.Interactive, ProviderIds.OpenAi);
         using var request = Request("audio/transcriptions", transcription.ApiKey);
         using var form = new MultipartFormDataContent();
         form.Add(new StringContent(transcription.Model), "model");

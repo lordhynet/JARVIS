@@ -18,7 +18,7 @@ public interface ITextReasoningAdapter
 
 public sealed class OpenAiResponsesAdapter(ManagedAi ai) : ITextReasoningAdapter
 {
-    public string Provider => "openai";
+    public string Provider => ProviderIds.OpenAi;
     public IReadOnlySet<TextCapability> Capabilities { get; } = Enum.GetValues<TextCapability>().ToFrozenSet();
     public async Task<AdapterTextResult> ExecuteAsync(TextReasoningTask task, ReviewedTextRates rates, CancellationToken ct)
     {
@@ -50,7 +50,7 @@ public sealed class OpenAiResponsesAdapter(ManagedAi ai) : ITextReasoningAdapter
 
 public sealed class AnthropicMessagesAdapter(IHttpClientFactory clients, IRuntimeStore store, UsageBudget budget, TimeProvider clock, IWorkflowReader workflows) : ITextReasoningAdapter
 {
-    public string Provider => "anthropic";
+    public string Provider => ProviderIds.Anthropic;
     public IReadOnlySet<TextCapability> Capabilities { get; } = new[] { TextCapability.Conversation, TextCapability.JsonReasoning }.ToFrozenSet();
     private async Task RequireLegacyLive(TextReasoningTask task, CancellationToken ct)
     {

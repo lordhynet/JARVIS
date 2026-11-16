@@ -40,7 +40,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     {
         reviewed ??= rateCards.ReadText(profile, profile == "Research" ? TextCapability.GroundedPublicSearch : TextCapability.JsonReasoning,
             profile == "Research" ? ReasoningDataClass.Public : ReasoningDataClass.Personal);
-        Guard.Require(reviewed.Route.Provider == "openai" && reviewed.Route.Profile == profile, 503, "OpenAI adapter route mismatch.");
+        Guard.Require(reviewed.Route.Provider == ProviderIds.OpenAi && reviewed.Route.Profile == profile, 503, "OpenAI adapter route mismatch.");
         budget.RequireConfigured();
         var json = JsonSerializer.Serialize(payload); Guard.Require(Encoding.UTF8.GetByteCount(json) <= 180000, 400, "AI context is too large.");
         int outputCap;
@@ -65,11 +65,11 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
         var search = profile == "Research";
         var maximum = ((Encoding.UTF8.GetByteCount(json) + (search ? 24576m : 8192m)) * inputRate + outputCap * outputRate) / 1_000_000m + (search ? reviewed.SearchUsdPerCall : 0);
         if (preReserved) await RequireReservedAsync(store, id, scope, reviewed, maximum, ct);
-        else await budget.ReserveAsync(id, scope, reviewed.Route.Model, maximum, reviewed.Limits, ct, lane, "openai");
+        else await budget.ReserveAsync(id, scope, reviewed.Route.Model, maximum, reviewed.Limits, ct, lane, ProviderIds.OpenAi);
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses");
         request.Headers.Authorization = new("Bearer", reviewed.ApiKey);
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-        using var response = await Jarvis.Api.Operations.CoreObservability.SendAsync(clients.CreateClient("providers"), request, "openai", ct);
+        using var response = await Jarvis.Api.Operations.CoreObservability.SendAsync(clients.CreateClient("providers"), request, ProviderIds.OpenAi, ct);
         Guard.Require(response.IsSuccessStatusCode, response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? 429 : 502,
             "AI provider rejected the request. Its reservation is retained; automatic paid replay is blocked.");
         var result = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);

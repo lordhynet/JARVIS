@@ -11,7 +11,7 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
 {
     public void RequireConfigured() => GbpBudgetRules.Validate(policies.Read(), clock.GetUtcNow());
     public Task<UsageReservation> ReserveAsync(Guid id, Guid runId, string model, decimal maximum,
-        BudgetLimits limits, CancellationToken ct, UsageLane lane = UsageLane.Background, string provider = "anthropic") => store.UpdateAsync(s =>
+        BudgetLimits limits, CancellationToken ct, UsageLane lane = UsageLane.Background, string provider = ProviderIds.Anthropic) => store.UpdateAsync(s =>
     {
         Guard.Require(maximum > 0 && limits.DailyUsd > 0 && limits.MonthlyUsd > 0,
             503, "Configure positive paid AI budgets and token rates before enabling the provider.");

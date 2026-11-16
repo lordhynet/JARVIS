@@ -33,7 +33,7 @@ public sealed class RateCard(IConfiguration config, TimeProvider clock)
     {
         var reload = config.GetReloadToken(); var model = config[ConfigKeys.VoiceProfile + ConfigKeys.Model];
         ReviewedDate(ConfigKeys.VoiceProfile, model);
-        Guard.Require((config[ConfigKeys.VoiceProfile + ConfigKeys.Provider] ?? "openai") == "openai" && !string.IsNullOrWhiteSpace(config[ConfigKeys.OpenAiApiKey]), 503, "Configure the installed OpenAI realtime route.");
+        Guard.Require((config[ConfigKeys.VoiceProfile + ConfigKeys.Provider] ?? ProviderIds.OpenAi) == ProviderIds.OpenAi && !string.IsNullOrWhiteSpace(config[ConfigKeys.OpenAiApiKey]), 503, "Configure the installed OpenAI realtime route.");
         var pricing = RealtimePricing.Read(config);
         Guard.Require(!reload.HasChanged, 409, "Realtime settings changed during route selection.");
         return (model!, pricing);
@@ -52,15 +52,15 @@ public sealed class RateCard(IConfiguration config, TimeProvider clock)
     {
         var reload = config.GetReloadToken(); var legacy = profile == "LegacyInterview";
         var prefix = legacy ? ConfigKeys.PaidAiPrefix : ConfigKeys.AiProfilePrefix(profile);
-        var provider = legacy ? "anthropic" : config[prefix + ConfigKeys.Provider] ?? "openai";
+        var provider = legacy ? ProviderIds.Anthropic : config[prefix + ConfigKeys.Provider] ?? ProviderIds.OpenAi;
         Guard.Require(System.Text.RegularExpressions.Regex.IsMatch(provider, "^[a-z][a-z0-9-]{0,39}$"), 503, "Invalid provider route identifier.");
-        var credentialSetting = provider switch { "openai" => ConfigKeys.OpenAiApiKey, "anthropic" => ConfigKeys.AnthropicApiKey, _ => $"Providers:{provider}:ApiKey" };
+        var credentialSetting = provider switch { ProviderIds.OpenAi => ConfigKeys.OpenAiApiKey, ProviderIds.Anthropic => ConfigKeys.AnthropicApiKey, _ => $"Providers:{provider}:ApiKey" };
         var secret = config[credentialSetting];
         Guard.Require(!string.IsNullOrWhiteSpace(secret), 503, $"Configure {credentialSetting} to enable AI.");
         var model = legacy ? config[ConfigKeys.AnthropicModel] : config[prefix + ConfigKeys.Model];
         Guard.Require(!legacy || config.GetValue<bool>(ConfigKeys.PaidAiEnabled), 503, "Paid interview briefs are disabled.");
         Guard.Require(!string.IsNullOrWhiteSpace(model) && model == config[prefix + ConfigKeys.RateCardModel], 503, "The selected model must match its reviewed rate card.");
-        if (profile == "Chat" && provider == "openai") Guard.Require(model == config[ConfigKeys.OpenAiModel], 503, "Chat model and its priced profile must match.");
+        if (profile == "Chat" && provider == ProviderIds.OpenAi) Guard.Require(model == config[ConfigKeys.OpenAiModel], 503, "Chat model and its priced profile must match.");
         var date = ReviewedDate(prefix, model);
         var input = config.GetValue<decimal>(prefix + "InputUsdPerMillion"); var output = config.GetValue<decimal>(prefix + "OutputUsdPerMillion");
         var cap = config.GetValue(prefix + ConfigKeys.MaxOutputTokens, profile == "Chat" ? 1500 : 2048);
@@ -68,7 +68,7 @@ public sealed class RateCard(IConfiguration config, TimeProvider clock)
         Guard.Require(requestedLimit is null || requestedLimit <= cap, 400, "Requested output exceeds the reviewed profile cap.");
         cap = requestedLimit ?? cap;
         var allowed = config.GetSection(prefix + "AllowedDataClasses").Get<string[]>();
-        if (provider != "openai" && !legacy) Guard.Require(allowed is { Length: > 0 }, 503, "Explicitly approve data classes before enabling a new provider destination.");
+        if (provider != ProviderIds.OpenAi && !legacy) Guard.Require(allowed is { Length: > 0 }, 503, "Explicitly approve data classes before enabling a new provider destination.");
         Guard.Require((allowed ?? (profile == "Research" ? ["Public"] : new[] { "Public", "Personal" })).Contains(dataClass.ToString(), StringComparer.Ordinal), 403, "That data class is not permitted on this route.");
         Guard.Require(capability != TextCapability.GroundedPublicSearch || profile == "Research" && dataClass == ReasoningDataClass.Public,
             403, "This route cannot provide the required public grounding. No fallback was attempted.");

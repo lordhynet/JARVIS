@@ -87,7 +87,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             // Reserve that token cap per response, plus conservative prefix/audio overhead.
             var voiceRates = ai.RealtimeRates(); var pricing = voiceRates.Pricing;
             var maximum = ((Encoding.UTF8.GetByteCount(instructions) + toolBytes + conversationTokens + 5120m) * maxTurns * pricing.MaxInput + maxTurns * outputTokens * pricing.MaxOutput) / 1_000_000m + pricing.Transcription(60);
-            var reservation = await budget.ReserveAsync(Guid.NewGuid(), session.Id, voiceRates.Model, maximum, ai.Limits, timeout.Token, UsageLane.Voice, "openai");
+            var reservation = await budget.ReserveAsync(Guid.NewGuid(), session.Id, voiceRates.Model, maximum, ai.Limits, timeout.Token, UsageLane.Voice, ProviderIds.OpenAi);
             timeout.CancelAfter(TimeSpan.FromSeconds(65));
             Guard.Require(await fence.RefreshAsync(timeout.Token), 409, "Audio lease expired before provider dispatch.");
             using var provider = await connections.ConnectAsync(voiceRates.Model, timeout.Token);
