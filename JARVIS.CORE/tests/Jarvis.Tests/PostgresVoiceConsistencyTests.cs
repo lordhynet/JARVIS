@@ -124,15 +124,16 @@ public sealed partial class PostgresSessionTests
     public async Task Failed_atomic_voice_and_session_writes_roll_back_in_postgres()
     {
         await using var database = await TestDatabase.CreateAsync();
-        using var host = new PostgresApiFactory(database.ConnectionString);
+        var clock = new VoiceFixtureClock();
+        using var host = new PostgresApiFactory(database.ConnectionString, clock);
         var sessions = host.Services.GetRequiredService<ISessionStore>();
         var runtime = host.Services.GetRequiredService<IRuntimeStore>();
         var sessionId = Guid.NewGuid();
         var turnId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
+        var now = clock.GetUtcNow();
         await sessions.AddAsync(new(sessionId, ActivityType.General, "Crash recovery", SessionStatus.Active, "phone", null, now, now, []));
         var failure = new FailBeforeCoreCommit(host.Services.GetRequiredService<ICoreTransaction>());
-        var failing = new VoiceTranscriptService(failure, TimeProvider.System);
+        var failing = new VoiceTranscriptService(failure, clock);
         await Assert.ThrowsAsync<IOException>(() => failing.RecordAsync(sessionId, turnId, "user", "Captured speech", 1.25, default));
         Assert.Empty((await sessions.GetAsync(sessionId))!.Messages!);
         Assert.Empty(await runtime.ReadAsync(s => s.VoiceTurns));
@@ -162,15 +163,22 @@ public sealed partial class PostgresSessionTests
             .UseNpgsql(database.ConnectionString).Options))
         {
             await before.Database.GetService<IMigrator>().MigrateAsync("20261116101533_DeviceGrantAudit");
-            before.Sessions.Add(SessionRow.FromContract(new(sessionId, ActivityType.General, "Pending", SessionStatus.Paused,
+            await InsertLegacySession(new(sessionId, ActivityType.General, "Pending", SessionStatus.Paused,
                 null, null, now, now, [], Messages: [
                     new(missingId, "user", "Recovered speech", now, true, 1.25),
                     new(existingId, "assistant", "Already projected", now, true),
                     new(Guid.NewGuid(), "user", "Ordinary text", now)
-                ], PendingVoiceProjectionIds: [missingId, existingId])));
-            before.Sessions.Add(SessionRow.FromContract(new(retiredId, ActivityType.General, "Retired", SessionStatus.Ended,
+                ], PendingVoiceProjectionIds: [missingId, existingId]));
+            await InsertLegacySession(new(retiredId, ActivityType.General, "Retired", SessionStatus.Ended,
                 null, null, now, now, [], Messages: [new(retiredTurnId, "user", "Retired speech", now, true)],
-                PendingVoiceProjectionIds: [retiredTurnId])));
+                PendingVoiceProjectionIds: [retiredTurnId]));
+
+            // Seed the legacy schema without asking the current EF model to insert new columns.
+            Task<int> InsertLegacySession(ConversationSession session) => before.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "Sessions" ("Id", "Activity", "Title", "Status", "CreatedAt", "UpdatedAt", "MessagesJson", "PendingVoiceProjectionIdsJson")
+                VALUES ({session.Id}, {(int)session.Activity}, {session.Title}, {(int)session.Status}, {session.CreatedAt}, {session.UpdatedAt},
+                    {System.Text.Json.JsonSerializer.Serialize(session.Messages)}, CAST({System.Text.Json.JsonSerializer.Serialize(session.PendingVoiceProjectionIds)} AS jsonb))
+                """);
             var oldState = new RuntimeState { AudioLease = orphan };
             oldState.VoiceTurns[existingId] = new(existingId, sessionId, "assistant", "Original projection", null, now);
             oldState.RetiredSessions.Add(retiredId);

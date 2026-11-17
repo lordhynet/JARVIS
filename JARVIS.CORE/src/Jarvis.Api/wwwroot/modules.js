@@ -298,8 +298,28 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
   const workBody = el('div', '', workflows, 'list');
   action(workflows, 'Refresh workflows', loadWorkflows);
   async function loadWorkflows() {
-    const [paid, runs, budget] = await Promise.all([api('/workflows/paid-ai'), api('/workflows'), api('/budget/status').catch(() => null)]); workBody.replaceChildren();
+    const [paid, runs, budget, voice] = await Promise.all([
+      api('/workflows/paid-ai'), api('/workflows'), api('/budget/status').catch(() => null),
+      api('/voice/modes').catch(() => null)
+    ]); workBody.replaceChildren();
     el('p', paid.detail, workBody); el('p', `Today committed: $${paid.todayCommittedUsd} / $${paid.dailyLimitUsd}`, workBody);
+    if (voice || budget?.voiceUsage?.length) {
+      const money = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
+      const card = el('div', '', workBody, 'list-item');
+      el('h3', 'Live voice budget', card);
+      for (const mode of voice?.modes ?? []) {
+        const cap = mode.dailyCapGbp == null ? '' : ` · ${money.format(mode.dailyCapGbp)} daily cap`;
+        const description = mode.pricingReady
+          ? `${mode.model} · up to ${money.format(mode.maximumGbpForTenMinutes)} reserved for ten minutes`
+          : mode.detail;
+        el('p', `${mode.mode} · ${description}${cap}`, card);
+      }
+      for (const entry of budget?.voiceUsage ?? []) {
+        const amount = entry.accountedGbp == null
+          ? `${money.format(entry.reservedGbp)} reserved` : `${money.format(entry.accountedGbp)} accounted`;
+        el('p', `${entry.mode} · ${entry.model} · ${amount}`, card);
+      }
+    }
     const exchange = el('div', '', workBody, 'list-item');
     el('h3', 'Budget exchange rate', exchange);
     if (budget) {

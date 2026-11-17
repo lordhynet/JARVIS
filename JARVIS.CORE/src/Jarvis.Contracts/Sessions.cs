@@ -36,7 +36,11 @@ public sealed record ConversationSession(
     IReadOnlyList<SessionCheckpoint> Checkpoints,
     SessionHandoff? Handoff = null,
     IReadOnlyList<ChatMessage>? Messages = null,
-    IReadOnlyList<Guid>? PendingVoiceProjectionIds = null);
+    IReadOnlyList<Guid>? PendingVoiceProjectionIds = null,
+    SessionVoiceSummary? VoiceSummary = null);
+
+public sealed record VoiceMemoryTurn(string Role, string Text);
+public sealed record SessionVoiceSummary(IReadOnlyList<VoiceMemoryTurn> EarlierTurns);
 
 /// <summary>
 /// A resumable snapshot of where a session is. Written before any handoff

@@ -19,6 +19,8 @@ public sealed record ReviewedTextRates(ModelRoute Route, decimal SearchUsdPerCal
     }
 }
 
+public sealed record ReviewedVoiceRates(VoiceMode Mode, ModelRoute Route, RealtimePricing Pricing);
+
 /// <summary>Single reviewed text-rate reader, including the existing Anthropic configuration layout.</summary>
 public sealed class RateCard(IConfiguration config, TimeProvider clock)
 {
@@ -31,12 +33,33 @@ public sealed class RateCard(IConfiguration config, TimeProvider clock)
     }
     public (string Model, RealtimePricing Pricing) ReadRealtime()
     {
-        var reload = config.GetReloadToken(); var model = config[ConfigKeys.VoiceProfile + ConfigKeys.Model];
-        ReviewedDate(ConfigKeys.VoiceProfile, model);
-        Guard.Require((config[ConfigKeys.VoiceProfile + ConfigKeys.Provider] ?? ProviderIds.OpenAi) == ProviderIds.OpenAi && !string.IsNullOrWhiteSpace(config[ConfigKeys.OpenAiApiKey]), 503, "Configure the installed OpenAI realtime route.");
-        var pricing = RealtimePricing.Read(config);
+        var reviewed = ReadRealtime(VoiceMode.Everyday);
+        return (reviewed.Route.Model, reviewed.Pricing);
+    }
+
+    public ReviewedVoiceRates ReadRealtime(VoiceMode mode)
+    {
+        Guard.Require(Enum.IsDefined(mode), 400, "Unknown realtime voice mode.");
+        var reload = config.GetReloadToken();
+        var named = ConfigKeys.VoiceModes + mode + ":";
+        var enabledValue = config[named + ConfigKeys.Enabled];
+        var enabled = false;
+        Guard.Require(string.IsNullOrWhiteSpace(enabledValue) || bool.TryParse(enabledValue, out enabled), 503, "Invalid voice mode enable setting.");
+        Guard.Require(mode != VoiceMode.Serious || enabled, 503, "Serious voice is disabled. Enable and configure its reviewed rate card first.");
+        var prefix = enabled ? named : ConfigKeys.VoiceProfile;
+        var model = config[prefix + ConfigKeys.Model];
+        Guard.Require(!enabled || model == (mode == VoiceMode.Serious ? ConfigKeys.SeriousRealtimeModel : ConfigKeys.EverydayRealtimeModel),
+            503, "The realtime model does not match the selected voice mode.");
+        var date = ReviewedDate(prefix, model);
+        Guard.Require((config[prefix + ConfigKeys.Provider] ?? ProviderIds.OpenAi) == ProviderIds.OpenAi && !string.IsNullOrWhiteSpace(config[ConfigKeys.OpenAiApiKey]), 503, "Configure the installed OpenAI realtime route.");
+        RealtimePricing pricing;
+        try { pricing = RealtimePricing.Read(config, prefix); }
+        catch (InvalidOperationException) { throw new DomainException(503, "The realtime voice rate card is malformed."); }
+        var revision = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { mode, model, date, pricing })));
         Guard.Require(!reload.HasChanged, 409, "Realtime settings changed during route selection.");
-        return (model!, pricing);
+        return new(mode, new(ProviderIds.OpenAi, model!, "Voice:" + mode, VoiceModePolicy.Version, revision, date,
+            pricing.MaxInput, pricing.MaxOutput, RealtimeWindowCost.OutputTokenLimit, TextCapability.Conversation,
+            ReasoningDataClass.Personal, CloudConsent: true), pricing);
     }
     public (string Model, decimal PerMinute, string ApiKey) ReadTranscription()
     {

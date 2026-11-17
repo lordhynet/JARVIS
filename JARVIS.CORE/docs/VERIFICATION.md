@@ -4,6 +4,39 @@
 
 Build Release 0.2 and subsequent releases from the canonical JARVIS monorepo. The Desktop Core, Frontend and Mobile repositories are frozen at the Release 0.1 baseline (`5931b61`, `4011e00` and `c4c23fe`, respectively).
 
+## Voice mode pricing and audit, 2026-11-17
+
+- Core passed **454 tests** against isolated PostgreSQL 17, with one opt-in benchmark skipped and zero failures. Evidence is `tests/Jarvis.Tests/TestResults/voice-mode-full.trx`.
+- Tests cover activity and drill recommendations, reviewed mode-specific cards, estimates available to the owner without a provider dispatch, and Serious daily cap checks using the stored GBP basis for each reservation. The realtime fixture verifies mode, model and completion status in actual Everyday window accounting.
+- All **56 Playwright tests** passed, including the mode estimates and usage panel on both desktop and mobile browser profiles. Android contract and frontend source parity passed.
+- Session mode selection, switching and spoken fallback consent are pending.
+
+## Rolling conversation memory for live voice, 2026-11-17
+
+- The full Core suite against isolated PostgreSQL 17 finished with **442 passed, 1 skipped and 0 failed**. The skipped case is the opt-in runtime measurement harness. The evidence is `tests/Jarvis.Tests/TestResults/voice-memory-full.trx`.
+- Tests cover the 20-turn limit, UTF-8 JSON budgets with escaped text, hidden practice answers, and persistence across restart. Retention removed the stored summary with its source transcript, and rebuilding used the remaining conversation. Upgrade fixtures verified older sessions and EF reported no model drift after the additive migration.
+- Renewal tests verified the same session and audio fence, the reservation formula for 300 seconds, the fresh summary, and no greeting at cutover. Oversize growth re-reserved before sending the prompt. Budget denial and expired ownership ended the stream and settled the unused successor reservation.
+- All **54 browser tests** passed. Android contract and frontend source parity passed. Physical listening across the handoff remains pending.
+
+## Longer voice windows and background renewal, 2026-11-17
+
+- The full Core suite against isolated PostgreSQL 17 finished with **436 passed, 1 skipped and 0 failed**. The skipped case is the opt-in runtime measurement harness. The evidence is `tests/Jarvis.Tests/TestResults/voice-renewal-final.trx`.
+- Core fixtures verify the configured duration, original duration for older tickets, scaled audio and response caps, and a successor reserved and connected while the current window is active. The successor waits for speech, receives completed turns that arrived after preparation, and rejects frames from an older window. Stop releases an unused successor reservation. Both provider connection paths require a reservation.
+- All **54 browser tests** passed. Both browser renewal cases also passed against the final Core build. Android debug build, lint, APK signature verification and all **33 JVM tests** passed. Frontend assets and Android contracts match their sources.
+- Physical listening across the cutover remains pending. The local deployment's configured daily cap is below the minimum five-minute reservation. It needs a shorter `AI:Voice:WindowSeconds` setting for deployment with that cap.
+
+## Live voice selection and turn detection, 2026-11-17
+
+- The combined Core suite passed against isolated PostgreSQL 17 with **428 passed, 1 skipped and 0 failed**. The evidence is `tests/Jarvis.Tests/TestResults/voice-turn-detection-full.trx`. The skipped test is the opt-in runtime measurement harness. The provider fixture verified default and custom voice and speed, semantic and server turn detection, and a single server fallback for a rejected semantic VAD setting. Core still controls response creation and interruption.
+- Two PostgreSQL audio-fence fixtures now use a controlled clock for projection and rollback assertions. Dedicated fence tests advance the clock to verify expiry and freshness.
+- Android debug build, lint and all **33 JVM tests** passed. The browser suite passed **53 of 54** initially, including the new desktop and mobile voice-name cases. The existing desktop session handoff case timed out and passed on a separate rerun. The browser module bundle matches its source.
+- Listening acceptance with a live provider and the physical phone is pending.
+
+## Natural live voice persona, 2026-11-17
+
+- A fake Realtime provider received both the default British English style and a custom owner persona ahead of the Core rules. The protocol fixture verified that coaching, correction, staged practice and recall instructions are present in the tool definitions. Configuration tests verify the 2,000-character limit and the blank-value default.
+- The full Core suite against isolated PostgreSQL 17 passed with **410 passed, 1 skipped and 0 failed**. The skipped test is the opt-in runtime measurement harness. The evidence is `tests/Jarvis.Tests/TestResults/natural-voice.trx`. Listening and phone acceptance are pending.
+
 ## FX refresh and Android provisioning hotfix, 2026-11-17
 
 - Core passed **422 tests** against isolated PostgreSQL 17. The opt-in runtime measurement harness was skipped. A fixed clock and fake ECB response demonstrated 72 hours of continuous budget readiness across a weekend. Other tests covered source validation, rejected refreshes, expiry, a restart and the quote stored with each commitment. Evidence is `tests/Jarvis.Tests/TestResults/ops-hotfix-full.trx`.

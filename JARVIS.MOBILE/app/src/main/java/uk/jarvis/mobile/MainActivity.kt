@@ -21,6 +21,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.*
+import java.math.RoundingMode
+import java.text.NumberFormat
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private lateinit var model: JarvisViewModel
@@ -29,13 +32,21 @@ class MainActivity : ComponentActivity() {
     private val permission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { resolvePermissions() }
     private val export = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> uri?.let(model::exportLegacy) }
     private var permissionPurposeWake = false
+    private var startEveryday = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         model = ViewModelProvider(this)[JarvisViewModel::class.java]
         readPairing(intent)
         resumeWakeFromNotification(intent)
         lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { while (isActive) { delay(5000); model.poll() } } }
-        setContent { JarvisTheme { VoiceCompanion(model, ::requestVoice, ::requestLocalWake, ::stopVoice, ::openPermissions, ::testAudio) { export.launch("jarvis-legacy-local-drafts.json") } } }
+        setContent {
+            JarvisTheme {
+                VoiceCompanion(model, ::requestVoice, ::requestLocalWake, ::stopVoice, ::openPermissions, ::testAudio,
+                    { sendVoiceControl(LiveVoiceService.VOICE_MODE, "mode", it) },
+                    { sendVoiceControl(LiveVoiceService.CONFIRM_VOICE_MODE, "offerId", it) },
+                    { export.launch("jarvis-legacy-local-drafts.json") })
+            }
+        }
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); readPairing(intent); resumeWakeFromNotification(intent) }
     private fun resumeWakeFromNotification(intent: Intent?) {
@@ -44,10 +55,16 @@ class MainActivity : ComponentActivity() {
         startForegroundService(Intent(this, LiveVoiceService::class.java).setAction(LiveVoiceService.WAKE_START))
     }
     private fun readPairing(intent: Intent?) { intent?.getStringExtra("jarvis.provision")?.let { model.offerPairing(it); intent.removeExtra("jarvis.provision") } }
-    private fun requestVoice() {
+    private fun sendVoiceControl(action: String, key: String, value: String) {
+        val voice = LiveVoiceService.state.value
+        if (voice.ready || voice.modeOffer?.starting == true)
+            startService(Intent(this, LiveVoiceService::class.java).setAction(action).putExtra(key, value))
+    }
+    private fun requestVoice(everyday: Boolean) {
         if (model.state.value.busy || !model.state.value.connected) return
         permissionPurposeWake = false
         if (!permissions.begin()) { permissions.cancel(); model.reportAudioIssue("The earlier start was cancelled. Tap Talk again when ready."); return }
+        startEveryday = everyday
         model.setAudioStarting(true)
         val required = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) required += Manifest.permission.POST_NOTIFICATIONS
@@ -76,11 +93,15 @@ class MainActivity : ComponentActivity() {
                     startForegroundService(Intent(this, LiveVoiceService::class.java).setAction(LiveVoiceService.WAKE_START))
                 else model.reportAudioIssue("Local wake start cancelled. Enable it again when ready.")
                 permissionPurposeWake = false
-            } else model.prepareLive { sessionId ->
-                model.setAudioStarting(false)
-                if (permissions.isCurrent(result.generation) && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
-                    startForegroundService(Intent(this, LiveVoiceService::class.java).setAction(LiveVoiceService.START).putExtra("sessionId", sessionId))
-                else model.reportAudioIssue("Voice start cancelled. Tap Talk again when ready.")
+            } else {
+                val everyday = startEveryday
+                model.prepareLive { sessionId ->
+                    model.setAudioStarting(false)
+                    if (permissions.isCurrent(result.generation) && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+                        startForegroundService(Intent(this, LiveVoiceService::class.java).setAction(LiveVoiceService.START)
+                            .putExtra("sessionId", sessionId).putExtra(LiveVoiceService.START_EVERYDAY_EXTRA, everyday))
+                    else model.reportAudioIssue("Voice start cancelled. Tap Talk again when ready.")
+                }
             }
             is AudioPermissionResult.Denied -> { permissionPurposeWake = false; model.reportAudioIssue(result.message) }
             AudioPermissionResult.Cancelled -> permissionPurposeWake = false
@@ -107,8 +128,8 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun VoiceCompanion(model: JarvisViewModel, start: () -> Unit, enableWake: () -> Unit, stop: () -> Unit,
-    appPermissions: () -> Unit, test: () -> Unit, export: () -> Unit) {
+private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, enableWake: () -> Unit, stop: () -> Unit,
+    appPermissions: () -> Unit, test: () -> Unit, requestMode: (String) -> Unit, confirmMode: (String) -> Unit, export: () -> Unit) {
     val state by model.state.collectAsStateWithLifecycle()
     val voice by LiveVoiceService.state.collectAsStateWithLifecycle()
     var settings by remember { mutableStateOf(false) }
@@ -153,6 +174,21 @@ private fun VoiceCompanion(model: JarvisViewModel, start: () -> Unit, enableWake
                 if (voice.active) {
                     Text(if (voice.ready) "MICROPHONE ACTIVE" else "CONNECTING TO CORE", color = MaterialTheme.colorScheme.primary)
                     Button(onClick = stop, modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Stop microphone & reply", style = MaterialTheme.typography.titleLarge) }
+                    voice.mode?.let { mode ->
+                        val target = if ((voice.queuedMode ?: mode) == "Serious") "Everyday" else "Serious"
+                        OutlinedButton(onClick = { requestMode(target) }, modifier = Modifier.fillMaxWidth()) { Text("$mode mode · switch to $target") }
+                    }
+                    voice.modeOffer?.let { offer ->
+                        val maximum = NumberFormat.getCurrencyInstance(Locale.UK)
+                            .format(offer.poundsForTenMinutes.setScale(2, RoundingMode.CEILING))
+                        val whenReady = if (offer.starting) "Confirm to continue." else "Confirm to start at the next renewal."
+                        Text("Serious voice reserves up to $maximum per 10 minutes. $whenReady")
+                        OutlinedButton(onClick = { confirmMode(offer.id) }, modifier = Modifier.fillMaxWidth()) { Text("Confirm Serious voice") }
+                        if (offer.starting) OutlinedButton(onClick = { requestMode("Everyday") }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Use Everyday voice")
+                        }
+                    }
+                    if (voice.modeNotice.isNotBlank()) Text(voice.modeNotice)
                 } else {
                     if (voice.wakeListening) Text("LOCAL WAKE LISTENING · on-device detection", color = MaterialTheme.colorScheme.primary)
                     if (voice.message.isNotBlank()) Text(voice.message)
@@ -162,8 +198,10 @@ private fun VoiceCompanion(model: JarvisViewModel, start: () -> Unit, enableWake
                         Checkbox(consent, { consent = it })
                         Text("Allow Core's voice provider to process live audio and relevant saved conversation/practice context for this conversation.", Modifier.weight(1f))
                     }
-                    Button(onClick = start, enabled = consent && state.verified && state.voice?.ready == true && !state.busy && !state.offline && !state.audioStarting,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) { Text("Talk to JARVIS", style = MaterialTheme.typography.headlineSmall) }
+                    Button(onClick = { start(voice.canStartEveryday) }, enabled = consent && state.verified && state.voice?.ready == true && !state.busy && !state.offline && !state.audioStarting,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
+                        Text(if (voice.canStartEveryday) "Start in Everyday voice" else "Talk to JARVIS", style = MaterialTheme.typography.headlineSmall)
+                    }
                     OutlinedButton(onClick = { if (voice.wakeListening) stop() else confirmLocalWake = true }, enabled = state.verified && state.voice?.ready == true && !state.busy && !state.audioStarting,
                         modifier = Modifier.fillMaxWidth()) { Text(if (voice.wakeListening) "Disable local Hey JARVIS" else "Enable local Hey JARVIS") }
                     TextButton(onClick = model::refresh, enabled = !state.busy) { Text("Reconnect / check Core") }

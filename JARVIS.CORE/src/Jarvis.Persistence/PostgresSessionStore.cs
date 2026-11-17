@@ -177,6 +177,7 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         row.HandoffJson = updated.Handoff is null ? null : JsonSerializer.Serialize(updated.Handoff);
         row.MessagesJson = JsonSerializer.Serialize(updated.Messages ?? []);
         row.PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(updated.PendingVoiceProjectionIds ?? []);
+        row.VoiceSummaryJson = updated.VoiceSummary is null ? null : JsonSerializer.Serialize(updated.VoiceSummary);
         row.UpdatedAt = SessionRow.DatabaseTimestamp(updated.UpdatedAt);
         await db.SaveChangesAsync(ct);
         return (current, row.ToContract());

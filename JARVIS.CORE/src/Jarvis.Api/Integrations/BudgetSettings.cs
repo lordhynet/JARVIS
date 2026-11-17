@@ -13,7 +13,7 @@ public sealed class BudgetSettings(IConfiguration config, TimeProvider? clock = 
     {
         try {
             var section = config.GetSection(ConfigKeys.Budget); var fx = section.GetSection(ConfigKeys.BudgetFx);
-            string[] allowed = ["Enabled", "ScopeId", "Environment", "Version", ConfigKeys.BudgetFx, ConfigKeys.BudgetFxAuto, "TaxMultiplier", "SafetyMultiplier"];
+            string[] allowed = ["Enabled", "ScopeId", "Environment", "Version", ConfigKeys.BudgetFx, ConfigKeys.BudgetFxAuto, "TaxMultiplier", "SafetyMultiplier", ConfigKeys.VoiceSeriousDailyGbpField];
             string[] fxAllowed = ["Source", "UsdToGbp", "ObservedAt", "ExpiresAt", "PublishedOn"];
             Guard.Require(section.GetChildren().All(c => allowed.Contains(c.Key, StringComparer.OrdinalIgnoreCase)) &&
                 fx.GetChildren().All(c => fxAllowed.Contains(c.Key, StringComparer.OrdinalIgnoreCase)), 503,

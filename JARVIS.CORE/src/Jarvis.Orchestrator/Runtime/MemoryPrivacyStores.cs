@@ -197,7 +197,12 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             Guard.Require(request.AsOf <= now && request.AsOf >= now.AddDays(-1), 400, "Retention preview is stale.");
             var state = State(); var list = Sessions(); var snapshot = workflows.PrivacySnapshot(); var selection = PrivacyData.Select(state, list, snapshot.Runs, policy, request.AsOf);
             var voice = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
-            var kept = list.Where(x => !selection.Sessions.Contains(x.Id)).Select(x => x with { Messages = (x.Messages ?? []).Where(m => !voice.Contains(m.RequestId)).ToList() }).ToList();
+            var kept = list.Where(x => !selection.Sessions.Contains(x.Id)).Select(session =>
+            {
+                var messages = session.Messages ?? [];
+                var retained = messages.Where(message => !voice.Contains(message.RequestId)).ToArray();
+                return retained.Length == messages.Count ? session : session with { Messages = retained, VoiceSummary = null };
+            }).ToList();
             var events = snapshot.Events;
             var runs = snapshot.Runs.Select(x => selection.Workflows.Contains(x.Id) ? PrivacyData.PurgeWorkflow(x, request.AsOf) : x).ToList();
             foreach (var run in runs.Where(x => selection.Workflows.Contains(x.Id))) events.Add(new(Guid.NewGuid(), run.Id, run.Revision, run.Status, run.UpdatedAt));

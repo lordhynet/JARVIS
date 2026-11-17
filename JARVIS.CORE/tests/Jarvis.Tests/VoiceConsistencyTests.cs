@@ -1,6 +1,7 @@
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jarvis.Tests;
@@ -13,6 +14,14 @@ internal sealed class FailBeforeCoreCommit(ICoreTransaction inner) : ICoreTransa
             await operation(writes);
             throw new IOException("Injected failure before Core commit.");
         }, ct);
+}
+
+// These fixtures exercise commit and revocation. LiveAudioFenceTests advances time to verify freshness and expiry.
+internal sealed class VoiceFixtureClock : TimeProvider
+{
+    private readonly DateTimeOffset now = DateTimeOffset.UtcNow;
+    public override DateTimeOffset GetUtcNow() => now;
+    public override long GetTimestamp() => 0;
 }
 
 public sealed class VoiceConsistencyTests
@@ -49,7 +58,9 @@ public sealed class VoiceConsistencyTests
     [Fact]
     public async Task Failed_session_transition_preserves_the_live_fence_until_the_successful_commit()
     {
-        using var host = new JarvisApiFactory();
+        using var factory = new JarvisApiFactory();
+        using var host = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(new VoiceFixtureClock())));
         await VerifySessionAndLeaseRollbackAsync(host.Services);
     }
 

@@ -6,13 +6,35 @@ The backend runs on .NET 11. Put provider keys in the private root `appsettings.
 
 Connect Android using its saved encrypted connection. The existing ADB HTTPS bridge must remain connected; it is a development route, not an away-from-home deployment. The audio-only companion is `../artifacts/JARVIS-Android-0.10.0.apk`.
 
+Set `AI:Voice:Persona` in the private root `appsettings.json` to customise the speaking style, up to 2,000 characters. A blank value uses a warm, conversational British English style. Core supplies the tool and safety rules separately from the owner’s speaking preferences.
+
 ## Start a voice session
 
 On Android, verify microphone/earbuds in settings, choose cloud-processing consent and tap Talk. Core prepares, resumes and claims the canonical conversation through `/api/voice/prepare`; there is no native session browser. On the browser, open/create and claim a session before starting voice. Android uses a user-started microphone foreground service with notification and media stop controls. The browser uses an AudioWorklet and streamed PCM playback. Neither a schedule nor an agent starts the microphone.
 
-Core issues a one-use ticket valid for 15 seconds. The WebSocket authenticates with that ticket in its first frame; reusable credentials do not appear in the URL. One expiring, fenced audio lease covers all sessions/devices. Client heartbeats renew it; clients stop playback/capture when renewal expires. Stop, audio focus loss, disconnection and ownership changes stop the live path. The clients can continue in successive bounded 60-second provider windows while the user keeps the session active and budget remains available.
+Core issues a one-use ticket valid for 15 seconds. The WebSocket authenticates with that ticket in its first frame, keeping credentials out of the URL. One expiring, fenced audio lease covers all sessions and devices. Client heartbeats renew it. Stop, audio focus loss, disconnection and ownership changes stop the live path.
+
+`AI:Voice:WindowSeconds` defaults to 300 and accepts 30 through 600. Core uses the duration from the issued ticket to cap the audio input, scale the response limit and reserve the corresponding maximum charge. The existing budget limits apply to every window. If the reservation for a five-minute window exceeds the configured cap, set a shorter window before issuing a new ticket.
+
+The browser and Android keep their Core socket and microphone open across provider renewals. Core prepares and reserves a successor 25 seconds before the window ends, then uses it once within that authenticated conversation. At handoff the successor reads the latest saved context and waits for the next utterance. If the current reservation temporarily leaves too little budget, Core checks the balance again after settling it. If the context grows beyond the prepared reservation, Core settles the unused reservation and obtains a new one before sending the prompt. Stop, revoked ownership and an unconfirmed provider settlement prevent the prepared window from continuing. Clients with the earlier protocol can still reconnect at a window boundary.
+
+Core supplies up to 20 recent conversational turns, capped at 5,000 serialized bytes. It stores a rolling summary of up to eight earlier excerpts on the session, capped at 1,800 serialized bytes. The summary uses deterministic trimming of the saved conversation. Practice references become available through their existing reveal tools, and the memory draws only from the recorded conversation. When retention prunes source transcripts, Core clears the derived summary and rebuilds it from the remaining conversation on the next voice window.
 
 Core controls response generation, context size, input rate and output caps. Speech interruption cancels the response and truncates unheard playback. Completed text transcripts are saved to the canonical session; raw PCM is not archived by this implementation. A provider failure can leave an uncertain charge, so Core retains the conservative reservation rather than assuming it was free.
+
+## Voice and playback speed
+
+Set `AI:Voice:VoiceName` in the private root `appsettings.json` to choose a built-in Realtime voice. JARVIS defaults to `marin`. Set `AI:Voice:Speed` from 0.25 to 1.5, with 1.0 as the normal speed. Start a new voice window to apply either setting. The browser and Android report the active voice once Core has opened the window.
+
+## Turn detection
+
+Semantic turn detection uses the content of speech to estimate when the person has finished. It defaults to `AI:Voice:TurnDetection:Mode` set to `semantic_vad` and `AI:Voice:TurnDetection:Eagerness` set to `auto`. Use `low` for more time to think aloud. Set the mode to `server_vad` to use the previous silence-based behaviour. If the provider rejects semantic turn detection during setup, Core retries once with server VAD before it starts a reply. In either mode, spoken interruptions still stop the current reply and Core controls when to request the next one.
+
+## Voice mode pricing and audit
+
+AI workflows shows the reviewed reservation ceiling for ten minutes and recent voice charges with their mode and model. The owner endpoint `GET /api/voice/modes` accepts an activity and optional drill mode to return the recommendation and pricing readiness. Ten-minute estimates use whole budgeted windows and round each window to GBP using the configured budget basis.
+
+Named cards under `AI:Voice:Modes` are opt-in. Everyday can use the existing top-level reviewed voice card. Serious pricing requires its own reviewed rate card and a positive `Budget:VoiceSeriousDailyGbp` cap. The ledger counts Serious reservations at their own GBP conversion basis. Live dispatch presently uses Everyday. Session mode controls, switching and spoken fallback consent are the next part of the implementation.
 
 ## AI feedback
 

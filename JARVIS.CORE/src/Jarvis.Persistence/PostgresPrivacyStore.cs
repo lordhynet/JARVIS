@@ -127,7 +127,11 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             else
             {
                 var messages = JsonSerializer.Deserialize<List<ChatMessage>>(session.MessagesJson)!;
-                if (messages.Any(x => voiceIds.Contains(x.RequestId))) session.MessagesJson = JsonSerializer.Serialize(messages.Where(x => !voiceIds.Contains(x.RequestId)));
+                if (messages.Any(x => voiceIds.Contains(x.RequestId)))
+                {
+                    session.MessagesJson = JsonSerializer.Serialize(messages.Where(x => !voiceIds.Contains(x.RequestId)));
+                    session.VoiceSummaryJson = null;
+                }
             }
         }
         foreach (var workflow in workflowRows)

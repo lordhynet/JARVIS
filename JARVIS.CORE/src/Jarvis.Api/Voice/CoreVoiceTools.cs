@@ -31,13 +31,23 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             ["action"] = new { type = "string", @enum = new[] { "list", "turn", "light_set", "scene", "climate_set", "cover", "lock", "alarm" } }, ["utterance_id"] = Utterance
         }),
         Tool("core_domain_propose", "Propose a domain only after the user explicitly asks to create one. Uses the captured request verbatim. Returns a draft, missing capabilities and owner review instructions. Never activates or grants tools. Ask for owner approval in the dashboard after preview.", new() { ["utterance_id"] = Utterance }),
-        Tool("core_coaching_correction", "Correct a saved voice coaching answer only on explicit user request. First prepare using the attempt_id and revision from Core current feedback. Ask for a separate full replacement answer, then answer with its captured utterance_id and the same expected_revision. Never save the correction instruction itself or generated text. Stop with core_coaching stop to keep the prior answer.", new() {
+        Tool("core_coaching_correction",
+            "Correct a saved voice coaching answer only on explicit user request. Read core_coaching current for the saved attempt_id and revision, then prepare. " +
+            "Ask for a separate full replacement answer and wait for Core to capture it. Call answer with that utterance_id and the same expected_revision. " +
+            "Never save the correction instruction itself or generated text. If the revision conflicts, refresh current feedback and ask again. " +
+            "Use core_coaching stop to cancel the correction and keep the prior answer.", new() {
             ["action"] = new { type = "string", @enum = new[] { "prepare", "answer" } },
             ["utterance_id"] = Utterance,
             ["attempt_id"] = new { type = "string" },
             ["expected_revision"] = new { type = "integer" }
         }),
-        Tool("core_coaching", "Core coaching lifecycle: start only on request with the selected exercise/story; current resumes; answer saves latest captured user speech verbatim only after a finished answer; stop cancels the prompt without deleting history. Use null selection fields except for start, and empty utterance_id only for current. Never save questions or commands as answers. Analysis is text-only, not acoustic scoring.", new() {
+        Tool("core_coaching",
+            "List core_coaching_catalog to help the user choose an exercise. core_coaching_prompt only previews. Start or stop only on request. " +
+            "Use the selected story and current version from Core for story or CV coaching. Use null selection fields except for start. " +
+            "Use current to resume, with an empty utterance_id. After starting, ask the prompt and wait for a separate finished answer. " +
+            "Use answer to save the latest captured user speech verbatim. Never save questions or commands. Stop keeps history. " +
+            "Use Frame, Problem, Personal Ownership, Action, Outcome, Stop when it helps, preserving the person's accent and identity. " +
+            "Feedback is text-only. Never start extra paid assessment or claim an acoustic or calibrated score.", new() {
             ["action"] = new { type = "string", @enum = new[] { "start", "current", "answer", "stop" } },
             ["utterance_id"] = Utterance,
             ["exercise_id"] = new { type = new[] { "string", "null" } },
@@ -59,10 +69,10 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         Tool("core_practice_current", "Resume the current authored technical practice question, without exposing its reference answer.", new()),
         Tool("core_practice_start", "Start technical practice only when the user asks. Ask its prompt and wait for an answer; resume an existing drill of the same mode.",
             new() { ["utterance_id"] = Utterance, ["mode"] = new { type = "string", @enum = Enum.GetNames<TrainingMode>() } }),
-        Tool("core_practice_answer", "Save a finished practice answer from the latest captured user speech verbatim. Never use for instructions, questions or ordinary conversation. Returns authored reference and next stage; do not invent scores.",
+        Tool("core_practice_answer", "Save a finished practice answer from the latest captured user speech verbatim. Never use for instructions, questions or ordinary conversation. Ask one authored stage at a time. After a successful save, briefly discuss the returned reference before asking the next stage. The reference is not a calibrated score.",
             new() { ["utterance_id"] = Utterance }),
         Tool("core_practice_stop", "Stop the current drill only when the user asks; saved answers remain on Core.", new() { ["utterance_id"] = Utterance }),
-        Tool("core_recall", "Review due cards on Core: start asks a question; current resumes; reveal only after an attempted answer; rate only after the user explicitly says Again, Hard, Good or Easy; stop leaves scheduling unchanged. Never infer ratings. Use rating None except for rate, and empty utterance_id only for current.", new() {
+        Tool("core_recall", "Start or resume due-card recall, ask the prompt and wait for an answer before revealing the reference. Then ask the user to say Again, Hard, Good or Easy. Rate only with the separate captured utterance containing their explicit rating. Never infer a rating or claim response timing was measured. Use rating None except for rate, and empty utterance_id only for current. Stop leaves scheduling unchanged.", new() {
             ["action"] = new { type = "string", @enum = new[] { "start", "current", "reveal", "rate", "stop" } },
             ["utterance_id"] = Utterance,
             ["rating"] = new { type = "string", @enum = new[] { "None", "Again", "Hard", "Good", "Easy" } }

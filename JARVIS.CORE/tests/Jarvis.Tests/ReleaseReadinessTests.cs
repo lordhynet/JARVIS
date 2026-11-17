@@ -57,9 +57,9 @@ public sealed partial class RealtimeProtocolTests
         var ticket = (await response.Content.ReadFromJsonAsync<VoiceTicket>(ct))!;
         using var socket = await host.Server.CreateWebSocketClient().ConnectAsync(new("ws://localhost/voice-stream"), ct);
         await Send(socket, new { type = "authenticate", ticket = ticket.Ticket }, ct);
-        Assert.Equal("ready", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
+        await ReadFrameAsync(socket, "ready", ct);
         await Send(socket, new { type = "stop" }, ct);
-        Assert.Equal("ended", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
+        await ReadFrameAsync(socket, "ended", ct);
     }
 }
 

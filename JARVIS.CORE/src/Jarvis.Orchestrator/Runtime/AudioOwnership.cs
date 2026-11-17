@@ -22,9 +22,10 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
             return StartLease(writes.Runtime, sessionId, deviceId, clock.GetUtcNow());
         }, ct);
 
-    public Task<VoiceTicket> StartAsync(VoiceStartRequest request, CancellationToken ct)
+    public Task<VoiceTicket> StartAsync(VoiceStartRequest request, CancellationToken ct, int windowSeconds = VoiceWindowLimits.DefaultSeconds)
     {
         Guard.Require(request.AllowCloudProcessing, 400, "Live voice requires explicit cloud-processing consent.");
+        var window = new VoiceWindowLimits(windowSeconds);
         return transaction.ExecuteAsync(async writes =>
         {
             await RequireClaimAsync(writes, request.SessionId, request.DeviceId);
@@ -34,8 +35,8 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
             var ticket = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             var hash = Hash(ticket);
             foreach (var key in s.VoiceTickets.Where(x => x.Value.ExpiresAt <= now).Select(x => x.Key).ToList()) s.VoiceTickets.Remove(key);
-            s.VoiceTickets.Add(hash, new(hash, lease, now.AddSeconds(15)));
-            return new VoiceTicket(ticket, lease, 60, 24000);
+            s.VoiceTickets.Add(hash, new(hash, lease, now.AddSeconds(15), window.Seconds));
+            return new VoiceTicket(ticket, lease, window.Seconds, VoiceWindowLimits.SampleRate);
         }, ct);
     }
 
@@ -56,13 +57,16 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
         state.AudioLease = lease;
         return lease;
     }
-    public Task<AudioLease> ConsumeAsync(string ticket, CancellationToken ct)
+    public async Task<AudioLease> ConsumeAsync(string ticket, CancellationToken ct) =>
+        (await ConsumeTicketAsync(ticket, ct)).Lease;
+
+    public Task<VoiceTicketRecord> ConsumeTicketAsync(string ticket, CancellationToken ct)
     {
         Guard.Require(ticket.Length <= 100, 401, "Invalid voice ticket."); var hash = Hash(ticket);
         return store.UpdateAsync(s =>
         {
             Guard.Require(s.VoiceTickets.Remove(hash, out var entry) && entry.ExpiresAt > clock.GetUtcNow(), 401, "Voice ticket expired or was already consumed.");
-            Require(s, entry.Lease); return entry.Lease;
+            Require(s, entry.Lease); return entry;
         }, ct);
     }
     public Task<AudioLease> RenewAsync(AudioLease lease, CancellationToken ct) =>
