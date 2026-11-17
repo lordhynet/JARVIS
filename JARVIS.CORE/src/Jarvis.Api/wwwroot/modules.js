@@ -311,6 +311,7 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
         el('p', `${quote.source} · observed ${hours} h ago`, exchange);
       }
       if (refresh?.lastError) el('p', `Last automatic refresh failed. ${refresh.lastError}`, exchange);
+      if (refresh?.manualQuoteIgnored) el('p', 'Core ignored the malformed manual exchange rate.', exchange);
     } else el('p', 'Budget exchange rate is unavailable.', exchange);
     action(workBody, 'Build unpaid practice plan', async () => { const body = { notBefore: null }; await api('/workflows/practice-plans', request('practice-plan', body)); notice('Plan accepted. Refresh to check its status.'); await loadWorkflows(); pending.delete('practice-plan' + JSON.stringify(body)); });
     const consent = field(workBody, 'I allow Claude to process selected saved story facts and due-card prompts for this brief.', 'input', { type: 'checkbox' });

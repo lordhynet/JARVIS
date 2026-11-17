@@ -20,11 +20,15 @@ public sealed class BudgetSettings(IConfiguration config, TimeProvider? clock = 
                 "Unsupported budget settings. Development £10 and production £100/£200 authorization limits cannot be overridden in configuration.");
             var now = (clock ?? TimeProvider.System).GetUtcNow();
             var configured = ConfiguredQuote(fx);
+            var manualIgnored = fx.Exists() && (configured is null || configured.ObservedAt > now ||
+                !GbpBudgetRules.IsCurrentQuote(configured, configured.ObservedAt));
+            if (manualIgnored) configured = null;
             var autoEnabled = FxAutoSettings.IsEnabled(section.GetSection(ConfigKeys.BudgetFxAuto));
             var useAutomatic = !GbpBudgetRules.IsCurrentQuote(configured, now) && autoEnabled &&
                 GbpBudgetRules.IsCurrentQuote(automatic?.Quote, now);
             var quote = useAutomatic ? automatic!.Quote : configured;
-            var status = new BudgetFxStatus(autoEnabled, useAutomatic, automatic?.LastAttemptAt, automatic?.LastError, automatic?.Quote);
+            var status = new BudgetFxStatus(autoEnabled, useAutomatic, automatic?.LastAttemptAt, automatic?.LastError,
+                automatic?.Quote, manualIgnored);
             return new(section.GetValue<bool>("Enabled"), section["ScopeId"] ?? "", section["Environment"] ?? "",
                 section["Version"] ?? "1", quote, section.GetValue<decimal?>("TaxMultiplier"), section.GetValue<decimal?>("SafetyMultiplier"), status);
         }

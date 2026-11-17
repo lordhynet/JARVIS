@@ -29,6 +29,7 @@ test('shows the last FX quote and refresh failure in AI workflows', async ({ pag
     detail: 'A current quote is required.',
     conversionBasis: { fxStatus: {
       lastAcceptedQuote: { source: 'ECB reference fixture', observedAt: new Date(Date.now() - 25 * 3600000).toISOString() },
+      manualQuoteIgnored: true,
       lastError: 'The ECB feed did not return a successful response.'
     } }
   } }));
@@ -38,6 +39,7 @@ test('shows the last FX quote and refresh failure in AI workflows', async ({ pag
   await expect(rate).toContainText('ECB reference fixture · observed 25 h ago');
   await expect(rate).toContainText('Last automatic refresh failed.');
   await expect(rate).toContainText('A current quote is required.');
+  await expect(rate).toContainText('Core ignored the malformed manual exchange rate.');
 });
 test('coaching saves, corrects and reviews a canonical session without a provider key', async ({ page }) => {
   await connect(page); await page.getByRole('button', { name: 'Coaching', exact: true }).click();

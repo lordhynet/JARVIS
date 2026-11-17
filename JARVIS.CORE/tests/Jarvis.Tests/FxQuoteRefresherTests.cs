@@ -111,6 +111,18 @@ public sealed class FxQuoteRefresherTests
         Assert.Equal(TimeSpan.FromMinutes(15), await fixture.Refresh());
     }
 
+    [Fact]
+    public async Task A_malformed_manual_quote_is_visible_while_an_automatic_quote_is_used()
+    {
+        using var fixture = new Fixture();
+        fixture.Config["Budget:Fx:UsdToGbp"] = "invalid";
+        await fixture.Refresh();
+        var view = await new BudgetApprovalService(fixture.Store, fixture.Source, fixture.Clock).StatusAsync();
+        Assert.True(view.Ready);
+        Assert.True(view.ConversionBasis!.FxStatus!.UsingAutomaticQuote);
+        Assert.True(view.ConversionBasis.FxStatus.ManualQuoteIgnored);
+    }
+
     [Theory]
     [InlineData("old", "age limit")]
     [InlineData("future", "age limit")]
