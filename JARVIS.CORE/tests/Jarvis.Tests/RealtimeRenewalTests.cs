@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text;
@@ -217,9 +218,11 @@ public sealed partial class RealtimeProtocolTests
     {
         private int opened;
         public readonly Channel<ProviderSocket> Connected = Channel.CreateUnbounded<ProviderSocket>();
+        public readonly ConcurrentQueue<string> Models = new();
         public Task<WebSocket> ConnectAsync(string model, CancellationToken ct)
         {
             var socket = sockets[Interlocked.Increment(ref opened) - 1];
+            Models.Enqueue(model);
             Connected.Writer.TryWrite(socket);
             return Task.FromResult<WebSocket>(socket);
         }

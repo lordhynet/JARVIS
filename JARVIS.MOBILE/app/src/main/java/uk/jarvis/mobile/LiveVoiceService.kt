@@ -16,16 +16,30 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import okhttp3.WebSocket
 import uk.jarvis.mobile.contracts.VoiceTicket
 
-data class LiveVoiceState(val active: Boolean = false, val ready: Boolean = false, val message: String = "", val wakeListening: Boolean = false)
+data class LiveVoiceState(
+    val active: Boolean = false,
+    val ready: Boolean = false,
+    val message: String = "",
+    val wakeListening: Boolean = false,
+    val mode: String? = null,
+    val queuedMode: String? = null,
+    val modeOffer: VoiceCostOffer? = null,
+    val modeNotice: String = "",
+    val canStartEveryday: Boolean = false,
+)
 
 class LiveVoiceService : Service() {
     companion object {
         const val START = "uk.jarvis.mobile.LIVE_START"
         const val STOP = "uk.jarvis.mobile.LIVE_STOP"
         const val INTERRUPT = "uk.jarvis.mobile.LIVE_INTERRUPT"
+        const val VOICE_MODE = "uk.jarvis.mobile.LIVE_VOICE_MODE"
+        const val CONFIRM_VOICE_MODE = "uk.jarvis.mobile.LIVE_CONFIRM_VOICE_MODE"
+        const val START_EVERYDAY_EXTRA = "startEveryday"
         const val WAKE_START = "uk.jarvis.mobile.LOCAL_WAKE_START"
         private const val WAKE_GENERATION = "wakeGeneration"
         const val RESUME_WAKE = "uk.jarvis.mobile.RESUME_LOCAL_WAKE"
@@ -56,14 +70,30 @@ class LiveVoiceService : Service() {
 
     private val transport = VoiceTransport(scope, lifecycle, object : VoiceTransport.Listener {
         override suspend fun stopCapture(current: Long) = stopCaptureAndJoin(current)
-        override fun ready(current: Long, window: WebSocket, voiceName: String?) = startCapture(current, window, voiceName)
+        override fun ready(current: Long, window: WebSocket, voiceName: String?, mode: String?) = startCapture(current, window, voiceName, mode)
+        override fun modeOffer(offer: VoiceCostOffer) {
+            mutable.update { if (it.active && it.mode != null) it.copy(modeOffer = offer, modeNotice = "") else it }
+        }
+        override fun modeNotice(message: String, queuedMode: String?) {
+            mutable.update {
+                if (it.active && it.mode != null)
+                    it.copy(modeOffer = null, modeNotice = message, queuedMode = queuedMode ?: it.queuedMode)
+                else it
+            }
+        }
+        override fun modeRenewing() {
+            mutable.update { it.copy(mode = null, queuedMode = null, modeOffer = null, modeNotice = "") }
+        }
+        override fun seriousUnavailable(message: String) = stopVoice(message, canStartEveryday = true)
         override fun renewed() { wakeLock?.let { if (it.isHeld) it.release(); it.acquire(20000) } }
         override fun audio(current: Long, window: WebSocket, itemId: String, bytes: ByteArray) =
             queuePlayback(current, window, itemId, bytes)
         override fun interrupt(send: Boolean) = this@LiveVoiceService.interrupt(send)
         override fun pauseWindow() { runCatching { capture?.stop() }; this@LiveVoiceService.interrupt(false) }
         override fun reconnecting(message: String?) {
-            mutable.value = mutable.value.copy(ready = false, message = message ?: mutable.value.message)
+            mutable.update {
+                it.copy(ready = false, message = message ?: it.message, mode = null, queuedMode = null, modeOffer = null, modeNotice = "")
+            }
         }
         override fun stopped(message: String) = stopVoice(message)
     })
@@ -106,6 +136,10 @@ class LiveVoiceService : Service() {
         when (intent?.action) {
             STOP -> stopVoice("Live voice and local wake detection stopped.", disableWake = true)
             INTERRUPT -> interrupt()
+            VOICE_MODE -> if (lifecycle.ready) intent.getStringExtra("mode")?.let(transport::requestMode)
+            CONFIRM_VOICE_MODE -> if (lifecycle.ready) intent.getStringExtra("offerId")?.let { id ->
+                if (mutable.value.modeOffer?.id == id) transport.confirmMode(id)
+            }
             WAKE_START -> startWakeListening()
             START -> if (lifecycle.mayStartLive) {
                 if (intent.hasExtra(WAKE_GENERATION) && !lifecycle.isArbitrating(intent.getLongExtra(WAKE_GENERATION, -1)))
@@ -148,7 +182,7 @@ class LiveVoiceService : Service() {
                 val current = lifecycle.beginLive() ?: return START_NOT_STICKY
                 soundQueue = Channel(64)
                 playbackBudget = VoicePlaybackBudget()
-                transport.start(sessionId, ticket)
+                transport.start(sessionId, ticket, intent.getBooleanExtra(START_EVERYDAY_EXTRA, false))
                 mutable.value = LiveVoiceState(active = true, message = "Connecting securely to Core…")
                 wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "jarvis:live-voice")
                     .apply { setReferenceCounted(false); acquire(20000) }
@@ -225,10 +259,11 @@ class LiveVoiceService : Service() {
         }
     }
 
-    private fun startCapture(current: Long, window: WebSocket, voiceName: String?) {
+    private fun startCapture(current: Long, window: WebSocket, voiceName: String?, mode: String?) {
         if (!transport.isWindow(current, window) || !lifecycle.ready) return
         val voice = voiceName?.takeIf { it.isNotBlank() }?.let { " · voice $it" }.orEmpty()
-        mutable.value = mutable.value.copy(ready = true, message = "LIVE · microphone active$voice · use Stop or headset Pause to finish.")
+        mutable.update { if (it.active) it.copy(ready = true, message = "LIVE · microphone active$voice · use Stop or headset Pause to finish.",
+            mode = mode, queuedMode = null, modeOffer = null, modeNotice = "") else it }
         if (captureJob?.isActive == true) return
         captureJob = scope.launch {
             try { captureAudio(current, window) }
@@ -309,7 +344,7 @@ class LiveVoiceService : Service() {
         if (track != null) runCatching { track.pause(); track.flush(); writtenSamples = 0; itemStartSamples = 0; itemSamples = 0; playbackItem = null; track.play() }
     }
 
-    private fun stopVoice(message: String, disableWake: Boolean = false, wakeStopReason: String? = null) {
+    private fun stopVoice(message: String, disableWake: Boolean = false, wakeStopReason: String? = null, canStartEveryday: Boolean = false) {
         if (disableWake) wakeController.disable() else wakeController.suspendListening()
         val keepWake = wakeController.enabled && !disableWake
         val nextRoute = if (keepWake) CompanionAudioPhase.WakeListening else CompanionAudioPhase.Idle
@@ -328,7 +363,7 @@ class LiveVoiceService : Service() {
         mediaSession = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        mutable.value = LiveVoiceState(message = message, wakeListening = keepWake)
+        mutable.value = LiveVoiceState(message = message, wakeListening = keepWake, canStartEveryday = canStartEveryday)
         lifecycle.finishStop(keepWake)
         if (keepWake) {
             val stop = PendingIntent.getService(this, 201, Intent(this, LiveVoiceService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)

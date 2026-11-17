@@ -106,7 +106,7 @@ public sealed class VoiceModePolicyTests
         Assert.Contains(status.VoiceUsage, x => x is { Mode: VoiceMode.Everyday, Model: ConfigKeys.EverydayRealtimeModel });
     }
 
-    private static void Seed(Action<string,string> set, string prefix, string model)
+    internal static void Seed(Action<string,string> set, string prefix, string model)
     {
         set(prefix + ConfigKeys.Model, model);
         set(prefix + ConfigKeys.RateCardModel, model);

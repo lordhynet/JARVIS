@@ -20,14 +20,15 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
 
     public Task<UsageReservation> ReserveAsync(Guid id, Guid runId, string model, decimal maximum,
         BudgetLimits limits, CancellationToken ct, UsageLane lane = UsageLane.Background, string provider = ProviderIds.Anthropic) =>
-        ReserveCoreAsync(id, runId, model, maximum, limits, ct, lane, provider, null, null);
+        ReserveCoreAsync(id, runId, model, maximum, limits, ct, lane, provider, null, null, null);
 
     public Task<UsageReservation> ReserveAsync(Guid id, Guid sessionId, ModelRoute route, VoiceMode mode, decimal maximum,
-        BudgetLimits limits, CancellationToken ct) =>
-        ReserveCoreAsync(id, sessionId, route.Model, maximum, limits, ct, UsageLane.Voice, route.Provider, mode, route);
+        BudgetLimits limits, CancellationToken ct, decimal? confirmedWindowGbp = null) =>
+        ReserveCoreAsync(id, sessionId, route.Model, maximum, limits, ct, UsageLane.Voice, route.Provider, mode, route, confirmedWindowGbp);
 
     private Task<UsageReservation> ReserveCoreAsync(Guid id, Guid runId, string model, decimal maximum,
-        BudgetLimits limits, CancellationToken ct, UsageLane lane, string provider, VoiceMode? mode, ModelRoute? route) => store.UpdateAsync(s =>
+        BudgetLimits limits, CancellationToken ct, UsageLane lane, string provider, VoiceMode? mode, ModelRoute? route,
+        decimal? confirmedWindowGbp) => store.UpdateAsync(s =>
     {
         Guard.Require(maximum > 0 && limits.DailyUsd > 0 && limits.MonthlyUsd > 0,
             503, "Configure positive paid AI budgets and token rates before enabling the provider.");
@@ -43,6 +44,8 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
         Guard.Require(mode is null || Enum.IsDefined(mode.Value), 400, "Unknown voice reservation mode.");
         if (mode == VoiceMode.Serious)
         {
+            Guard.Require(confirmedWindowGbp is null || gbp <= confirmedWindowGbp, 409,
+                "The Serious voice estimate has increased. Review the current estimate before continuing.");
             Guard.Require(limits.VoiceSeriousDailyGbp is > 0 and <= 200, 503, "Configure a positive Serious voice daily GBP cap.");
             var today = now.UtcDateTime.Date;
             var seriousGbp = s.UsageReservations.Values.Where(entry => entry.VoiceMode == VoiceMode.Serious && entry.At.UtcDateTime.Date == today)

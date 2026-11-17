@@ -23,14 +23,14 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
         return new(VoiceModePolicy.Recommend(activity, drill),
             [VoiceOption(VoiceMode.Everyday), VoiceOption(VoiceMode.Serious)]);
     }
-    private VoiceModeEstimate VoiceOption(VoiceMode mode)
+    internal VoiceModeEstimate VoiceOption(VoiceMode mode, VoiceWindowLimits? window = null)
     {
         try
         {
             var rates = ReviewedRealtime(mode);
             var cap = mode == VoiceMode.Serious ? SeriousDailyCap : null;
             Guard.Require(mode != VoiceMode.Serious || cap is > 0 and <= 200, 503, "Configure a positive Serious voice daily GBP cap.");
-            var (usd, windows) = RealtimeWindowCost.EstimateTenMinutes(RealtimeWindow(), rates.Pricing, RealtimePersona());
+            var (usd, windows) = RealtimeWindowCost.EstimateTenMinutes(window ?? RealtimeWindow(), rates.Pricing, RealtimePersona());
             return new(mode, true, rates.Route.Model, budget.EstimateGbp(usd) * windows, "Reviewed maximum reservation for ten minutes.", cap);
         }
         catch (DomainException error) { return new(mode, false, null, null, error.Message); }
@@ -61,16 +61,19 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     }
     public void RequireReady(string profile)
     {
-        if (profile == "Voice")
-        {
-            RealtimePersona();
-            RealtimeOutput();
-            RealtimeWindow();
-            VoiceTurnDetection();
-            RealtimeRates();
-        }
+        if (profile == "Voice") RequireVoiceReady(VoiceMode.Everyday);
         else { rateCards.ReadText(profile, profile == "Research" ? TextCapability.GroundedPublicSearch : TextCapability.JsonReasoning,
             profile == "Research" ? ReasoningDataClass.Public : ReasoningDataClass.Personal); budget.RequireConfigured(); }
+    }
+    internal ReviewedVoiceRates RequireVoiceReady(VoiceMode mode)
+    {
+        RealtimePersona();
+        RealtimeOutput();
+        RealtimeWindow();
+        VoiceTurnDetection();
+        var reviewed = ReviewedRealtime(mode);
+        budget.RequireConfigured();
+        return reviewed;
     }
     public void RequireTranscriptionReady() => TranscriptionRates();
     public AiCapabilityStatus Status(string profile)

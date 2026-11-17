@@ -37,8 +37,10 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         {
             using var authentication = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
             authentication.CancelAfter(TimeSpan.FromSeconds(8));
-            var (ticket, continuous) = await AuthenticateAsync(socket, ownership, authentication.Token);
+            var (ticket, continuous, startEveryday) = await AuthenticateAsync(socket, ownership, authentication.Token);
             lease = ticket.Lease;
+            if (startEveryday)
+                await ownership.SetVoiceModeAsync(lease, new(VoiceMode.Everyday), authentication.Token);
             var window = new VoiceWindowLimits(ticket.WindowSeconds);
             RealtimeVoiceSession CreateWindow(int number) => new(client, ticket.Lease, window, number, continuous,
                 ownership, connections, ai, budget, runtime, sessions, clock, tools, transcripts, fenceChanges);
@@ -56,10 +58,15 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             lease = null;
             await client.SendAsync(new { type = "ended", reason = ending }, last.Token);
         }
-        catch (Exception error) when (error is DomainException or JsonException or WebSocketException or OperationCanceledException or FormatException or KeyNotFoundException)
+        catch (Exception error) when (error is DomainException or SeriousVoiceUnavailableException or JsonException or WebSocketException or OperationCanceledException or FormatException or KeyNotFoundException)
         {
             using var last = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            try { await client.SendAsync(new { type = "error", detail = error is DomainException d ? d.Message : "Voice stopped. Reconnect to resume the saved session." }, last.Token); }
+            try
+            {
+                var detail = error is DomainException or SeriousVoiceUnavailableException ? error.Message : "Voice stopped. Reconnect to resume the saved session.";
+                var code = error is SeriousVoiceUnavailableException ? "serious_voice_unavailable" : null;
+                await client.SendAsync(new { type = "error", detail, code }, last.Token);
+            }
             catch { /* The client can already be disconnected. */ }
         }
         finally
@@ -75,12 +82,14 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         }
     }
 
-    private static async Task<(VoiceTicketRecord Ticket, bool Continuous)> AuthenticateAsync(WebSocket client, AudioOwnership ownership, CancellationToken ct)
+    private static async Task<(VoiceTicketRecord Ticket, bool Continuous, bool StartEveryday)> AuthenticateAsync(
+        WebSocket client, AudioOwnership ownership, CancellationToken ct)
     {
         var first = await ReadAsync(client, 2048, ct);
         Guard.Require(first.GetProperty("type").GetString() == "authenticate", 401, "A one-time voice ticket is required.");
         var ticket = await ownership.ConsumeTicketAsync(Guard.Text(first.GetProperty("ticket").GetString(), "Ticket", 100), ct);
-        return (ticket, first.TryGetProperty("continuous", out var continuous) && continuous.ValueKind == JsonValueKind.True);
+        return (ticket, first.TryGetProperty("continuous", out var continuous) && continuous.ValueKind == JsonValueKind.True,
+            first.TryGetProperty("startEveryday", out var everyday) && everyday.ValueKind == JsonValueKind.True);
     }
 
     public static async Task<JsonElement> ReadAsync(WebSocket socket, int maximum, CancellationToken ct)

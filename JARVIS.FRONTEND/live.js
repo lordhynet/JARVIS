@@ -8,11 +8,25 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
   const stop = document.createElement('button'); stop.textContent = 'Stop live voice'; stop.disabled = true;
   const interrupt = document.createElement('button'); interrupt.textContent = 'Interrupt reply'; interrupt.disabled = true;
   const status = document.createElement('p'); status.setAttribute('role', 'status'); status.textContent = 'Connect to Core to check live voice readiness.';
+  const modeControls = document.createElement('div'); modeControls.hidden = true;
+  const everyday = document.createElement('button'); everyday.textContent = 'Use Everyday voice';
+  const serious = document.createElement('button'); serious.textContent = 'Request Serious voice';
+  const confirmSerious = document.createElement('button'); confirmSerious.textContent = 'Confirm Serious voice'; confirmSerious.hidden = true;
+  const modeNotice = document.createElement('p'); modeNotice.setAttribute('aria-live', 'polite');
+  const restartEveryday = document.createElement('button'); restartEveryday.textContent = 'Start in Everyday voice'; restartEveryday.hidden = true;
+  modeControls.append(everyday, serious, confirmSerious, modeNotice);
   const transcript = document.createElement('div'); transcript.className = 'list';
-  panel.append(start, stop, interrupt, status, transcript); document.querySelector('[data-panel=sessions]').prepend(panel);
+  panel.append(start, stop, interrupt, restartEveryday, status, modeControls, transcript); document.querySelector('[data-panel=sessions]').prepend(panel);
   let capability = null, active = false, ready = false, socket, media, context, capture, source, heartbeat, watchdog, leaseDeadline = 0, sequence = 0;
   let nextAudio = 0, currentItem = null, itemStart = 0, itemSamples = 0; const sounds = new Set(); const pings = new Map(); let generation = 0, renewWanted = false;
-  let windowNumber = 0;
+  let windowNumber = 0, offerId = null, startEveryday = false;
+  function clearOffer() {
+    offerId = null;
+    confirmSerious.hidden = true;
+  }
+  function sendMode(frame) {
+    if (active && ready && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...frame, window: windowNumber }));
+  }
   function clearPlayback(send = false) {
     if (send && currentItem && ready && socket?.readyState === WebSocket.OPEN) {
       const playedMs = Math.max(0, Math.min(itemSamples / 24, (context.currentTime - itemStart) * 1000));
@@ -30,6 +44,7 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'stop' }));
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
     socket = null; closeMedia(); status.textContent = message; start.disabled = !capability?.ready; stop.disabled = interrupt.disabled = true;
+    clearOffer(); modeControls.hidden = true; restartEveryday.hidden = true; startEveryday = false;
   }
   async function beginWindow(preparedTicket = null, preparedAt = null) {
     if (!active) return;
@@ -40,7 +55,12 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
     const url = new URL('/voice-stream', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(url); socket = ws;
     ws.onopen = () => {
-      if (active && socket === ws) ws.send(JSON.stringify({ type: 'authenticate', ticket: ticket.ticket, continuous: true }));
+      if (active && socket === ws) {
+        const frame = { type: 'authenticate', ticket: ticket.ticket, continuous: true };
+        if (startEveryday) frame.startEveryday = true;
+        startEveryday = false;
+        ws.send(JSON.stringify(frame));
+      }
       else ws.close();
     };
     ws.onmessage = async event => {
@@ -51,12 +71,31 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
           windowNumber = Number.isInteger(message.window) ? message.window : 0;
           ready = true;
           const voice = typeof message.voiceName === 'string' && message.voiceName ? ` · voice ${message.voiceName}` : '';
-          status.textContent = `LIVE · microphone active${voice} · say a short answer or interrupt the reply.`;
+          const mode = ['Everyday', 'Serious'].includes(message.mode) ? message.mode : '';
+          status.textContent = `LIVE · microphone active${voice}${mode ? ` · ${mode} mode` : ''} · say a short answer or interrupt the reply.`;
+          clearOffer(); modeControls.hidden = !mode; everyday.disabled = serious.disabled = false;
+          modeNotice.textContent = message.recommendedMode === 'Serious' && mode === 'Everyday' ? 'Core recommends Serious voice for this activity.' : '';
           interrupt.disabled = false;
         }
         if (message.type === 'window_renewing') {
           ready = false;
+          clearOffer(); everyday.disabled = serious.disabled = true; modeNotice.textContent = '';
           status.textContent = 'Renewing voice…';
+        }
+        if (message.type === 'voice_mode_offer' && ready && message.window === windowNumber &&
+            typeof message.offerId === 'string' && Number.isFinite(message.maximumGbpForTenMinutes) && message.maximumGbpForTenMinutes > 0) {
+          offerId = message.offerId;
+          const maximum = (Math.ceil(message.maximumGbpForTenMinutes * 100) / 100).toFixed(2);
+          modeNotice.textContent = `Serious voice reserves up to £${maximum} per 10 minutes. Confirm to start at the next renewal.`;
+          confirmSerious.hidden = false;
+        }
+        if (message.type === 'voice_mode_queued' && ready && message.window === windowNumber) {
+          clearOffer();
+          modeNotice.textContent = `${message.mode} voice queued for the next renewal.`;
+        }
+        if (message.type === 'voice_mode_rejected' && ready && message.window === windowNumber) {
+          clearOffer();
+          modeNotice.textContent = message.detail;
         }
         if (message.type === 'lease') {
           const at = pings.get(message.sequence); if (at !== undefined) { leaseDeadline = at + message.leaseSeconds * 1000; pings.delete(message.sequence); }
@@ -74,7 +113,10 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
           const line = document.createElement('p'); line.textContent = `${message.role === 'user' ? 'You' : 'JARVIS'}: ${message.text}`; transcript.append(line);
           while (transcript.children.length > 20) transcript.firstChild.remove();
         }
-        if (message.type === 'error') halt(message.detail);
+        if (message.type === 'error') {
+          halt(message.detail);
+          restartEveryday.hidden = message.code !== 'serious_voice_unavailable';
+        }
         if (message.type === 'window_limit') { renewWanted = true; ready = false; clearPlayback(); ws.send(JSON.stringify({ type: 'stop' })); }
         if (message.type === 'ended') {
           ready = false; clearPlayback(); ws.onclose = null; ws.close();
@@ -105,9 +147,11 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
       await beginWindow(ticket, sentAt);
     } catch (error) { closeMedia(); await api('/voice/local/release', ticket.lease).catch(() => {}); throw error; }
   }
-  start.addEventListener('click', async () => {
+  async function startLive(inEveryday = false) {
     if (!consent.checked) { notice('Approve cloud audio processing before starting live voice.', true); return; }
-    start.disabled = true; await beforeStart(); active = true; stop.disabled = false;
+    start.disabled = restartEveryday.disabled = true;
+    await beforeStart(); active = true; stop.disabled = false;
+    startEveryday = inEveryday; restartEveryday.hidden = true; restartEveryday.disabled = false;
     const operation = ++generation;
     try {
       const session = await ensureSession('Communication', 'Live voice coaching');
@@ -121,7 +165,12 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
       }, 4000);
       watchdog = setInterval(() => { if (active && performance.now() >= leaseDeadline) halt('Audio ownership expired. Reconnect to resume safely.'); }, 250);
     } catch (error) { if (generation === operation) { halt(error.message); notice(error.message, true); } }
-  });
+  }
+  start.addEventListener('click', () => startLive());
+  restartEveryday.addEventListener('click', () => startLive(true));
+  everyday.addEventListener('click', () => sendMode({ type: 'voice_mode', mode: 'Everyday' }));
+  serious.addEventListener('click', () => sendMode({ type: 'voice_mode', mode: 'Serious' }));
+  confirmSerious.addEventListener('click', () => { if (offerId) sendMode({ type: 'confirm_voice_mode', offerId }); });
   stop.addEventListener('click', () => halt()); interrupt.addEventListener('click', () => clearPlayback(true));
   consent.addEventListener('change', () => { if (!consent.checked) halt(); });
   return { stop: halt, async refresh() { capability = await api('/voice/status'); status.textContent = capability.detail; start.disabled = !capability.ready; }, clear() { halt(); consent.checked = false; transcript.replaceChildren(); capability = null; start.disabled = true; } };

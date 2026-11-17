@@ -45,6 +45,7 @@ public sealed class RuntimeState
     public Dictionary<string, VoiceTicketRecord> VoiceTickets { get; set; } = [];
     public Dictionary<string, List<DateTimeOffset>> WakeCandidateAttempts { get; set; } = [];
     public Dictionary<Guid, VoiceTurn> VoiceTurns { get; set; } = [];
+    public Dictionary<Guid, SessionVoiceMode> SessionVoiceModes { get; set; } = [];
     public Dictionary<Guid, CoachingAttempt> CoachingAttempts { get; set; } = [];
     public Dictionary<Guid, TrainingOperation> CoachingOperations { get; set; } = [];
     public Dictionary<Guid, ImprovementProgramme> Programmes { get; set; } = [];
@@ -61,6 +62,8 @@ public sealed class RuntimeState
     public Dictionary<Guid, LearningReview> Reviews { get; set; } = [];
     public Dictionary<Guid, AuditedTool> Tools { get; set; } = [];
 }
+
+public sealed record SessionVoiceMode(VoiceMode Mode, decimal? ConfirmedGbpForTenMinutes = null);
 
 public sealed record AiCoachAssessmentClaim(Guid RequestId, Guid AttemptId, Guid ClaimId,
     int ExpectedRevision, int TextRevision, DateTimeOffset ExpiresAt);

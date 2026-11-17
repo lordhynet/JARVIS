@@ -9,9 +9,12 @@ import kotlinx.coroutines.*
 import okhttp3.*
 import uk.jarvis.mobile.contracts.*
 import java.io.IOException
+import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+
+data class VoiceCostOffer(val id: String, val poundsForTenMinutes: BigDecimal)
 
 internal class VoiceTransport(
     private val scope: CoroutineScope,
@@ -20,7 +23,11 @@ internal class VoiceTransport(
 ) {
     interface Listener {
         suspend fun stopCapture(current: Long)
-        fun ready(current: Long, window: WebSocket, voiceName: String?)
+        fun ready(current: Long, window: WebSocket, voiceName: String?, mode: String?)
+        fun modeOffer(offer: VoiceCostOffer)
+        fun modeNotice(message: String, queuedMode: String? = null)
+        fun modeRenewing()
+        fun seriousUnavailable(message: String)
         fun renewed()
         fun audio(current: Long, window: WebSocket, itemId: String, bytes: ByteArray)
         fun interrupt(send: Boolean = true)
@@ -37,6 +44,7 @@ internal class VoiceTransport(
     private var sessionId = ""
     private var deviceId = ""
     private var pendingTicket: VoiceTicket? = null
+    private var startEveryday = false
     @Volatile private var socket: WebSocket? = null
     @Volatile private var lease: AudioLease? = null
     @Volatile private var providerWindow = -1
@@ -46,9 +54,10 @@ internal class VoiceTransport(
     private var renewWanted = false
     private var reconnectJob: Job? = null
 
-    @Synchronized fun start(session: String, ticket: VoiceTicket?) {
+    @Synchronized fun start(session: String, ticket: VoiceTicket?, everyday: Boolean = false) {
         sessionId = session
         pendingTicket = ticket
+        startEveryday = everyday
         retry.connected()
     }
 
@@ -103,6 +112,15 @@ internal class VoiceTransport(
         if (number >= 0) socket?.send(gson.toJson(mapOf("type" to "interrupt", "window" to number, "itemId" to itemId, "playedMs" to playedMs)))
     }
 
+    @Synchronized fun requestMode(mode: String) = sendMode(mapOf("type" to "voice_mode", "mode" to mode))
+
+    @Synchronized fun confirmMode(offerId: String) = sendMode(mapOf("type" to "confirm_voice_mode", "offerId" to offerId))
+
+    private fun sendMode(frame: Map<String, String>) {
+        val number = providerWindow
+        if (number > 0 && lifecycle.ready && leaseIsCurrent()) socket?.send(gson.toJson(frame + ("window" to number)))
+    }
+
     private suspend fun heartbeat(current: Long) {
         while (lifecycle.isLive(current)) {
             delay(4000)
@@ -155,8 +173,13 @@ internal class VoiceTransport(
     ) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             synchronized(this@VoiceTransport) {
-                if (isWindow(current, webSocket)) webSocket.send(gson.toJson(mapOf("type" to "authenticate", "ticket" to ticket.ticket, "continuous" to true)))
-                else webSocket.close(1000, "Cancelled")
+                if (!isWindow(current, webSocket)) {
+                    webSocket.close(1000, "Cancelled")
+                    return
+                }
+                val frame = mutableMapOf<String, Any>("type" to "authenticate", "ticket" to ticket.ticket, "continuous" to true)
+                if (startEveryday) frame["startEveryday"] = true
+                webSocket.send(gson.toJson(frame))
             }
         }
 
@@ -167,12 +190,28 @@ internal class VoiceTransport(
                 when (message.get("type").asString) {
                     "ready" -> if (synchronized(this@VoiceTransport) { isWindow(current, webSocket) && lifecycle.markReady(current) }) {
                         providerWindow = message.get("window")?.asInt ?: 0
+                        startEveryday = false
                         retry.connected()
                         established.complete(Unit)
                         val voiceName = message.get("voiceName")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
-                        listener.ready(current, webSocket, voiceName)
+                        val mode = message.get("mode")?.asString?.takeIf { it == "Everyday" || it == "Serious" }
+                        listener.ready(current, webSocket, voiceName, mode)
                     }
-                    "window_renewing" -> providerWindow = -1
+                    "window_renewing" -> {
+                        providerWindow = -1
+                        listener.modeRenewing()
+                    }
+                    "voice_mode_offer" -> if (message.get("window")?.asInt == providerWindow && providerWindow > 0) {
+                        val maximum = message.get("maximumGbpForTenMinutes").asBigDecimal
+                        if (maximum.signum() > 0) listener.modeOffer(VoiceCostOffer(message.get("offerId").asString, maximum))
+                    }
+                    "voice_mode_queued" -> if (message.get("window")?.asInt == providerWindow && providerWindow > 0) {
+                        val mode = message.get("mode").asString
+                        listener.modeNotice("$mode voice queued for the next renewal.", mode)
+                    }
+                    "voice_mode_rejected" -> if (message.get("window")?.asInt == providerWindow && providerWindow > 0) {
+                        listener.modeNotice(message.get("detail").asString)
+                    }
                     "lease" -> pings.remove(message.get("sequence").asLong)?.let { sent ->
                         leaseDeadline.set(sent + message.get("leaseSeconds").asLong * 1000)
                         listener.renewed()
@@ -184,7 +223,12 @@ internal class VoiceTransport(
                         listener.audio(current, webSocket, message.get("itemId").asString, Base64.decode(delta, Base64.DEFAULT))
                     }
                     "transcript" -> Unit
-                    "error" -> listener.stopped(message.get("detail").asString)
+                    "error" -> {
+                        val detail = message.get("detail").asString
+                        if (message.get("code")?.takeUnless { it.isJsonNull }?.asString == "serious_voice_unavailable")
+                            listener.seriousUnavailable(detail)
+                        else listener.stopped(detail)
+                    }
                     "window_limit" -> {
                         renewWanted = true
                         lifecycle.pauseWindow(current)

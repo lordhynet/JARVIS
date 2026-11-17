@@ -30,6 +30,8 @@ internal static class RealtimeWindowCost
         var instructionBytes = Encoding.UTF8.GetByteCount(RealtimeVoicePrompt.Build(persona, "", "", continuing: true));
         var promptBound = instructionBytes + VoiceConversationMemory.RecentByteLimit + VoiceConversationMemory.SummaryByteLimit
             + CurrentTaskByteLimit + PracticeContextByteLimit + SessionJsonEnvelopeBytes + PreparedPromptAllowanceBytes;
-        return (Maximum(window, pricing, promptBound), (EstimateSeconds + window.Seconds - 1) / window.Seconds);
+        return (Maximum(window, pricing, promptBound), WindowsInTenMinutes(window));
     }
+
+    internal static int WindowsInTenMinutes(VoiceWindowLimits window) => (EstimateSeconds + window.Seconds - 1) / window.Seconds;
 }

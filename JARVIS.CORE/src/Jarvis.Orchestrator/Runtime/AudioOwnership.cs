@@ -84,6 +84,21 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
     public async Task<bool> CurrentAsync(AudioLease lease, CancellationToken ct) =>
         await ReadCurrentAsync(lease, ct) is not null;
 
+    public Task<SessionVoiceMode> SetVoiceModeAsync(AudioLease lease, SessionVoiceMode selection, CancellationToken ct) =>
+        transaction.ExecuteAsync(async writes =>
+        {
+            var session = await writes.ReadAudioStateAsync(lease.SessionId);
+            Guard.Require(session is { Status: SessionStatus.Active } && session.ActiveDeviceId == lease.DeviceId,
+                409, "Session audio ownership changed.");
+            var state = writes.Runtime;
+            Require(state, lease);
+            Guard.Require(!state.RetiredSessions.Contains(lease.SessionId), 409, "Session was retired.");
+            Guard.Require(selection.Mode == VoiceMode.Everyday || selection is
+                { Mode: VoiceMode.Serious, ConfirmedGbpForTenMinutes: > 0 }, 400, "Confirm the Serious voice cost first.");
+            state.SessionVoiceModes[lease.SessionId] = selection;
+            return selection;
+        }, ct);
+
     internal async Task<AudioLease?> ReadCurrentAsync(AudioLease lease, CancellationToken ct)
     {
         var session = await sessions.ReadAudioStateAsync(lease.SessionId, ct);
