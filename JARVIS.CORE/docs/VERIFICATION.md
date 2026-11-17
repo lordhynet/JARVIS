@@ -778,6 +778,8 @@ The full backend run passed 409 tests with zero failures on disposable PostgreSQ
 
 Android release 0.10.2 (version code 13, source `c4c23fe`) passed all 33 unit tests and release lint. The signed APK embeds that revision. Its SHA-256 is `ADDD4D0CCBBE37051737551C0F8523AE1FB87E96C43E1F65461AF821E2F8477F`, and its signing certificate matches 0.10.1. Physical handset and Home Assistant checks remain owner-run.
 
+
+
 ## Item 12 — private GitHub CI
 
 On 16 November 2026, the private repository received `development` with the three component histories intact. Stable `master` points to `87aff48`. The [draft pull request](https://github.com/lordhynet/JARVIS/pull/1) launched hosted CI while the workflow lives on `development`. Manual dispatch becomes available after the workflow is on the default branch.
@@ -801,3 +803,8 @@ All 66 focused Core tests passed. They cover bind addresses, endpoint authorizat
 All 37 Android debug unit tests passed, including four provisioning tests for an optional pin, existing USB pins, and malformed payloads. Android debug lint passed with zero errors and 12 warnings after a retry for a Windows Gradle cache error.
 
 The Windows Core host still needs Tailscale installation and tailnet sign-in. Live access rules, certificate issuance, and the mobile-data and earbud checks remain owner-run. See the [private remote access guide](REMOTE_ACCESS.md).
+=======
+## Round 5 — relational audio leases
+
+All 56 focused PostgreSQL, voice consistency, privacy, and realtime protocol checks passed with disposable PostgreSQL 17. The upgrade fixture confirmed that a legacy draining lease migrates with its deadline and that release clears the authoritative row while the legacy JSON stays byte-for-byte intact. EF reported no pending model changes.
+

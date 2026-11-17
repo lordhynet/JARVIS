@@ -89,14 +89,7 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
         return current is not null && AudioFenceChanges.Matches(lease, current) && current.ExpiresAt > clock.GetUtcNow()
             ? current : null;
     }
-    public Task<bool> ReleaseAsync(AudioLease lease, CancellationToken ct) => store.UpdateAsync(s =>
-    {
-        if (s.AudioLease?.Fence == lease.Fence && s.AudioLease.SessionId == lease.SessionId && s.AudioLease.DeviceId == lease.DeviceId) { s.AudioLease = null; return true; }
-        if (s.AudioDrainLease?.Fence == lease.Fence && s.AudioDrainLease.SessionId == lease.SessionId && s.AudioDrainLease.DeviceId == lease.DeviceId) {
-            s.AudioDrainLease = null; s.AudioDrainUntil = null; return true;
-        }
-        return false;
-    }, ct);
+    public Task<bool> ReleaseAsync(AudioLease lease, CancellationToken ct) => store.ReleaseAudioAsync(lease, ct);
     private void Require(RuntimeState s, AudioLease lease)
     {
         RequireCredentialEnabled(s, lease.DeviceId);

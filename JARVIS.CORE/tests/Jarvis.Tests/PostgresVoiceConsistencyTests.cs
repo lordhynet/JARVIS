@@ -188,7 +188,8 @@ public sealed partial class PostgresSessionTests
         }
 
         using var host = new PostgresApiFactory(database.ConnectionString);
-        var state = await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s);
+        var runtime = host.Services.GetRequiredService<IRuntimeStore>();
+        var state = await runtime.ReadAsync(s => s);
         Assert.Equal(2, state.VoiceTurns.Count);
         Assert.Equal("Recovered speech", state.VoiceTurns[missingId].Text);
         Assert.Equal(1.25, state.VoiceTurns[missingId].SpeechSeconds);
@@ -202,5 +203,13 @@ public sealed partial class PostgresSessionTests
         var migratedGrant = (await host.Services.GetRequiredService<IDeviceGrantStore>().GetAsync(grantId))!;
         Assert.NotNull(migratedGrant.RevokedAt);
         Assert.False(migratedGrant.PreApproved);
+
+        await using var db = await host.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>().CreateDbContextAsync();
+        var legacyJson = (await db.RuntimeDocuments.AsNoTracking().SingleAsync()).Json;
+        Assert.True(await runtime.ReleaseAudioAsync(orphan));
+        Assert.False(await runtime.ReleaseAudioAsync(orphan));
+        Assert.Null((await runtime.ReadAudioLeaseStateAsync()).DrainUntil);
+        Assert.Null(await runtime.ReadAsync(s => s.AudioDrainLease));
+        Assert.Equal(legacyJson, (await db.RuntimeDocuments.AsNoTracking().SingleAsync()).Json);
     }
 }

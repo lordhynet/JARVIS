@@ -12,6 +12,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<PrivacyJobRow> PrivacyJobs => Set<PrivacyJobRow>();
     public DbSet<CheckpointRow> Checkpoints => Set<CheckpointRow>();
     public DbSet<RuntimeDocument> RuntimeDocuments => Set<RuntimeDocument>();
+    internal DbSet<RuntimeAudioRow> RuntimeAudioStates => Set<RuntimeAudioRow>();
     public DbSet<WorkflowRunRow> WorkflowRuns => Set<WorkflowRunRow>();
     public DbSet<WorkflowEventRow> WorkflowEvents => Set<WorkflowEventRow>();
     public DbSet<DomainDefinitionRow> DomainDefinitions => Set<DomainDefinitionRow>();
@@ -47,6 +48,17 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.HasKey(r => r.Id);
             b.Property(r => r.Json).HasColumnType("jsonb");
             b.HasData(new RuntimeDocument { Id = 1, Json = "{}" });
+        });
+        model.Entity<RuntimeAudioRow>(b =>
+        {
+            b.ToTable("RuntimeAudioStates");
+            b.HasKey(r => r.Id);
+            b.Property(r => r.Id).ValueGeneratedNever();
+            // Preserve the timestamp precision of existing JSON lease snapshots.
+            b.Property(r => r.LeaseExpiresAt).HasConversion<string>();
+            b.Property(r => r.DrainExpiresAt).HasConversion<string>();
+            b.Property(r => r.DrainUntil).HasConversion<string>();
+            b.HasData(new RuntimeAudioRow { Id = 1 });
         });
         model.Entity<SessionRow>(b =>
         {
