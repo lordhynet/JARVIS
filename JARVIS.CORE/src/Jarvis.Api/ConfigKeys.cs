@@ -20,6 +20,7 @@ public static class ConfigKeys
     public const string InteractiveLimitUsd = "AI:InteractiveLimitUsd";
 
     public const string VoiceProfile = "AI:Voice:";
+    public const string VoicePersona = VoiceProfile + "Persona";
     public const string TranscriptionProfile = "AI:Transcription:";
     public const string Model = "Model";
     public const string Provider = "Provider";

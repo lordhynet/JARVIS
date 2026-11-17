@@ -6,6 +6,8 @@ The backend runs on .NET 11. Put provider keys in the private root `appsettings.
 
 Connect Android using its saved encrypted connection. The existing ADB HTTPS bridge must remain connected; it is a development route, not an away-from-home deployment. The audio-only companion is `../artifacts/JARVIS-Android-0.10.0.apk`.
 
+Set `AI:Voice:Persona` in the private root `appsettings.json` to customise the speaking style, up to 2,000 characters. A blank value uses a warm, conversational British English style. Core supplies the tool and safety rules separately from the owner’s speaking preferences.
+
 ## Start a voice session
 
 On Android, verify microphone/earbuds in settings, choose cloud-processing consent and tap Talk. Core prepares, resumes and claims the canonical conversation through `/api/voice/prepare`; there is no native session browser. On the browser, open/create and claim a session before starting voice. Android uses a user-started microphone foreground service with notification and media stop controls. The browser uses an AudioWorklet and streamed PCM playback. Neither a schedule nor an agent starts the microphone.

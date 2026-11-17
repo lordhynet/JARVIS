@@ -1,5 +1,10 @@
 # Verification results
 
+## Natural live voice persona, 2026-11-17
+
+- A fake Realtime provider received both the default British English style and a custom owner persona ahead of the Core rules. The protocol fixture verified that coaching, correction, staged practice and recall instructions are present in the tool definitions. Configuration tests verify the 2,000-character limit and the blank-value default.
+- The full Core suite against isolated PostgreSQL 17 passed with **410 passed, 1 skipped and 0 failed**. The skipped test is the opt-in runtime measurement harness. The evidence is `tests/Jarvis.Tests/TestResults/natural-voice.trx`. Listening and phone acceptance are pending.
+
 ## Native Android goals — 0.9.0, 2026-11-14
 
 - Added Today → Your goals and More → Goals, with encrypted local drafts, workflow/status/date controls, explicit cloud consent, confirmed revision-checked deletion, conflict comparison and lost-acknowledgement recovery. Unconfirmed writes persist their exact ID/body before dispatch, lock fields and require explicit check/retry. Goals never enter the automatic/offline practice replay queue.

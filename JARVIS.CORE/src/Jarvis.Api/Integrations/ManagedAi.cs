@@ -13,6 +13,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
 {
     private readonly RateCard rateCards = cards ?? new RateCard(config, clock);
     public (string Model, RealtimePricing Pricing) RealtimeRates() { var rates = rateCards.ReadRealtime(); budget.RequireConfigured(); return rates; }
+    internal string RealtimePersona() => RealtimeVoicePrompt.ReadPersona(config);
     public (string Model, decimal PerMinute, string ApiKey) TranscriptionRates() { var rates = rateCards.ReadTranscription(); budget.RequireConfigured(); return rates; }
     public BudgetLimits Limits => new(config.GetValue(ConfigKeys.DailyLimitUsd, 2m), config.GetValue(ConfigKeys.MonthlyLimitUsd, 50m),
         config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m), config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m));
@@ -25,7 +26,11 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     }
     public void RequireReady(string profile)
     {
-        if (profile == "Voice") RealtimeRates();
+        if (profile == "Voice")
+        {
+            RealtimePersona();
+            RealtimeRates();
+        }
         else { rateCards.ReadText(profile, profile == "Research" ? TextCapability.GroundedPublicSearch : TextCapability.JsonReasoning,
             profile == "Research" ? ReasoningDataClass.Public : ReasoningDataClass.Personal); budget.RequireConfigured(); }
     }
