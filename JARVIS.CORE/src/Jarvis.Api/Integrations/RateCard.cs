@@ -91,6 +91,9 @@ public sealed class RateCard(IConfiguration config, TimeProvider clock)
         Guard.Require(!legacy || config.GetValue<bool>(ConfigKeys.PaidAiEnabled), 503, "Paid interview briefs are disabled.");
         Guard.Require(!string.IsNullOrWhiteSpace(model) && model == config[prefix + ConfigKeys.RateCardModel], 503, "The selected model must match its reviewed rate card.");
         if (profile == "Chat" && provider == ProviderIds.OpenAi) Guard.Require(model == config[ConfigKeys.OpenAiModel], 503, "Chat model and its priced profile must match.");
+        // Anthropic refusal billing categories were reviewed on 2026-11-17 alongside
+        // the text rate card. Recheck the linked schedule when reviewing these prices:
+        // https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#how-refusals-are-billed
         var date = ReviewedDate(prefix, model);
         var input = config.GetValue<decimal>(prefix + "InputUsdPerMillion"); var output = config.GetValue<decimal>(prefix + "OutputUsdPerMillion");
         var cap = config.GetValue(prefix + ConfigKeys.MaxOutputTokens, provider == ProviderIds.Anthropic ?

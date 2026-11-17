@@ -178,6 +178,9 @@ public sealed class AnthropicMessagesAdapter(IHttpClientFactory clients, IRuntim
 
     private static bool RefusalIsFree(JsonElement message, JsonElement usage, bool isTrigger = false)
     {
+        // Reviewed 2026-11-17. Anthropic may change the billed category set; recheck
+        // it alongside the rate card. Unknown categories retain the reservation.
+        // https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#how-refusals-are-billed
         if (!isTrigger && message.GetProperty("stop_reason").GetString() != "refusal") return false;
         if (Token(usage, "output_tokens") > 0) return false;
         var details = isTrigger ? message : message.TryGetProperty("stop_details", out var stop) ? stop : default;
