@@ -21,6 +21,7 @@ public static class CoreRoutes
 
     public const string Voice = "/api/voice";
     public const string VoiceStatus = Voice + "/status";
+    public const string VoiceModes = Voice + "/modes";
     public const string VoicePrepare = Voice + "/prepare";
     public const string VoiceWakeCandidates = Voice + "/wake-candidates";
     public const string VoiceTickets = Voice + "/tickets";

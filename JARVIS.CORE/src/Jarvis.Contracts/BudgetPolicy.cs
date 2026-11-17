@@ -17,5 +17,6 @@ public sealed record ClassifyLegacyChargeRequest(Guid RequestId, string PolicyHa
     decimal ExpectedUsd, string Evidence, string Confirmation);
 public sealed record GbpBudgetStatus(bool Ready, string Detail, string ScopeId, string Environment, string Month,
     string PolicyHash, string ConversionHash, decimal CeilingGbp, decimal CommittedGbp, int UnclassifiedCharges,
-    int Revision, IReadOnlyList<BudgetApproval> Approvals, GbpBudgetPolicy? ConversionBasis = null);
+    int Revision, IReadOnlyList<BudgetApproval> Approvals, GbpBudgetPolicy? ConversionBasis = null,
+    IReadOnlyList<VoiceUsageEntry>? VoiceUsage = null);
 public sealed record LegacyChargePreview(Guid ReservationId, decimal ExpectedUsd, string ConversionHash, GbpCommitment ProjectedCommitment);

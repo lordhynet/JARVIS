@@ -12,4 +12,5 @@ public sealed record ModelRoute(string Provider, string Model, string Profile, s
 public sealed record GroundingCitation(string Url, string Title, int StartIndex, int EndIndex);
 public sealed record TextReasoningResult(string Text, IReadOnlyList<GroundingCitation> Citations, ModelRoute Route);
 public sealed record ProviderAttempt(Guid Id, Guid ScopeId, string Fingerprint, ModelRoute Route, Guid ReservationId,
-    string Outcome, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt = null, bool SourceDeleted = false);
+    string Outcome, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt = null, bool SourceDeleted = false,
+    VoiceMode? VoiceMode = null);

@@ -10,7 +10,7 @@ public sealed class BudgetSettings(IConfiguration config) : IBudgetPolicySource
     {
         try {
             var section = config.GetSection("Budget"); var fx = section.GetSection("Fx");
-            string[] allowed = ["Enabled", "ScopeId", "Environment", "Version", "Fx", "TaxMultiplier", "SafetyMultiplier"];
+            string[] allowed = ["Enabled", "ScopeId", "Environment", "Version", "Fx", "TaxMultiplier", "SafetyMultiplier", ConfigKeys.VoiceSeriousDailyGbpField];
             string[] fxAllowed = ["Source", "UsdToGbp", "ObservedAt", "ExpiresAt"];
             Guard.Require(section.GetChildren().All(c => allowed.Contains(c.Key, StringComparer.OrdinalIgnoreCase)) &&
                 fx.GetChildren().All(c => fxAllowed.Contains(c.Key, StringComparer.OrdinalIgnoreCase)), 503,

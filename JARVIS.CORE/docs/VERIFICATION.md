@@ -1,5 +1,12 @@
 # Verification results
 
+## Voice mode pricing and audit, 2026-11-17
+
+- Core passed **454 tests** against isolated PostgreSQL 17, with one opt-in benchmark skipped and zero failures. Evidence is `tests/Jarvis.Tests/TestResults/voice-mode-full.trx`.
+- Tests cover activity and drill recommendations, reviewed mode-specific cards, estimates available to the owner without a provider dispatch, and Serious daily cap checks using the stored GBP basis for each reservation. The realtime fixture verifies mode, model and completion status in actual Everyday window accounting.
+- All **56 Playwright tests** passed, including the mode estimates and usage panel on both desktop and mobile browser profiles. Android contract and frontend source parity passed.
+- Session mode selection, switching and spoken fallback consent are pending.
+
 ## Rolling conversation memory for live voice, 2026-11-17
 
 - The full Core suite against isolated PostgreSQL 17 finished with **442 passed, 1 skipped and 0 failed**. The skipped case is the opt-in runtime measurement harness. The evidence is `tests/Jarvis.Tests/TestResults/voice-memory-full.trx`.

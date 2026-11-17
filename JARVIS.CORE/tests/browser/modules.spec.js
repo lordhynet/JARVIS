@@ -24,6 +24,21 @@ async function connect(page) {
   await page.goto('/'); await page.getByLabel('API key', { exact: true }).fill(key); await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
   await page.getByRole('button', { name: 'Connect', exact: true }).click(); await expect(page.locator('#workspace')).toBeVisible();
 }
+test('AI workflows show voice mode estimates and actual model usage', async ({ page }) => {
+  await page.route('**/api/voice/modes', route => route.fulfill({ json: { modes: [
+    { mode: 'Everyday', pricingReady: true, model: 'gpt-realtime-2.1-mini', maximumGbpForTenMinutes: 1.12 },
+    { mode: 'Serious', pricingReady: false, detail: 'Serious voice is disabled.' }
+  ] } }));
+  await page.route('**/api/budget/status', route => route.fulfill({ json: { voiceUsage: [
+    { mode: 'Everyday', model: 'gpt-realtime-2.1-mini', reservedGbp: 0.60, accountedGbp: 0.03 }
+  ] } }));
+  await connect(page);
+  await page.getByRole('button', { name: 'AI workflows', exact: true }).click();
+  const card = page.locator('[data-panel=workflows] .list-item').filter({ has: page.getByRole('heading', { name: 'Live voice budget' }) });
+  await expect(card).toContainText('Everyday · gpt-realtime-2.1-mini · up to £1.12 reserved for ten minutes');
+  await expect(card).toContainText('Serious voice is disabled.');
+  await expect(card).toContainText('Everyday · gpt-realtime-2.1-mini · £0.03 accounted');
+});
 test('coaching saves, corrects and reviews a canonical session without a provider key', async ({ page }) => {
   await connect(page); await page.getByRole('button', { name: 'Coaching', exact: true }).click();
   const panel = page.locator('[data-panel=coaching]'); await panel.getByLabel('Exercise', { exact: true }).selectOption('point-first');

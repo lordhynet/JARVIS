@@ -30,6 +30,12 @@ Set `AI:Voice:VoiceName` in the private root `appsettings.json` to choose a buil
 
 Semantic turn detection uses the content of speech to estimate when the person has finished. It defaults to `AI:Voice:TurnDetection:Mode` set to `semantic_vad` and `AI:Voice:TurnDetection:Eagerness` set to `auto`. Use `low` for more time to think aloud. Set the mode to `server_vad` to use the previous silence-based behaviour. If the provider rejects semantic turn detection during setup, Core retries once with server VAD before it starts a reply. In either mode, spoken interruptions still stop the current reply and Core controls when to request the next one.
 
+## Voice mode pricing and audit
+
+AI workflows shows the reviewed reservation ceiling for ten minutes and recent voice charges with their mode and model. The owner endpoint `GET /api/voice/modes` accepts an activity and optional drill mode to return the recommendation and pricing readiness. Ten-minute estimates use whole budgeted windows and round each window to GBP using the configured budget basis.
+
+Named cards under `AI:Voice:Modes` are opt-in. Everyday can use the existing top-level reviewed voice card. Serious pricing requires its own reviewed rate card and a positive `Budget:VoiceSeriousDailyGbp` cap. The ledger counts Serious reservations at their own GBP conversion basis. Live dispatch presently uses Everyday. Session mode controls, switching and spoken fallback consent are the next part of the implementation.
+
 ## AI feedback
 
 Save an answer before requesting AI feedback. The request includes explicit consent and expected record/text versions. The browser displays the model source and evidence quotes; Android has no feedback dashboard. Core rejects fabricated quotes and stale publication; editing an answer clears its current AI-feedback pointer. Personal stories are unverified user claims, so the interview adapter does not assign technical accuracy without a technical reference. Technical assessment uses the supplied question reference and the shared review scheduler.

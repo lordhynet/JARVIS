@@ -18,11 +18,7 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
 {
     private enum Phase { Starting, Ready, EndingBeforeReady, Ending }
 
-    private const int OutputTokens = 256;
-    private const int ConversationTokens = 4096;
     private const int PrefetchSeconds = 25;
-    private const int PrefetchPromptAllowanceBytes = 1800;
-    private const int CurrentTaskByteLimit = 500;
 
     private readonly SemaphoreSlim clientSend = new(1);
     private readonly SemaphoreSlim providerSend = new(1);
@@ -38,8 +34,10 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
     private string persona = "";
     private int reservedPromptBytes;
     private bool dispatched;
+    private bool settled;
     private bool pumpsStopped;
     private RealtimePricing pricing = null!;
+    private ModelRoute route = null!;
     private RealtimeVoiceOutput voiceOutput;
     private RealtimeTurnDetection turnDetection;
     private string configurationEventId = "";
@@ -98,10 +96,12 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
         persona = ai.RealtimePersona();
         hasDisplay = await runtime.ReadAsync(s => s.Devices.GetValueOrDefault(lease.DeviceId)?.Registration.Capabilities.HasDisplay == true, ct);
         instructions = await ReadInstructionsAsync(ct);
-        var voiceRates = ai.RealtimeRates();
+        var voiceRates = ai.ReviewedRealtime(VoiceMode.Everyday);
         pricing = voiceRates.Pricing;
-        model = voiceRates.Model;
-        await ReserveWindowAsync(Encoding.UTF8.GetByteCount(instructions) + (number > 1 ? PrefetchPromptAllowanceBytes : 0), ct);
+        route = voiceRates.Route;
+        model = route.Model;
+        await ReserveWindowAsync(Encoding.UTF8.GetByteCount(instructions) +
+            (number > 1 ? RealtimeWindowCost.PreparedPromptAllowanceBytes : 0), ct);
     }
 
     private async Task<string> ReadInstructionsAsync(CancellationToken ct)
@@ -115,23 +115,19 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
         }
         sessionId = session.Id;
         var recent = VoiceConversationMemory.Recent(session);
-        var task = session.CurrentTask is null ? null : VoiceConversationMemory.ClipJsonText(session.CurrentTask, CurrentTaskByteLimit);
+        var task = session.CurrentTask is null ? null : VoiceConversationMemory.ClipJsonText(session.CurrentTask, RealtimeWindowCost.CurrentTaskByteLimit);
         var contextText = JsonSerializer.Serialize(new { session.Activity, CurrentTask = task,
             EarlierTurns = session.VoiceSummary?.EarlierTurns ?? [], Messages = recent });
         var practice = await runtime.ReadAsync(s => ContextSelector.Select(s.Stories.Values, s.Learning.Values,
-            task + " " + string.Join(" ", recent.TakeLast(3).Select(x => x.Text)), clock.GetUtcNow(), maxBytes: 5000), ct);
+            task + " " + string.Join(" ", recent.TakeLast(3).Select(x => x.Text)), clock.GetUtcNow(),
+            maxBytes: RealtimeWindowCost.PracticeContextByteLimit), ct);
         return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1);
     }
 
     private async Task ReserveWindowAsync(int promptBytes, CancellationToken ct)
     {
-        var toolBytes = JsonSerializer.SerializeToUtf8Bytes(CoreVoiceTools.Definitions).Length;
-        // Tool results share the explicitly capped post-instruction conversation context.
-        // Reserve that token cap per response, plus conservative prefix/audio overhead.
-        var inputBound = promptBytes + toolBytes + ConversationTokens + 5120m;
-        var maximum = (inputBound * window.MaxTurns * pricing.MaxInput + window.MaxTurns * OutputTokens * pricing.MaxOutput)
-            / 1_000_000m + pricing.Transcription(window.Seconds);
-        reservation = await budget.ReserveAsync(Guid.NewGuid(), sessionId, model, maximum, ai.Limits, ct, UsageLane.Voice, ProviderIds.OpenAi);
+        var maximum = RealtimeWindowCost.Maximum(window, pricing, promptBytes);
+        reservation = await budget.ReserveAsync(Guid.NewGuid(), sessionId, route, VoiceMode.Everyday, maximum, ai.Limits, ct);
         reservedPromptBytes = promptBytes;
     }
 
@@ -167,6 +163,7 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
             pumps.Add(downstream);
             if (reservation is null) await PrepareWindowAsync(timeout.Token);
             else await RefreshPreparedPromptAsync(timeout.Token);
+            Guard.Require(reservation is not null, 503, "The voice window has no provider reservation.");
             ai.RequireReady("Voice");
             Guard.Require(!await runtime.ReadPaidAiPausedAsync(timeout.Token), 503, "Paid AI is globally paused.");
             Guard.Require(!await runtime.ReadAsync(s => s.UsageReservations.Values.Any(x => x.ReconciliationRequired), timeout.Token),
@@ -182,6 +179,10 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
             provider = standby ?? await ConnectReservedAsync(timeout.Token);
             standby = null;
             Guard.Require(await fence.RefreshAsync(timeout.Token), 409, "Audio lease expired while connecting.");
+            if (downstream.IsCompleted) return await StopBeforeDispatchAsync(downstream);
+            await budget.MarkVoiceDispatchedAsync(reservation.Id, timeout.Token);
+            if (!fence.IsCurrent())
+                Guard.Require(await fence.RefreshAsync(timeout.Token), 409, "Audio lease expired before provider dispatch.");
             if (downstream.IsCompleted) return await StopBeforeDispatchAsync(downstream);
             dispatched = true;
             await ConfigureProviderAsync(model, instructions);
@@ -205,7 +206,7 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
             BeginEnding();
             if (rollover && next is not null) await SendClientAsync(new { type = "window_renewing", window = number });
             else await inputStop.CancelAsync();
-            var settled = await DrainAndSettleAsync(upstream);
+            settled = await DrainAndSettleAsync(upstream);
             if (rollover && next is not null)
             {
                 Guard.Require(settled, 502, "The provider did not confirm the completed voice window.");
@@ -235,6 +236,12 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
         {
             await StopPumpsAsync(pumps);
             await ReturnUnusedReservationAsync();
+            if (dispatched && !settled)
+            {
+                using var record = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                try { await budget.MarkVoiceUncertainAsync(reservation.Id, record.Token); }
+                catch { /* A missing outcome leaves the reservation charged at its maximum. */ }
+            }
             if (next is not null && !passedNext)
             {
                 await preparationStop.CancelAsync();
@@ -279,8 +286,9 @@ internal sealed class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLeas
         configurationEventId = Guid.NewGuid().ToString("N");
         return SendProviderAsync(new { type = "session.update", event_id = configurationEventId,
             session = new { type = "realtime", model = model, output_modalities = new[] { "audio" },
-            instructions, max_output_tokens = OutputTokens, tools = CoreVoiceTools.Definitions,
-            truncation = new { type = "retention_ratio", retention_ratio = .8, token_limits = new { post_instructions = ConversationTokens } },
+            instructions, max_output_tokens = RealtimeWindowCost.OutputTokenLimit, tools = CoreVoiceTools.Definitions,
+            truncation = new { type = "retention_ratio", retention_ratio = .8,
+                token_limits = new { post_instructions = RealtimeWindowCost.ConversationTokenLimit } },
             audio = new { input = new { format = new { type = "audio/pcm", rate = 24000 }, transcription = new { model = pricing.TranscriptionModel },
                 turn_detection = turnDetection.ToProviderSettings() },
                 output = new { format = new { type = "audio/pcm", rate = 24000 }, voice = voiceOutput.Name, speed = voiceOutput.Speed } } } }, requireAudio: true);

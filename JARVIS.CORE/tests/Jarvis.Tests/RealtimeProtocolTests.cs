@@ -322,6 +322,12 @@ public sealed partial class RealtimeProtocolTests
         var saved = await host.Services.GetRequiredService<ISessionReader>().GetAsync(id);
         Assert.Equal("Explain one concrete decision.", Assert.Single(saved!.Messages!).Text);
         var usage = Assert.Single(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.UsageReservations.Values.ToList()));
+        Assert.Equal(VoiceMode.Everyday, usage.VoiceMode);
+        var attempt = Assert.Single(await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.ProviderAttempts.Values.ToList()));
+        Assert.Equal(usage.Id, attempt.ReservationId);
+        Assert.Equal(VoiceMode.Everyday, attempt.VoiceMode);
+        Assert.Equal(usage.Model, attempt.Route.Model);
+        Assert.Equal(ProviderAttemptOutcome.Completed, attempt.Outcome);
         Assert.NotNull(usage.ActualUsd); Assert.False(usage.ReconciliationRequired);
         Assert.Equal(1, measurements);
     }

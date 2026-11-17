@@ -23,6 +23,8 @@ public static class VoiceEndpoints
             ApiKeyMiddleware.RequireDevice(context, lease.DeviceId); return ownership.ReleaseAsync(lease, ct);
         }).RequireAuthorization(CorePolicies.OwnerOrCompanion);
         app.MapGet(CoreRoutes.VoiceStatus, (ManagedAi ai) => ai.Status("Voice")).RequireAuthorization(CorePolicies.OwnerOrCompanion);
+        app.MapGet(CoreRoutes.VoiceModes, (ActivityType? activity, TrainingMode? drill, ManagedAi ai) =>
+            ai.VoiceOptions(activity ?? ActivityType.General, drill)).RequireAuthorization(CorePolicies.Owner);
         app.MapPost(CoreRoutes.VoicePrepare, (CompanionVoiceRequest request, HttpContext context, ManagedAi ai, CompanionVoiceService voice, CancellationToken ct) =>
         { ApiKeyMiddleware.RequireDevice(context, request.DeviceId); ai.RequireReady("Voice"); return voice.PrepareAsync(request, ct); }).RequireRateLimiting("voice").RequireAuthorization(CorePolicies.OwnerOrCompanion);
         app.MapPost(CoreRoutes.VoiceWakeCandidates, async (WakeCandidateRequest request, HttpContext context, ManagedAi ai, WakeCandidateArbiter arbiter, CancellationToken ct) => {

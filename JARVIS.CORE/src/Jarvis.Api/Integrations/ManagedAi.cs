@@ -2,10 +2,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Net.Http.Json;
+using System.Globalization;
 using Jarvis.Api.Voice;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Workflows;
+using Jarvis.Orchestrator.Intelligence;
 
 namespace Jarvis.Api.Integrations;
 
@@ -14,6 +16,26 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
 {
     private readonly RateCard rateCards = cards ?? new RateCard(config, clock);
     public (string Model, RealtimePricing Pricing) RealtimeRates() { var rates = rateCards.ReadRealtime(); budget.RequireConfigured(); return rates; }
+    internal ReviewedVoiceRates ReviewedRealtime(VoiceMode mode) => rateCards.ReadRealtime(mode);
+    internal VoiceModeOptions VoiceOptions(ActivityType activity, TrainingMode? drill)
+    {
+        Guard.Require(Enum.IsDefined(activity) && (drill is null || Enum.IsDefined(drill.Value)), 400, "Unknown voice activity or drill.");
+        return new(VoiceModePolicy.Recommend(activity, drill),
+            [VoiceOption(VoiceMode.Everyday), VoiceOption(VoiceMode.Serious)]);
+    }
+    private VoiceModeEstimate VoiceOption(VoiceMode mode)
+    {
+        try
+        {
+            var rates = ReviewedRealtime(mode);
+            var cap = mode == VoiceMode.Serious ? SeriousDailyCap : null;
+            Guard.Require(mode != VoiceMode.Serious || cap is > 0 and <= 200, 503, "Configure a positive Serious voice daily GBP cap.");
+            var (usd, windows) = RealtimeWindowCost.EstimateTenMinutes(RealtimeWindow(), rates.Pricing, RealtimePersona());
+            return new(mode, true, rates.Route.Model, budget.EstimateGbp(usd) * windows, "Reviewed maximum reservation for ten minutes.", cap);
+        }
+        catch (DomainException error) { return new(mode, false, null, null, error.Message); }
+        catch (InvalidOperationException) { return new(mode, false, null, null, "The voice mode configuration is malformed."); }
+    }
     internal string RealtimePersona() => RealtimeVoicePrompt.ReadPersona(config);
     internal RealtimeVoiceOutput RealtimeOutput() => RealtimeVoiceOutput.Read(config);
     internal VoiceWindowLimits RealtimeWindow()
@@ -26,7 +48,10 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     internal RealtimeTurnDetection VoiceTurnDetection() => RealtimeTurnDetection.Read(config);
     public (string Model, decimal PerMinute, string ApiKey) TranscriptionRates() { var rates = rateCards.ReadTranscription(); budget.RequireConfigured(); return rates; }
     public BudgetLimits Limits => new(config.GetValue(ConfigKeys.DailyLimitUsd, 2m), config.GetValue(ConfigKeys.MonthlyLimitUsd, 50m),
-        config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m), config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m));
+        config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m),
+        config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m), SeriousDailyCap);
+    private decimal? SeriousDailyCap => decimal.TryParse(config[ConfigKeys.VoiceSeriousDailyGbp], NumberStyles.AllowDecimalPoint,
+        CultureInfo.InvariantCulture, out var cap) ? cap : null;
     public string Model(string profile) => config[ConfigKeys.AiProfilePrefix(profile) + ConfigKeys.Model] ?? throw new DomainException(503, "AI model profile is missing.");
     public decimal Rate(string profile, string direction) => config.GetValue<decimal>(ConfigKeys.AiProfilePrefix(profile) + direction + "UsdPerMillion");
     public int OutputCap(string profile)
@@ -50,7 +75,11 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     public void RequireTranscriptionReady() => TranscriptionRates();
     public AiCapabilityStatus Status(string profile)
     {
-        try { RequireReady(profile); return new(true, Model(profile), "Configured; explicit cloud-processing consent is required."); }
+        try
+        {
+            RequireReady(profile);
+            return new(true, profile == "Voice" ? RealtimeRates().Model : Model(profile), "Configured; explicit cloud-processing consent is required.");
+        }
         catch (DomainException e) { return new(false, config[ConfigKeys.AiProfilePrefix(profile) + ConfigKeys.Model] ?? "", e.Message); }
     }
     public static Guid Operation(string kind, Guid scope, Guid request) => new(SHA256.HashData(Encoding.UTF8.GetBytes($"{kind}:{scope}:{request}"))[..16]);

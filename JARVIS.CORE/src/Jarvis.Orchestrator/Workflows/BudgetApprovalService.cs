@@ -20,9 +20,16 @@ public sealed class BudgetApprovalService(IRuntimeStore store, IBudgetPolicySour
         catch (DomainException e) { ready = false; detail = e.Message; }
         var ceiling = GbpBudgetRules.Ceiling(s, p, now); var committed = GbpBudgetRules.Committed(s, p, now);
         if (ready && committed >= ceiling) { ready = false; detail = "GBP AI budget exhausted; no new paid dispatch is authorized."; }
+        var month = GbpBudgetRules.Month(now);
+        var voice = s.UsageReservations.Values.Where(entry => entry.VoiceMode is not null)
+            .Select(entry => (Entry: entry, Commitment: s.GbpCommitments.GetValueOrDefault(entry.Id)))
+            .Where(pair => pair.Commitment is { } ledger && ledger.ScopeId == p.ScopeId && ledger.Environment == p.Environment && ledger.Month == month)
+            .OrderByDescending(pair => pair.Entry.At).ThenBy(pair => pair.Entry.Id).Take(20)
+            .Select(pair => new VoiceUsageEntry(pair.Entry.VoiceMode!.Value, pair.Entry.Model, pair.Entry.At,
+                pair.Commitment!.ReservedGbp, pair.Commitment.AccountedGbp, s.ProviderAttempts.GetValueOrDefault(pair.Entry.Id)?.Outcome)).ToArray();
         return new GbpBudgetStatus(ready, detail, p.ScopeId, p.Environment, GbpBudgetRules.Month(now), GbpBudgetRules.PolicyHash(p),
             GbpBudgetRules.ConversionHash(p), ceiling, committed, GbpBudgetRules.Unclassified(s, now), s.BudgetRevision,
-            s.BudgetApprovals.Values.Where(a => a.ScopeId == p.ScopeId && a.Environment == p.Environment && a.Month == GbpBudgetRules.Month(now)).ToArray(), p);
+            s.BudgetApprovals.Values.Where(a => a.ScopeId == p.ScopeId && a.Environment == p.Environment && a.Month == month).ToArray(), p, voice);
     }, ct);
 
     public Task<LegacyChargePreview> PreviewLegacyAsync(BudgetActor actor, Guid id, CancellationToken ct = default)
