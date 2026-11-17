@@ -95,8 +95,9 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         return result;
     }
 
-    public Task<UsageReservation> SettleUsageAsync(Guid id, decimal actual, int input, int output, CancellationToken ct = default) =>
-        UpdateCoreAsync(s => UsageAccounting.Settle(s, id, actual, input, output), true, ct);
+    public Task<UsageReservation> SettleUsageAsync(Guid id, decimal actual, int input, int output, CancellationToken ct = default,
+        DateTimeOffset? completedAt = null) =>
+        UpdateCoreAsync(s => UsageAccounting.Settle(s, id, actual, input, output, completedAt), true, ct);
 
     public Task<T> UpdateAsync<T>(Func<RuntimeState, T> update, CancellationToken ct = default) => UpdateCoreAsync(update, false, ct);
 

@@ -10,6 +10,31 @@ namespace Jarvis.Tests;
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
+    public async Task Voice_settlement_keeps_the_injected_completion_time_across_restarts_and_retries()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var clock = new BudgetClock();
+        using var host = new PostgresApiFactory(database.ConnectionString);
+        var store = host.Services.GetRequiredService<IRuntimeStore>();
+        var budget = new UsageBudget(store, clock, new TestBudgetSource(clock));
+        var route = new ModelRoute(ProviderIds.OpenAi, "fixture-model", "Voice:Everyday", "fixture-policy",
+            "fixture-rate-card", DateOnly.FromDateTime(clock.Now.UtcDateTime), 1, 1, 256);
+        var charge = await budget.ReserveAsync(Guid.NewGuid(), Guid.NewGuid(), route, VoiceMode.Everyday, .20m,
+            new(10, 10, 10), default);
+        await budget.MarkVoiceDispatchedAsync(charge.Id, default);
+        clock.Now = clock.Now.AddMinutes(2);
+        var completedAt = clock.GetUtcNow();
+        await budget.SettleAsync(charge.Id, .05m, 1, 1, default);
+        Assert.Equal(completedAt, await store.ReadAsync(state => state.ProviderAttempts[charge.Id].CompletedAt));
+
+        using var restarted = new PostgresApiFactory(database.ConnectionString);
+        var restored = restarted.Services.GetRequiredService<IRuntimeStore>();
+        clock.Now = clock.Now.AddMinutes(5);
+        await new UsageBudget(restored, clock, new TestBudgetSource(clock)).SettleAsync(charge.Id, .05m, 1, 1, default);
+        Assert.Equal(completedAt, await restored.ReadAsync(state => state.ProviderAttempts[charge.Id].CompletedAt));
+    }
+
+    [PostgresFact]
     public async Task Accepted_automatic_quote_survives_a_host_restart_and_is_used_by_the_ledger()
     {
         await using var database = await TestDatabase.CreateAsync();

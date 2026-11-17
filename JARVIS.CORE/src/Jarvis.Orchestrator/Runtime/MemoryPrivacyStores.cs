@@ -21,9 +21,10 @@ public sealed class MemoryPrivacyBoundary
 }
 public sealed class GuardedMemoryRuntime(InMemoryRuntimeStore inner, MemoryPrivacyBoundary boundary) : IRuntimeStore
 {
-    public Task<UsageReservation> SettleUsageAsync(Guid id, decimal actual, int input, int output, CancellationToken ct = default)
+    public Task<UsageReservation> SettleUsageAsync(Guid id, decimal actual, int input, int output, CancellationToken ct = default,
+        DateTimeOffset? completedAt = null)
     {
-        lock (boundary.Sync) return inner.UpdateAsync(s => UsageAccounting.Settle(s, id, actual, input, output), ct);
+        lock (boundary.Sync) return inner.UpdateAsync(s => UsageAccounting.Settle(s, id, actual, input, output, completedAt), ct);
     }
     public Task<T> ReadAsync<T>(Func<RuntimeState,T> read, CancellationToken ct = default) => boundary.Run(() => inner.ReadAsync(read, ct));
     public Task<bool> ReadPaidAiPausedAsync(CancellationToken ct = default) => boundary.Run(() => inner.ReadPaidAiPausedAsync(ct));
