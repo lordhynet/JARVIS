@@ -8,7 +8,7 @@ Install through authorized ADB: `adb -s <serial> install -r <apk>`. From Core us
 
 Physically check microphone and earbuds, confirm the check in settings, grant permissions and consent to provider processing before starting. Core prepares/resumes its canonical conversation. Headset Pause/Stop ends voice; Next interrupts the reply. Start is an explicit screen gesture.
 
-ADB localhost forwarding only lasts while debugging stays connected. Away-from-home use requires persistent private HTTPS/VPN connectivity; installing this APK does not configure that route. Core provider readiness and budget are also required.
+ADB localhost forwarding only lasts while debugging stays connected. For away-from-home use, enter Core's private Tailscale HTTPS URL and the phone's device credential in connection settings. See the [Tailscale setup guide](../JARVIS.CORE/docs/REMOTE_ACCESS.md). Core voice requires provider readiness and budget.
 
 Earlier rich-client source is archived outside the build in `legacy-rich-client-0.9-20261114-111954`. Old encrypted drafts remain available for explicit export or confirmed removal, never automatic replay.
 

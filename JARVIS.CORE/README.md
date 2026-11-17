@@ -11,7 +11,7 @@ Quest apps and satellite firmware are not included. Cloud accounts and voice har
 
 ## Run
 
-For this machine's persistent Docker deployment, see [server operation](docs/SERVER.md).
+For this machine's persistent Docker deployment, see [server operation](docs/SERVER.md). For access from your phone or laptop away from home, see [private remote access with Tailscale](docs/REMOTE_ACCESS.md).
 
 Requires .NET 11 SDK (11.0.100 or newer within .NET 11) and Docker Desktop for PostgreSQL. The workspace-local SDK is available at `../.tools/dotnet/dotnet.exe`; `scripts/test-backend.ps1` selects it automatically. Start Docker Desktop, then:
 

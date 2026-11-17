@@ -778,6 +778,33 @@ The full backend run passed 409 tests with zero failures on disposable PostgreSQ
 
 Android release 0.10.2 (version code 13, source `c4c23fe`) passed all 33 unit tests and release lint. The signed APK embeds that revision. Its SHA-256 is `ADDD4D0CCBBE37051737551C0F8523AE1FB87E96C43E1F65461AF821E2F8477F`, and its signing certificate matches 0.10.1. Physical handset and Home Assistant checks remain owner-run.
 
+
+
+## Item 12 — private GitHub CI
+
+On 16 November 2026, the private repository received `development` with the three component histories intact. Stable `master` points to `87aff48`. The [draft pull request](https://github.com/lordhynet/JARVIS/pull/1) launched hosted CI while the workflow lives on `development`. Manual dispatch becomes available after the workflow is on the default branch.
+
+Workflow lint, five path-selection scenarios, Android contract parity, and frontend bundle parity passed locally. The first hosted attempt found missing Android SDK tools and a Windows-only temporary path. The second passed those jobs and found a realtime fixture race. The fixture now waits for the fourth response's usage event before sending stop. All nine realtime protocol cases passed locally with that fix.
+
+| Hosted run | Job results | Elapsed | Sum of job runtimes |
+|---|---|---:|---:|
+| [43957745955](https://github.com/lordhynet/JARVIS/actions/runs/43957745955) | Changes, backend and browser passed. Android and parity failed. | 3m 32s | 6m 23s |
+| [43958451733](https://github.com/lordhynet/JARVIS/actions/runs/43958451733) | Changes, Android, browser and parity passed. Backend found the realtime fixture race. | 5m 44s | 11m 22s |
+| [43960371395](https://github.com/lordhynet/JARVIS/actions/runs/43960371395) | All five jobs passed at `7ed549d`. Android debug APK and backend, Android, and browser reports uploaded. | 4m 02s | 9m 55s |
+
+The 99-commit pre-push scan found a historical settings file with logging and host defaults, a CI fixture password assignment, and script patterns. The owner approved retaining the history. Existing commit metadata includes the owner's configured email. If visibility ever changes, review author email attribution before publishing.
+
+Owner follow-ups are branch protection on `master` after promotion, Dependabot alerts, secret-scanning push protection if supported, and confirmation that the repository remains private.
+
+## Item 13 — private remote access
+
+All 66 focused Core tests passed. They cover bind addresses, endpoint authorization, device credentials, hub tickets, and realtime voice. An isolated Windows Core process refused a public test bind before opening a listener. A local HTTPS reverse proxy using a fixture `.ts.net` hostname verified readiness, Core credential checks, companion isolation, one-time hub ticket use, and upgrades for both `/hubs/status` and `/voice-stream`.
+
+All 37 Android debug unit tests passed, including four provisioning tests for an optional pin, existing USB pins, and malformed payloads. Android debug lint passed with zero errors and 12 warnings after a retry for a Windows Gradle cache error.
+
+The Windows Core host still needs Tailscale installation and tailnet sign-in. Live access rules, certificate issuance, and the mobile-data and earbud checks remain owner-run. See the [private remote access guide](REMOTE_ACCESS.md).
+=======
 ## Round 5 — relational audio leases
 
 All 56 focused PostgreSQL, voice consistency, privacy, and realtime protocol checks passed with disposable PostgreSQL 17. The upgrade fixture confirmed that a legacy draining lease migrates with its deadline and that release clears the authoritative row while the legacy JSON stays byte-for-byte intact. EF reported no pending model changes.
+

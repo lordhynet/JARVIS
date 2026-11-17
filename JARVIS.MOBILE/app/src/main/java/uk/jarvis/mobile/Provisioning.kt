@@ -1,13 +1,38 @@
 package uk.jarvis.mobile
 
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.util.Base64
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.X509TrustManager
 
 data class SavedConnection(val url: String, val token: String, val certificateSha256: String? = null)
+
+internal object Provisioning {
+    fun parse(encoded: String): SavedConnection {
+        require(encoded.length <= 8192) { "Pairing details are too long." }
+        val json = JsonParser.parseString(String(Base64.getUrlDecoder().decode(encoded), Charsets.UTF_8)).asJsonObject
+        val url = CoreAddress.validate(json.readString("url"))
+        val token = json.readString("token")
+        require(token.length in 16..512 && token.none { it.isISOControl() }) { "The Core connection key is invalid." }
+        val pin = json.get("certificateSha256")
+        val certificate = if (pin == null || pin.isJsonNull) null
+            else CertificatePin.normalize(json.readString("certificateSha256"))
+        return SavedConnection(url, token, certificate)
+    }
+
+    private fun JsonObject.readString(name: String): String {
+        val value = get(name)
+        require(value != null && value.isJsonPrimitive && value.asJsonPrimitive.isString) {
+            "Pairing field $name must be a string."
+        }
+        return value.asString
+    }
+}
 
 object CertificatePin {
     fun normalize(value: String): String {

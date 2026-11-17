@@ -52,9 +52,11 @@ else
     // and environment-specific JSON cannot silently override the canonical file.
     builder.Configuration.SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
     var host = builder.Configuration.GetSection(OperatingSystem.IsWindows() ? "Server:Windows" : "Server:Container");
+    var isLinuxContainer = OperatingSystem.IsLinux() &&
+        string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase);
+    var address = CoreBindAddress.Resolve(host, isLinuxContainer);
     builder.WebHost.ConfigureKestrel(o =>
     {
-        var address = System.Net.IPAddress.Parse(host["BindAddress"] ?? "127.0.0.1");
         o.Listen(address, host.GetValue<int>("HttpPort"));
         if (builder.Configuration.GetValue<bool>("Server:Tls:Enabled"))
             o.Listen(address, host.GetValue<int>("HttpsPort"), listen => listen.UseHttps(host["CertificatePath"]!, builder.Configuration["Server:Tls:Password"]));
