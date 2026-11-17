@@ -11,13 +11,14 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import uk.jarvis.mobile.contracts.*
 import java.util.UUID
+import java.net.URI
 
 data class ScreenState(
     val connected: Boolean = false, val busy: Boolean = false, val notice: String = "",
     val url: String = "", val pairingOffered: Boolean = false, val offline: Boolean = false,
     val audioStarting: Boolean = false, val privacyRevoked: Boolean = false,
     val verified: Boolean = false, val voice: AiCapabilityStatus? = null, val legacyDrafts: Boolean = false,
-    val certificateTrust: String? = null
+    val certificateTrust: String? = null, val pairingHost: String? = null
 )
 
 /** Connection/device/audio transport only. Conversation and feature state live on Core. */
@@ -40,10 +41,11 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         runCatching {
             val parsed = Provisioning.parse(encoded)
             offer = parsed
-            mutable.update { it.copy(pairingOffered = true, certificateTrust = CertificatePin.trustLabel(parsed.certificateSha256, connected = false), notice = "") }
+            mutable.update { it.copy(pairingOffered = true, pairingHost = URI(parsed.url).rawAuthority,
+                certificateTrust = CertificatePin.trustLabel(parsed.certificateSha256, connected = false), notice = "") }
         }.onFailure {
             offer = null
-            mutable.update { it.copy(pairingOffered = false, certificateTrust = connection?.let { saved -> CertificatePin.trustLabel(saved.certificateSha256) },
+            mutable.update { it.copy(pairingOffered = false, pairingHost = null, certificateTrust = connection?.let { saved -> CertificatePin.trustLabel(saved.certificateSha256) },
                 notice = "Pairing details were invalid. Send them again from your trusted Core computer.") }
         }
     }
@@ -53,7 +55,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         api?.invalidate(); viewModelScope.coroutineContext.cancelChildren(); api = null; connection = null; preparationId = null
         viewModelScope.launch {
             val offeredTrust = offer?.let { CertificatePin.trustLabel(it.certificateSha256, connected = false) }
-            mutable.value = ScreenState(busy = true, pairingOffered = offer != null, certificateTrust = offeredTrust)
+            val offeredHost = offer?.let { URI(it.url).rawAuthority }
+            mutable.value = ScreenState(busy = true, pairingOffered = offer != null, certificateTrust = offeredTrust, pairingHost = offeredHost)
             var client: CoreApi? = null
             try {
                 require(token.isNotBlank()) { "Enter the Core connection key." }
@@ -81,7 +84,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (client != null && revoked(error)) revoke(client, CompanionAccessPolicy.eraseLegacyFor(error))
-                else mutable.value = ScreenState(pairingOffered = offer != null, certificateTrust = offeredTrust,
+                else mutable.value = ScreenState(pairingOffered = offer != null, certificateTrust = offeredTrust, pairingHost = offeredHost,
                     notice = CertificatePin.failureMessage(error) ?: if (error is CompanionSetupException) error.message.orEmpty() else "Could not reach Core: ${error.message.orEmpty()}")
             } finally { mutable.update { it.copy(busy = false) } }
         }

@@ -99,6 +99,7 @@ fun PairingScreen(state: ScreenState, pair: () -> Unit, manual: (String, String)
                 }
             }
             if (state.pairingOffered) {
+                state.pairingHost?.let { Text("Connect to $it", fontWeight = FontWeight.SemiBold) }
                 state.certificateTrust?.let { Text(it, color = JarvisColors.Muted, fontSize = 14.sp) }
                 Button(onClick = pair, enabled = !state.busy, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp)) {
                     Text(if (state.busy) "Connecting…" else "Connect to my Core  →", fontWeight = FontWeight.SemiBold)
