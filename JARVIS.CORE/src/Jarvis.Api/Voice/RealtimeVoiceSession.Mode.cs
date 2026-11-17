@@ -7,6 +7,11 @@ namespace Jarvis.Api.Voice;
 internal sealed class SeriousVoiceUnavailableException(DomainException error)
     : Exception($"Serious voice is unavailable. {error.Message}", error);
 
+internal sealed class SeriousVoiceConfirmationRequired(VoiceModeEstimate estimate) : Exception
+{
+    public VoiceModeEstimate Estimate { get; } = estimate;
+}
+
 internal sealed partial class RealtimeVoiceSession
 {
     private ModeOffer? modeOffer;

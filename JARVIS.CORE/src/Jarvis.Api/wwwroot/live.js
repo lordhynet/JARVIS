@@ -19,13 +19,46 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
   panel.append(start, stop, interrupt, restartEveryday, status, modeControls, transcript); document.querySelector('[data-panel=sessions]').prepend(panel);
   let capability = null, active = false, ready = false, socket, media, context, capture, source, heartbeat, watchdog, leaseDeadline = 0, sequence = 0;
   let nextAudio = 0, currentItem = null, itemStart = 0, itemSamples = 0; const sounds = new Set(); const pings = new Map(); let generation = 0, renewWanted = false;
-  let windowNumber = 0, offerId = null, startEveryday = false;
+  let windowNumber = 0, offerId = null, startEveryday = false, choosingMode = false;
+  let fallbackId = null, captureFallback = false, fallbackSpeech = null;
   function clearOffer() {
     offerId = null;
+    choosingMode = false;
     confirmSerious.hidden = true;
   }
   function sendMode(frame) {
-    if (active && ready && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...frame, window: windowNumber }));
+    if (active && (ready || choosingMode) && socket?.readyState === WebSocket.OPEN)
+      socket.send(JSON.stringify({ ...frame, window: windowNumber, ...(choosingMode ? { offerId } : {}) }));
+  }
+  function clearFallback() {
+    fallbackId = null;
+    captureFallback = false;
+    if (fallbackSpeech) window.speechSynthesis.cancel();
+    fallbackSpeech = null;
+  }
+  function playFallback(ws, message) {
+    clearFallback();
+    clearOffer();
+    clearPlayback();
+    ready = false;
+    modeControls.hidden = true;
+    interrupt.disabled = true;
+    status.textContent = `${message.detail} ${message.prompt}`;
+    const id = fallbackId = message.captureId;
+    const synthesis = window.speechSynthesis;
+    const voice = synthesis?.getVoices().find(candidate => candidate.localService && /^en(?:-|$)/i.test(candidate.lang));
+    const finish = type => {
+      if (socket === ws && active && fallbackId === id && ws.readyState === WebSocket.OPEN) {
+        fallbackSpeech = null;
+        ws.send(JSON.stringify({ type, captureId: id }));
+      }
+    };
+    if (!voice) { finish('voice_fallback_cancelled'); return; }
+    const speech = fallbackSpeech = new SpeechSynthesisUtterance(message.prompt);
+    speech.voice = voice;
+    speech.onend = () => finish('voice_fallback_played');
+    speech.onerror = () => finish('voice_fallback_cancelled');
+    synthesis.speak(speech);
   }
   function clearPlayback(send = false) {
     if (send && currentItem && ready && socket?.readyState === WebSocket.OPEN) {
@@ -44,7 +77,7 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'stop' }));
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
     socket = null; closeMedia(); status.textContent = message; start.disabled = !capability?.ready; stop.disabled = interrupt.disabled = true;
-    clearOffer(); modeControls.hidden = true; restartEveryday.hidden = true; startEveryday = false;
+    clearOffer(); clearFallback(); modeControls.hidden = true; restartEveryday.hidden = true; startEveryday = false;
   }
   async function beginWindow(preparedTicket = null, preparedAt = null) {
     if (!active) return;
@@ -56,7 +89,7 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
     const ws = new WebSocket(url); socket = ws;
     ws.onopen = () => {
       if (active && socket === ws) {
-        const frame = { type: 'authenticate', ticket: ticket.ticket, continuous: true };
+        const frame = { type: 'authenticate', ticket: ticket.ticket, continuous: true, voiceModeNegotiation: true };
         if (startEveryday) frame.startEveryday = true;
         startEveryday = false;
         ws.send(JSON.stringify(frame));
@@ -68,6 +101,7 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
       try {
         const message = JSON.parse(event.data);
         if (message.type === 'ready') {
+          clearFallback();
           windowNumber = Number.isInteger(message.window) ? message.window : 0;
           ready = true;
           const voice = typeof message.voiceName === 'string' && message.voiceName ? ` · voice ${message.voiceName}` : '';
@@ -82,12 +116,30 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
           clearOffer(); everyday.disabled = serious.disabled = true; modeNotice.textContent = '';
           status.textContent = 'Renewing voice…';
         }
-        if (message.type === 'voice_mode_offer' && ready && message.window === windowNumber &&
+        if (message.type === 'voice_mode_offer' && (message.starting === true || ready && message.window === windowNumber) &&
             typeof message.offerId === 'string' && Number.isFinite(message.maximumGbpForTenMinutes) && message.maximumGbpForTenMinutes > 0) {
+          choosingMode = message.starting === true;
+          if (choosingMode) {
+            windowNumber = message.window;
+            modeControls.hidden = false;
+            everyday.disabled = false;
+            serious.disabled = true;
+            status.textContent = 'Review the Serious voice estimate to continue.';
+          }
           offerId = message.offerId;
           const maximum = (Math.ceil(message.maximumGbpForTenMinutes * 100) / 100).toFixed(2);
-          modeNotice.textContent = `Serious voice reserves up to £${maximum} per 10 minutes. Confirm to start at the next renewal.`;
+          modeNotice.textContent = `Serious voice reserves up to £${maximum} per 10 minutes. ${choosingMode ? 'Confirm to continue.' : 'Confirm to start at the next renewal.'}`;
           confirmSerious.hidden = false;
+        }
+        if (message.type === 'voice_fallback_offer' && typeof message.captureId === 'string' && typeof message.prompt === 'string')
+          playFallback(ws, message);
+        if (message.type === 'voice_fallback_capture' && fallbackId && message.captureId === fallbackId) {
+          captureFallback = true;
+          status.textContent = 'Say yes now to continue in Everyday voice.';
+        }
+        if (message.type === 'voice_fallback_verifying' && message.captureId === fallbackId) {
+          captureFallback = false;
+          status.textContent = 'Verifying your answer…';
         }
         if (message.type === 'voice_mode_queued' && ready && message.window === windowNumber) {
           clearOffer();
@@ -121,7 +173,9 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
         if (message.type === 'ended') {
           ready = false; clearPlayback(); ws.onclose = null; ws.close();
           if (active && (message.reason === 'window_complete' || renewWanted)) { renewWanted = false; closeMedia(); status.textContent = 'Renewing the budgeted voice window…'; await prepareWindow(generation); }
-          else halt('Voice stopped. Your completed transcript remains in Core.');
+          else halt(message.reason === 'voice_mode_declined'
+            ? 'Voice stopped. Everyday voice needs a spoken yes after the prompt.'
+            : 'Voice stopped. Your completed transcript remains in Core.');
         }
       } catch (error) { halt(error.message || 'Voice protocol failed.'); }
     };
@@ -139,10 +193,12 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
       if (generation !== operation) throw Error('Voice start cancelled.');
       await context.resume(); source = context.createMediaStreamSource(media); capture = new AudioWorkletNode(context, 'jarvis-pcm'); source.connect(capture); capture.connect(context.destination);
       capture.port.onmessage = event => {
-        if (!active || !ready || performance.now() >= leaseDeadline || socket?.readyState !== WebSocket.OPEN) return;
+        if (!active || (!ready && !captureFallback) || performance.now() >= leaseDeadline || socket?.readyState !== WebSocket.OPEN) return;
         if (socket.bufferedAmount > 256000) { halt('Network cannot keep up with live audio. Reconnect on a better connection.'); return; }
         const bytes = new Uint8Array(event.data); let binary = ''; for (const value of bytes) binary += String.fromCharCode(value);
-        socket.send(JSON.stringify({ type: 'audio', window: windowNumber, audio: btoa(binary) }));
+        const audio = btoa(binary);
+        socket.send(JSON.stringify(captureFallback ? { type: 'voice_fallback_audio', captureId: fallbackId, audio }
+          : { type: 'audio', window: windowNumber, audio }));
       };
       await beginWindow(ticket, sentAt);
     } catch (error) { closeMedia(); await api('/voice/local/release', ticket.lease).catch(() => {}); throw error; }

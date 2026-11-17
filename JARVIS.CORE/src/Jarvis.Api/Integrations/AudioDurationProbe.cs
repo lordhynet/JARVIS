@@ -54,11 +54,11 @@ public sealed class AudioDurationProbe(IConfiguration config) : IAudioDurationPr
             }
         }
     }
-    internal static void WriteWave(Stream output, byte[] pcm)
+    internal static void WriteWave(Stream output, byte[] pcm, int sampleRate = 16000)
     {
         using var writer = new BinaryWriter(output, System.Text.Encoding.ASCII, leaveOpen: true);
         writer.Write("RIFF"u8); writer.Write(36 + pcm.Length); writer.Write("WAVEfmt "u8); writer.Write(16);
-        writer.Write((short)1); writer.Write((short)1); writer.Write(16000); writer.Write(32000);
+        writer.Write((short)1); writer.Write((short)1); writer.Write(sampleRate); writer.Write(sampleRate * 2);
         writer.Write((short)2); writer.Write((short)16); writer.Write("data"u8); writer.Write(pcm.Length); writer.Write(pcm);
     }
     public async Task<double> SecondsAsync(string path, CancellationToken ct)

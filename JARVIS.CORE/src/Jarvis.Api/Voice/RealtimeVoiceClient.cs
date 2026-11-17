@@ -7,8 +7,11 @@ namespace Jarvis.Api.Voice;
 internal sealed class RealtimeVoiceClient(WebSocket socket, CancellationToken disconnected)
 {
     private Task<JsonElement>? pending;
+    private int stopRequested;
 
     public WebSocketState State => socket.State;
+    public bool StopRequested => Volatile.Read(ref stopRequested) != 0;
+    public void RecordStop() => Volatile.Write(ref stopRequested, 1);
 
     public async Task<JsonElement> ReadAsync(CancellationToken ct)
     {

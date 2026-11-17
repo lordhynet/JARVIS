@@ -56,7 +56,8 @@ class MainActivity : ComponentActivity() {
     }
     private fun readPairing(intent: Intent?) { intent?.getStringExtra("jarvis.provision")?.let { model.offerPairing(it); intent.removeExtra("jarvis.provision") } }
     private fun sendVoiceControl(action: String, key: String, value: String) {
-        if (LiveVoiceService.state.value.ready)
+        val voice = LiveVoiceService.state.value
+        if (voice.ready || voice.modeOffer?.starting == true)
             startService(Intent(this, LiveVoiceService::class.java).setAction(action).putExtra(key, value))
     }
     private fun requestVoice(everyday: Boolean) {
@@ -179,8 +180,12 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
                     voice.modeOffer?.let { offer ->
                         val maximum = NumberFormat.getCurrencyInstance(Locale.UK)
                             .format(offer.poundsForTenMinutes.setScale(2, RoundingMode.CEILING))
-                        Text("Serious voice reserves up to $maximum per 10 minutes. Confirm to start at the next renewal.")
+                        val whenReady = if (offer.starting) "Confirm to continue." else "Confirm to start at the next renewal."
+                        Text("Serious voice reserves up to $maximum per 10 minutes. $whenReady")
                         OutlinedButton(onClick = { confirmMode(offer.id) }, modifier = Modifier.fillMaxWidth()) { Text("Confirm Serious voice") }
+                        if (offer.starting) OutlinedButton(onClick = { requestMode("Everyday") }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Use Everyday voice")
+                        }
                     }
                     if (voice.modeNotice.isNotBlank()) Text(voice.modeNotice)
                 } else {

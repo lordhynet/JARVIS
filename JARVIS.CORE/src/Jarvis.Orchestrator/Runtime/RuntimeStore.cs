@@ -63,7 +63,7 @@ public sealed class RuntimeState
     public Dictionary<Guid, AuditedTool> Tools { get; set; } = [];
 }
 
-public sealed record SessionVoiceMode(VoiceMode Mode, decimal? ConfirmedGbpForTenMinutes = null);
+public sealed record SessionVoiceMode(VoiceMode Mode, decimal? ConfirmedGbpForTenMinutes = null, bool FollowActivity = false);
 
 public sealed record AiCoachAssessmentClaim(Guid RequestId, Guid AttemptId, Guid ClaimId,
     int ExpectedRevision, int TextRevision, DateTimeOffset ExpiresAt);

@@ -7,6 +7,9 @@ test('shows the active voice and renews on the same socket and microphone', asyn
   let authentication;
   let request;
   let confirmation;
+  let audioCapture;
+  let fallbackPlayed;
+  let fallbackAudioCount = 0;
   await page.routeWebSocket('**/voice-stream', socket => {
     stream = socket;
     connections++;
@@ -14,10 +17,10 @@ test('shows the active voice and renews on the same socket and microphone', asyn
       const frame = JSON.parse(raw);
       if (frame.type === 'authenticate') {
         authentication = frame;
-        socket.send(JSON.stringify({ type: 'ready', window: 1, voiceName: 'cedar', speed: 0.9,
-          mode: 'Everyday', recommendedMode: 'Serious' }));
+        socket.send(JSON.stringify({ type: 'voice_mode_offer', starting: true, window: 1,
+          offerId: 'starting-offer', maximumGbpForTenMinutes: 0.091 }));
       }
-      if (frame.type === 'voice_mode') {
+      if (frame.type === 'voice_mode' && frame.mode === 'Serious') {
         request = frame;
         socket.send(JSON.stringify({ type: 'voice_mode_offer', window: 1, offerId: 'offer-test', maximumGbpForTenMinutes: 0.091 }));
       }
@@ -25,12 +28,28 @@ test('shows the active voice and renews on the same socket and microphone', asyn
         confirmation = frame;
         socket.send(JSON.stringify({ type: 'voice_mode_queued', window: 1, mode: 'Serious' }));
       }
+      if (frame.type === 'voice_mode' && frame.offerId === 'starting-offer') {
+        socket.send(JSON.stringify({ type: 'ready', window: 1, voiceName: 'cedar', speed: 0.9,
+          mode: 'Everyday', recommendedMode: 'Serious' }));
+      }
+      if (frame.type === 'voice_fallback_played') fallbackPlayed = frame;
+      if (frame.type === 'voice_fallback_audio') {
+        fallbackAudioCount++;
+        audioCapture = frame;
+      }
+      if (frame.type === 'heartbeat') socket.send(JSON.stringify({ type: 'lease', sequence: frame.sequence, leaseSeconds: 15 }));
     });
   });
   await page.goto('/');
   await page.evaluate(async () => {
     const { initLiveVoice } = await import('/live.js');
     window.microphoneStarts = 0;
+    Object.defineProperty(window, 'speechSynthesis', { value: {
+      getVoices: () => [{ localService: true, lang: 'en-GB' }],
+      speak: utterance => { window.spokenFallback = utterance; },
+      cancel: () => {},
+    } });
+    Object.defineProperty(window, 'SpeechSynthesisUtterance', { value: function (text) { this.text = text; } });
     const openMicrophone = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = (...args) => {
       window.microphoneStarts++;
@@ -58,8 +77,11 @@ test('shows the active voice and renews on the same socket and microphone', asyn
   });
   await page.getByLabel(/I allow live audio/).check();
   await page.getByRole('button', { name: 'Start live voice' }).click();
+  await expect(page.getByRole('status')).toHaveText('Review the Serious voice estimate to continue.');
+  expect(authentication).toEqual({ type: 'authenticate', ticket: 'ticket-fixture', continuous: true, voiceModeNegotiation: true });
+  expect(confirmation).toBeUndefined();
+  await page.getByRole('button', { name: 'Use Everyday voice' }).click();
   await expect(page.getByRole('status')).toContainText('voice cedar');
-  expect(authentication).toEqual({ type: 'authenticate', ticket: 'ticket-fixture', continuous: true });
   await expect(page.getByRole('status')).toContainText('Everyday mode');
   await page.getByRole('button', { name: 'Request Serious voice' }).click();
   await expect(page.getByText('Serious voice reserves up to £0.10 per 10 minutes.')).toBeVisible();
@@ -75,6 +97,22 @@ test('shows the active voice and renews on the same socket and microphone', asyn
   await expect(page.getByRole('status')).toContainText('voice marin');
   await expect(page.getByRole('status')).toContainText('Serious mode');
   await expect(page.getByRole('button', { name: 'Confirm Serious voice' })).toBeHidden();
+  stream.send(JSON.stringify({ type: 'window_renewing', window: 2 }));
+  stream.send(JSON.stringify({ type: 'voice_fallback_offer', captureId: 'fallback-fixture',
+    detail: 'Serious voice is unavailable.', prompt: 'Say yes to continue in Everyday voice.' }));
+  await expect(page.getByRole('status')).toContainText('Say yes to continue');
+  await expect.poll(() => page.evaluate(() => window.spokenFallback?.text)).toBe('Say yes to continue in Everyday voice.');
+  expect(fallbackPlayed).toBeUndefined();
+  expect(fallbackAudioCount).toBe(0);
+  await page.evaluate(() => window.spokenFallback.onend());
+  await expect.poll(() => fallbackPlayed).toEqual({ type: 'voice_fallback_played', captureId: 'fallback-fixture' });
+  expect(fallbackAudioCount).toBe(0);
+  stream.send(JSON.stringify({ type: 'voice_fallback_capture', captureId: 'fallback-fixture' }));
+  await expect.poll(() => audioCapture?.captureId).toBe('fallback-fixture');
+  stream.send(JSON.stringify({ type: 'voice_fallback_verifying', captureId: 'fallback-fixture' }));
+  await expect(page.getByRole('status')).toHaveText('Verifying your answer…');
+  stream.send(JSON.stringify({ type: 'ready', window: 3, voiceName: 'cedar', mode: 'Everyday' }));
+  await expect(page.getByRole('status')).toContainText('Everyday mode');
   expect(connections).toBe(1);
   expect(await page.evaluate(() => window.microphoneStarts)).toBe(1);
   await page.getByRole('button', { name: 'Stop live voice' }).click();

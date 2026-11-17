@@ -21,7 +21,7 @@ public sealed class RealtimeConnectionFactory(IConfiguration config) : IRealtime
 }
 public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectionFactory connections, ManagedAi ai,
     UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, IPrivacyReader privacy, TimeProvider clock, CoreVoiceTools tools,
-    VoiceTranscriptService transcripts, AudioFenceChanges fenceChanges)
+    VoiceTranscriptService transcripts, AudioFenceChanges fenceChanges, OpenAiProvider transcription)
 {
     public async Task RunAsync(HttpContext context)
     {
@@ -37,20 +37,47 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         {
             using var authentication = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
             authentication.CancelAfter(TimeSpan.FromSeconds(8));
-            var (ticket, continuous, startEveryday) = await AuthenticateAsync(socket, ownership, authentication.Token);
+            var (ticket, continuous, startEveryday, negotiateMode) = await AuthenticateAsync(socket, ownership, authentication.Token);
             lease = ticket.Lease;
             if (startEveryday)
                 await ownership.SetVoiceModeAsync(lease, new(VoiceMode.Everyday), authentication.Token);
             var window = new VoiceWindowLimits(ticket.WindowSeconds);
-            RealtimeVoiceSession CreateWindow(int number) => new(client, ticket.Lease, window, number, continuous,
+            var negotiation = new RealtimeVoiceNegotiation(client, lease, ownership, runtime, transcription, transcripts);
+            RealtimeVoiceSession CreateWindow(int number) => new(client, ticket.Lease, window, number, continuous, negotiateMode,
                 ownership, connections, ai, budget, runtime, sessions, clock, tools, transcripts, fenceChanges);
             RealtimeVoiceSession? current = CreateWindow(1);
             string? ending = null;
+            var lastQuoteWindow = 0;
+            var fallbackTried = false;
             while (current is not null)
             {
-                var result = await current.RunAsync(CreateWindow, context.RequestAborted);
-                current = result.Next;
-                ending = result.Ending;
+                var number = current.Number;
+                try
+                {
+                    var result = await current.RunAsync(CreateWindow, context.RequestAborted);
+                    current = result.Next;
+                    ending = result.Ending;
+                }
+                catch (SeriousVoiceConfirmationRequired offer) when (lastQuoteWindow != number)
+                {
+                    lastQuoteWindow = number;
+                    if (client.StopRequested || !await negotiation.ConfirmPriceAsync(number, offer.Estimate, context.RequestAborted))
+                    {
+                        ending = "stopped";
+                        break;
+                    }
+                    current = CreateWindow(number);
+                }
+                catch (SeriousVoiceUnavailableException error) when (negotiateMode && !fallbackTried)
+                {
+                    fallbackTried = true;
+                    if (client.StopRequested || !await negotiation.ConfirmEverydayAsync(error.Message, context.RequestAborted))
+                    {
+                        ending = client.StopRequested ? "stopped" : "voice_mode_declined";
+                        break;
+                    }
+                    current = CreateWindow(number);
+                }
             }
 
             using var last = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -58,12 +85,17 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             lease = null;
             await client.SendAsync(new { type = "ended", reason = ending }, last.Token);
         }
-        catch (Exception error) when (error is DomainException or SeriousVoiceUnavailableException or JsonException or WebSocketException or OperationCanceledException or FormatException or KeyNotFoundException)
+        catch (Exception error) when (error is DomainException or SeriousVoiceUnavailableException or SeriousVoiceConfirmationRequired or JsonException or WebSocketException or OperationCanceledException or FormatException or KeyNotFoundException or HttpRequestException)
         {
             using var last = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             try
             {
-                var detail = error is DomainException or SeriousVoiceUnavailableException ? error.Message : "Voice stopped. Reconnect to resume the saved session.";
+                var detail = error switch
+                {
+                    DomainException or SeriousVoiceUnavailableException => error.Message,
+                    SeriousVoiceConfirmationRequired => "The Serious voice estimate changed. Start again to review it.",
+                    _ => "Voice stopped. Reconnect to resume the saved session."
+                };
                 var code = error is SeriousVoiceUnavailableException ? "serious_voice_unavailable" : null;
                 await client.SendAsync(new { type = "error", detail, code }, last.Token);
             }
@@ -82,14 +114,16 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         }
     }
 
-    private static async Task<(VoiceTicketRecord Ticket, bool Continuous, bool StartEveryday)> AuthenticateAsync(
+    private static async Task<(VoiceTicketRecord Ticket, bool Continuous, bool StartEveryday, bool NegotiateMode)> AuthenticateAsync(
         WebSocket client, AudioOwnership ownership, CancellationToken ct)
     {
         var first = await ReadAsync(client, 2048, ct);
         Guard.Require(first.GetProperty("type").GetString() == "authenticate", 401, "A one-time voice ticket is required.");
         var ticket = await ownership.ConsumeTicketAsync(Guard.Text(first.GetProperty("ticket").GetString(), "Ticket", 100), ct);
-        return (ticket, first.TryGetProperty("continuous", out var continuous) && continuous.ValueKind == JsonValueKind.True,
-            first.TryGetProperty("startEveryday", out var everyday) && everyday.ValueKind == JsonValueKind.True);
+        var continuous = first.TryGetProperty("continuous", out var renewal) && renewal.ValueKind == JsonValueKind.True;
+        return (ticket, continuous,
+            first.TryGetProperty("startEveryday", out var everyday) && everyday.ValueKind == JsonValueKind.True,
+            continuous && first.TryGetProperty("voiceModeNegotiation", out var negotiation) && negotiation.ValueKind == JsonValueKind.True);
     }
 
     public static async Task<JsonElement> ReadAsync(WebSocket socket, int maximum, CancellationToken ct)

@@ -12,7 +12,7 @@ using Jarvis.Orchestrator.Intelligence;
 namespace Jarvis.Api.Voice;
 
 internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, AudioLease lease, VoiceWindowLimits window,
-    int number, bool continuous, AudioOwnership ownership, IRealtimeConnectionFactory connections,
+    int number, bool continuous, bool negotiateMode, AudioOwnership ownership, IRealtimeConnectionFactory connections,
     ManagedAi ai, UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, TimeProvider clock,
     CoreVoiceTools tools, VoiceTranscriptService transcripts, AudioFenceChanges fenceChanges)
 {
@@ -48,6 +48,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private int providerFailed;
     private SessionVoiceMode? preparedMode;
     private VoiceMode recommendedMode;
+    internal int Number => number;
 
     // The provider pump owns response counters and evidence. The runner reads them when draining.
     private readonly HashSet<string> createdIds = [];
@@ -92,13 +93,13 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private async Task PrepareWindowAsync(CancellationToken ct)
     {
         Guard.Require(await ownership.CurrentAsync(lease, ct), 409, "Audio ownership expired before voice reservation.");
-        var selection = await ReadModeAsync(ct);
-        var voiceRates = ReadRates(selection);
         voiceOutput = ai.RealtimeOutput();
         turnDetection = ai.VoiceTurnDetection();
         persona = ai.RealtimePersona();
         hasDisplay = await runtime.ReadAsync(s => s.Devices.GetValueOrDefault(lease.DeviceId)?.Registration.Capabilities.HasDisplay == true, ct);
         instructions = await ReadInstructionsAsync(ct);
+        var selection = await ReadModeAsync(ct);
+        var voiceRates = ReadRates(selection);
         ApplyRates(selection, voiceRates);
         await ReserveWindowAsync(Encoding.UTF8.GetByteCount(instructions) +
             (number > 1 ? RealtimeWindowCost.PreparedPromptAllowanceBytes : 0), ct);
@@ -128,8 +129,18 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1);
     }
 
-    private Task<SessionVoiceMode?> ReadModeAsync(CancellationToken ct) =>
-        runtime.ReadAsync(s => s.SessionVoiceModes.GetValueOrDefault(lease.SessionId), ct);
+    private async Task<SessionVoiceMode?> ReadModeAsync(CancellationToken ct)
+    {
+        var saved = await runtime.ReadAsync(s => s.SessionVoiceModes.GetValueOrDefault(lease.SessionId), ct);
+        if (saved is { FollowActivity: false }) return saved;
+        if (!negotiateMode) return null;
+        if (recommendedMode == VoiceMode.Everyday) return null;
+        var estimate = ai.VoiceOption(VoiceMode.Serious, window);
+        if (!estimate.PricingReady || estimate.MaximumGbpForTenMinutes is not decimal maximum)
+            throw new SeriousVoiceUnavailableException(new DomainException(503, estimate.Detail));
+        if (saved?.ConfirmedGbpForTenMinutes is decimal confirmed && maximum <= confirmed) return saved;
+        throw new SeriousVoiceConfirmationRequired(estimate);
+    }
 
     private static VoiceMode SelectedMode(SessionVoiceMode? selection) => selection?.Mode ?? VoiceMode.Everyday;
 
@@ -182,9 +193,9 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private async Task RefreshPreparedPromptAsync(CancellationToken ct)
     {
         Guard.Require(await ownership.CurrentAsync(lease, ct), 409, "Audio ownership expired before voice renewal.");
+        instructions = await ReadInstructionsAsync(ct);
         var selection = await ReadModeAsync(ct);
         var voiceRates = ReadRates(selection);
-        instructions = await ReadInstructionsAsync(ct);
         var bytes = Encoding.UTF8.GetByteCount(instructions);
         var routeChanged = voiceRates.Route != route || voiceRates.Pricing != pricing;
         if (bytes <= reservedPromptBytes && selection == preparedMode && !routeChanged) return;
@@ -278,6 +289,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
                     // Re-evaluate the current selection and available balance after settling this window.
                 }
                 catch (SeriousVoiceUnavailableException) { /* Recheck the current selection at activation. */ }
+                catch (SeriousVoiceConfirmationRequired) { /* Ask at the boundary with the latest activity and estimate. */ }
                 if (downstream.IsCompleted) return await StopBeforeDispatchAsync(downstream);
                 await StopPumpsAsync(pumps);
                 Guard.Require(pumps.All(pump => pump.IsCompleted), 502, "Voice could not transfer to the next window safely.");
@@ -546,7 +558,12 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
                 case "confirm_voice_mode":
                     if (continuous && IsReady && !IsEnding && MatchesWindow(message)) await ConfirmModeOfferAsync(message);
                     break;
+                case "voice_fallback_audio":
+                case "voice_fallback_played":
+                case "voice_fallback_cancelled":
+                    break; // A final consent frame can arrive after verifying the answer.
                 case "stop":
+                    client.RecordStop();
                     if (message.TryGetProperty("reason", out var reason) && reason.GetString() == "no_speech_timeout")
                         CoreTelemetry.WakeSilenceStops.Add(1);
                     return;

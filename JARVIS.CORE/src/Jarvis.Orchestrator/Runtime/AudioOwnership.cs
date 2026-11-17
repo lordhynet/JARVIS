@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Sessions;
+using Jarvis.Orchestrator.Intelligence;
 
 namespace Jarvis.Orchestrator.Runtime;
 
@@ -84,7 +85,8 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
     public async Task<bool> CurrentAsync(AudioLease lease, CancellationToken ct) =>
         await ReadCurrentAsync(lease, ct) is not null;
 
-    public Task<SessionVoiceMode> SetVoiceModeAsync(AudioLease lease, SessionVoiceMode selection, CancellationToken ct) =>
+    public Task<SessionVoiceMode> SetVoiceModeAsync(AudioLease lease, SessionVoiceMode selection, CancellationToken ct,
+        Guid? fallbackUtterance = null) =>
         transaction.ExecuteAsync(async writes =>
         {
             var session = await writes.ReadAudioStateAsync(lease.SessionId);
@@ -95,6 +97,10 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
             Guard.Require(!state.RetiredSessions.Contains(lease.SessionId), 409, "Session was retired.");
             Guard.Require(selection.Mode == VoiceMode.Everyday || selection is
                 { Mode: VoiceMode.Serious, ConfirmedGbpForTenMinutes: > 0 }, 400, "Confirm the Serious voice cost first.");
+            if (fallbackUtterance is Guid source)
+                Guard.Require(state.VoiceTurns.GetValueOrDefault(source) is { Role: ChatRoles.User } turn &&
+                    turn.SessionId == lease.SessionId && VoiceModePolicy.ConfirmsEveryday(turn.Text),
+                    409, "A verified spoken yes is required to continue in Everyday voice.");
             state.SessionVoiceModes[lease.SessionId] = selection;
             return selection;
         }, ct);

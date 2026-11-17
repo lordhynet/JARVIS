@@ -228,11 +228,12 @@ public sealed partial class RealtimeProtocolTests
         }
     }
 
-    private sealed class WindowClock(int windowSeconds) : TimeProvider
+    private sealed class WindowClock(int windowSeconds, bool frozenUtc = false) : TimeProvider
     {
+        private readonly DateTimeOffset initialUtc = DateTimeOffset.UtcNow;
         private long offsetTicks;
         public readonly Channel<WindowTimer> Scheduled = Channel.CreateUnbounded<WindowTimer>();
-        public override DateTimeOffset GetUtcNow() => base.GetUtcNow().AddTicks(Interlocked.Read(ref offsetTicks));
+        public override DateTimeOffset GetUtcNow() => (frozenUtc ? initialUtc : base.GetUtcNow()).AddTicks(Interlocked.Read(ref offsetTicks));
         public void Advance(TimeSpan duration) => Interlocked.Add(ref offsetTicks, duration.Ticks);
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
