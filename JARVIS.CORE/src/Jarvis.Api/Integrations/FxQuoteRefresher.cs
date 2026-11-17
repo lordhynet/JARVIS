@@ -22,6 +22,8 @@ internal sealed class FxQuoteRefresher(IHttpClientFactory clients, IConfiguratio
     internal const string SourceUrl = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml";
     private const int MaxResponseBytes = 64 * 1024;
     private const decimal MaxRateChange = .05m;
+    private const decimal ConfirmationTolerance = .01m;
+    private static readonly TimeSpan InitialRetry = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(10);
     private static readonly XNamespace Envelope = "http://www.gesmes.org/xml/2002-08-01";
     private static readonly XNamespace Rates = "http://www.ecb.int/vocabulary/2002-08-01/eurofxref";
@@ -32,28 +34,31 @@ internal sealed class FxQuoteRefresher(IHttpClientFactory clients, IConfiguratio
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var hours = FxAutoSettings.DefaultRefreshHours;
-            try { hours = await RefreshOnceAsync(stoppingToken); }
+            TimeSpan delay;
+            try { delay = await RefreshOnceAsync(stoppingToken); }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.LogWarning("Automatic FX state could not be refreshed ({ErrorType}).", error.GetType().Name);
+                delay = InitialRetry;
             }
-            await Task.Delay(TimeSpan.FromHours(hours), clock, stoppingToken);
+            await Task.Delay(delay, clock, stoppingToken);
         }
     }
 
-    internal async Task<int> RefreshOnceAsync(CancellationToken ct)
+    internal async Task<TimeSpan> RefreshOnceAsync(CancellationToken ct)
     {
-        if (!FxAutoSettings.IsEnabled(Settings)) return FxAutoSettings.DefaultRefreshHours;
+        var defaultInterval = TimeSpan.FromHours(FxAutoSettings.DefaultRefreshHours);
+        if (!FxAutoSettings.IsEnabled(Settings)) return defaultInterval;
         cache.Publish(await store.ReadAsync(s => s.FxRefresh, ct));
         FxAutoSettings settings;
         try { settings = FxAutoSettings.Read(Settings); }
         catch (DomainException error)
         {
-            await SaveAsync(clock.GetUtcNow(), null, null, error.Message, ct);
-            return FxAutoSettings.DefaultRefreshHours;
+            var invalid = await SaveAsync(clock.GetUtcNow(), null, null, error.Message, 0, ct);
+            return NextDelay(invalid, defaultInterval);
         }
 
+        FxRefreshState saved;
         try
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -66,17 +71,21 @@ internal sealed class FxQuoteRefresher(IHttpClientFactory clients, IConfiguratio
             var source = FormattableString.Invariant($"ECB reference {publication:yyyy-MM-dd}, +{settings.MarginPercent}% margin");
             var quote = new BudgetFxQuote(source, adjusted, now, now.AddHours(24), publication);
             Guard.Require(GbpBudgetRules.IsCurrentQuote(quote, now), 503, "The adjusted ECB rate is outside the supported range.");
-            await SaveAsync(now, quote, rawRate, null, ct);
+            saved = await SaveAsync(now, quote, rawRate, null, settings.MaxPublicationAgeDays, ct);
         }
-        catch (DomainException error) { await SaveAsync(clock.GetUtcNow(), null, null, error.Message, ct); }
-        catch (XmlException) { await SaveAsync(clock.GetUtcNow(), null, null, "The ECB response was invalid XML.", ct); }
-        catch (OverflowException) { await SaveAsync(clock.GetUtcNow(), null, null, "The adjusted ECB rate is outside the supported range.", ct); }
+        catch (DomainException error) { saved = await SaveAsync(clock.GetUtcNow(), null, null, error.Message, 0, ct); }
+        catch (XmlException) { saved = await SaveAsync(clock.GetUtcNow(), null, null, "The ECB response was invalid XML.", 0, ct); }
+        catch (OverflowException) { saved = await SaveAsync(clock.GetUtcNow(), null, null, "The adjusted ECB rate is outside the supported range.", 0, ct); }
         catch (Exception error) when (!ct.IsCancellationRequested && error is HttpRequestException or IOException or OperationCanceledException)
         {
-            await SaveAsync(clock.GetUtcNow(), null, null, "The ECB feed could not be reached within the refresh deadline.", ct);
+            saved = await SaveAsync(clock.GetUtcNow(), null, null, "The ECB feed could not be reached within the refresh deadline.", 0, ct);
         }
-        return settings.RefreshHours;
+        return NextDelay(saved, TimeSpan.FromHours(settings.RefreshHours));
     }
+
+    private static TimeSpan NextDelay(FxRefreshState state, TimeSpan interval) =>
+        state.LastError is null ? interval : TimeSpan.FromTicks(Math.Min(interval.Ticks,
+            InitialRetry.Ticks * (1L << Math.Clamp(state.ConsecutiveFailures - 1, 0, 7))));
 
     private async Task<(DateOnly Publication, decimal RawRate)> FetchAsync(CancellationToken ct)
     {
@@ -114,22 +123,40 @@ internal sealed class FxQuoteRefresher(IHttpClientFactory clients, IConfiguratio
         return rate;
     }
 
-    private async Task SaveAsync(DateTimeOffset now, BudgetFxQuote? quote, decimal? rawRate, string? error, CancellationToken ct)
+    private async Task<FxRefreshState> SaveAsync(DateTimeOffset now, BudgetFxQuote? quote, decimal? rawRate, string? error,
+        int maxPublicationAgeDays, CancellationToken ct)
     {
         var saved = await store.UpdateAsync(state =>
         {
             var prior = state.FxRefresh ?? new();
-            var rejection = error;
             if (prior.LastAttemptAt > now) return prior;
-            if (quote is not null && prior.Quote?.PublishedOn > quote.PublishedOn)
-                rejection = "The ECB publication was older than the last accepted publication.";
-            if (rawRate is decimal rate && prior.UnadjustedRate is > 0 and var last && Math.Abs(rate - last) > last * MaxRateChange)
-                rejection = "The ECB cross-rate moved more than 5% from the last accepted rate.";
-            return state.FxRefresh = rejection is null
-                ? new(quote, rawRate, now)
-                : prior with { LastAttemptAt = now, LastError = rejection };
+            return state.FxRefresh = Update(prior, now, quote, rawRate, error, maxPublicationAgeDays);
         }, ct);
         cache.Publish(saved);
         if (saved.LastError is { } lastError) logger.LogWarning("Automatic FX refresh rejected. {Reason}", lastError);
+        return saved;
+    }
+
+    private static FxRefreshState Update(FxRefreshState prior, DateTimeOffset now, BudgetFxQuote? quote, decimal? rawRate,
+        string? error, int maxPublicationAgeDays)
+    {
+        FxRefreshState Reject(string reason) => prior with { LastAttemptAt = now, LastError = reason,
+            ConsecutiveFailures = Math.Clamp(prior.ConsecutiveFailures, 0, 7) + 1 };
+        if (error is not null) return Reject(error);
+        if (quote?.PublishedOn is not DateOnly published || rawRate is not decimal rate) return prior;
+        var pending = prior.PendingMove;
+        var lastPublication = prior.Quote?.PublishedOn;
+        if (lastPublication > published || pending?.PublishedOn > published)
+            return Reject("The ECB publication was older than the last observed publication.");
+
+        var acceptedStillFresh = lastPublication is DateOnly accepted &&
+            DateOnly.FromDateTime(now.UtcDateTime).DayNumber - accepted.DayNumber <= 2L * maxPublicationAgeDays;
+        if (acceptedStillFresh && prior.UnadjustedRate is > 0 and var last && Math.Abs(rate - last) > last * MaxRateChange)
+        {
+            if (pending is null || published <= pending.PublishedOn || Math.Abs(rate - pending.Rate) > pending.Rate * ConfirmationTolerance)
+                return Reject("Pending confirmation of a large move. The ECB cross-rate moved more than 5% and needs a second publication.")
+                    with { PendingMove = new(published, rate) };
+        }
+        return new(quote, rate, now);
     }
 }

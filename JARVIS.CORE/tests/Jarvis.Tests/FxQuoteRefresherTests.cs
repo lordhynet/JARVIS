@@ -68,6 +68,49 @@ public sealed class FxQuoteRefresherTests
         Assert.Equal(accepted, await fixture.Store.ReadAsync(s => s.FxRefresh!.Quote));
     }
 
+    [Fact]
+    public async Task A_large_move_waits_for_a_second_distinct_publication()
+    {
+        using var fixture = new Fixture();
+        await fixture.Refresh();
+        fixture.Clock.Now = Friday.AddDays(3);
+        fixture.Feed.Reply = () => Xml("2026-11-16", ".848");
+        await fixture.Refresh();
+        await fixture.Refresh();
+        Assert.Equal(new DateOnly(2026, 11, 13), fixture.Source.Read().FxStatus!.LastAcceptedQuote!.PublishedOn);
+        Assert.Contains("Pending confirmation", fixture.Source.Read().FxStatus!.LastError!);
+
+        fixture.Clock.Now = Friday.AddDays(4);
+        fixture.Feed.Reply = () => Xml("2026-11-17", ".85");
+        Assert.Equal(TimeSpan.FromHours(6), await fixture.Refresh());
+        Assert.Equal(.867m, fixture.Source.Read().Fx!.UsdToGbp);
+        Assert.Null(fixture.Source.Read().FxStatus!.LastError);
+    }
+
+    [Fact]
+    public async Task An_old_accepted_rate_does_not_block_a_fresh_publication()
+    {
+        using var fixture = new Fixture();
+        await fixture.Refresh();
+        fixture.Clock.Now = Friday.AddDays(10);
+        fixture.Feed.Reply = () => Xml("2026-11-23", ".90");
+        Assert.Equal(TimeSpan.FromHours(6), await fixture.Refresh());
+        Assert.Equal(.918m, fixture.Source.Read().Fx!.UsdToGbp);
+    }
+
+    [Fact]
+    public async Task Failed_fetches_back_off_to_the_refresh_interval_and_success_resets_the_delay()
+    {
+        using var fixture = new Fixture();
+        fixture.Feed.Reply = () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+        foreach (var minutes in new[] { 15, 30, 60, 120, 240, 360, 360 })
+            Assert.Equal(TimeSpan.FromMinutes(minutes), await fixture.Refresh());
+        fixture.Feed.Reply = () => Xml("2026-11-13", ".80");
+        Assert.Equal(TimeSpan.FromHours(6), await fixture.Refresh());
+        fixture.Feed.Reply = () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+        Assert.Equal(TimeSpan.FromMinutes(15), await fixture.Refresh());
+    }
+
     [Theory]
     [InlineData("old", "age limit")]
     [InlineData("future", "age limit")]
@@ -147,7 +190,7 @@ public sealed class FxQuoteRefresherTests
             refresher = new(new FeedFactory(Feed), Config, Store, cache, Clock, NullLogger<FxQuoteRefresher>.Instance);
         }
 
-        public Task Refresh() => refresher.RefreshOnceAsync(default);
+        public Task<TimeSpan> Refresh() => refresher.RefreshOnceAsync(default);
         public Task<UsageReservation> Reserve() => Budget.ReserveAsync(Guid.NewGuid(), Guid.NewGuid(), "test-model", 1m, new(10, 10, 10), default);
         public void Dispose() { refresher.Dispose(); Feed.Dispose(); }
     }

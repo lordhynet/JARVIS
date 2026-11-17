@@ -4,8 +4,9 @@ using Jarvis.Contracts;
 
 namespace Jarvis.Orchestrator.Runtime;
 
+public sealed record PendingFxMove(DateOnly PublishedOn, decimal Rate);
 public sealed record FxRefreshState(BudgetFxQuote? Quote = null, decimal? UnadjustedRate = null,
-    DateTimeOffset? LastAttemptAt = null, string? LastError = null);
+    DateTimeOffset? LastAttemptAt = null, string? LastError = null, PendingFxMove? PendingMove = null, int ConsecutiveFailures = 0);
 
 public sealed class RuntimeState
 {
