@@ -194,6 +194,8 @@ The legacy Core key remains a broad browser credential for compatibility. Signal
 
 Each `AI:{profile}` requires its own `RateCardDate` (not future and no more than 90 days old) and `RateCardModel` equal to its selected `Model`. Text profiles accept `MaxOutputTokens` from 1 to 32768; defaults are 1500 for Chat and 2048 for other text profiles. Legacy Anthropic briefs use `PaidAI:MaxOutputTokens`, default 2048. The reservation uses the requested output cap.
 
+The Release 0.2 example selects `gpt-6-luna` for Chat and Coach. To activate it, set each profile's model and its matching reviewed rate-card model, date and rates. For an OpenAI Chat profile, keep `OpenAI:Model` equal to `AI:Chat:Model`. OpenAI lists Luna as the successor to the deprecated GPT-4.1 mini snapshot. [OpenAI deprecations](https://developers.openai.com/api/docs/deprecations)
+
 Voice requires explicit `AudioInputUsdPerMillion`, `TextInputUsdPerMillion`, `CachedAudioInputUsdPerMillion`, `CachedTextInputUsdPerMillion`, `AudioOutputUsdPerMillion`, `TextOutputUsdPerMillion`, `TranscriptionUsdPerMinute`, `TranscriptionModel` and matching `TranscriptionRateCardModel`. Audio rates cannot be lower than the corresponding text rate; cached rates must be positive and no greater than uncached rates. No live rates are supplied by this remediation. Keep profiles stable while calls are active; immutable cross-provider attempt routing remains unfinished.
 
 Paid file transcription accepts WebM, MP4/M4A and WAV only, bounds actual input to 10 MB, decodes at most 180 seconds of mono 16 kHz PCM and sends a fresh WAV. Duration metadata does not determine its reservation. Missing granular billed usage retains the full conservative reservation for reconciliation.

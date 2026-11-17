@@ -17,6 +17,13 @@ public sealed class TestBudgetSource(TimeProvider clock) : IBudgetPolicySource
         TestOwnerManagement.Configure(builder);
         foreach (var profile in new[] { "Chat", "Agent", "Research", "Coach", "Training", "Voice", "Transcription" }) builder.UseSetting($"AI:{profile}:RateCardDate", "2026-11-13");
         foreach (var profile in new[] { "Chat", "Agent", "Research", "Coach", "Training" }) builder.UseSetting($"AI:{profile}:RateCardModel", "gpt-4.1-mini");
+        foreach (var profile in new[] { "Chat", "Coach" })
+        {
+            builder.UseSetting($"AI:{profile}:Model", "gpt-4.1-mini");
+            builder.UseSetting($"AI:{profile}:InputUsdPerMillion", "0.4");
+            builder.UseSetting($"AI:{profile}:OutputUsdPerMillion", "1.6");
+        }
+        builder.UseSetting("OpenAI:Model", "gpt-4.1-mini");
         builder.UseSetting("AI:Voice:RateCardModel", "gpt-realtime-2.1-mini"); builder.UseSetting("AI:Transcription:RateCardModel", "gpt-transcribe");
         foreach (var rate in new[] { "AudioInput", "TextInput", "CachedAudioInput", "CachedTextInput", "AudioOutput", "TextOutput" }) builder.UseSetting($"AI:Voice:{rate}UsdPerMillion", "1");
         builder.UseSetting("AI:Voice:TranscriptionUsdPerMinute", "0.01"); builder.UseSetting("AI:Voice:TranscriptionModel", "fixture-transcription");

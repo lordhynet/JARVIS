@@ -65,6 +65,44 @@ public sealed partial class RealtimeProtocolTests
 
 public sealed class ReleaseReadinessTests
 {
+    [Theory]
+    [InlineData("Chat", TextCapability.Conversation, 1500)]
+    [InlineData("Coach", TextCapability.JsonReasoning, 2048)]
+    public async Task Luna_uses_the_reviewed_profile_and_responses_shape(string profile, TextCapability capability, int outputLimit)
+    {
+        const string model = "gpt-6-luna";
+        var calls = 0;
+        using var root = new ProviderFactory(async request =>
+        {
+            calls++;
+            Assert.Equal("https://api.openai.com/v1/responses", request.RequestUri!.AbsoluteUri);
+            var body = await request.Content!.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(model, body.GetProperty("model").GetString());
+            Assert.False(body.GetProperty("store").GetBoolean());
+            Assert.Equal(outputLimit, body.GetProperty("max_output_tokens").GetInt32());
+            Assert.Equal("Return a short JSON response.", body.GetProperty("instructions").GetString());
+            Assert.Equal("Fixture input", body.GetProperty("input").GetString());
+            Assert.False(body.TryGetProperty("tools", out _));
+            if (capability == TextCapability.JsonReasoning)
+                Assert.Equal("json_object", body.GetProperty("text").GetProperty("format").GetProperty("type").GetString());
+            else Assert.False(body.TryGetProperty("text", out _));
+            return new(HttpStatusCode.OK) { Content = new StringContent(
+                """{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Fixture reply"}]}],"usage":{"input_tokens":3,"output_tokens":2}}""",
+                Encoding.UTF8, "application/json") };
+        });
+        using var host = root.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting($"AI:{profile}:Model", model);
+            builder.UseSetting($"AI:{profile}:RateCardModel", model);
+            if (profile == "Chat") builder.UseSetting("OpenAI:Model", model);
+        });
+        var service = host.Services.GetRequiredService<ITextReasoningProvider>();
+        var result = await service.ReasonAsync(new(Guid.NewGuid(), Guid.NewGuid(), profile, capability,
+            ReasoningDataClass.Personal, true, "Return a short JSON response.", [new(ChatRoles.User, "Fixture input")], UsageLane.Interactive), default);
+        Assert.Equal("Fixture reply", result.Text);
+        Assert.Equal(1, calls);
+    }
+
     [Fact]
     public void Core_uses_process_only_framework_data_protection()
     {
