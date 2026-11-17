@@ -18,7 +18,8 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
             task.Messages.Count is > 0 and <= 24 && task.Messages.All(m => m.Role is ChatRoles.User or ChatRoles.Assistant && !string.IsNullOrWhiteSpace(m.Text)), 400, "Invalid normalized reasoning request.");
         Guard.Require(!string.IsNullOrWhiteSpace(task.Instructions) && Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(task)) <= 180000, 400, "Reasoning context exceeded its bound.");
         var rates = cards.ReadText(task.Profile, task.Capability, task.DataClass, task.OutputLimit);
-        rates = rates with { Route = rates.Route with { CloudConsent = task.AllowCloudProcessing } };
+        rates = rates with { Route = rates.Route with { CloudConsent = task.AllowCloudProcessing },
+            Fallbacks = rates.Fallbacks.Select(r => r with { CloudConsent = task.AllowCloudProcessing }).ToArray() };
         Guard.Require(adapters.TryGetValue(rates.Route.Provider, out var adapter), 503, "The selected provider adapter is not installed. No fallback was attempted.");
         Guard.Require(adapter.Capabilities.Contains(task.Capability), 403, "The selected adapter cannot supply the required evidence or output capability. No fallback was attempted.");
         budget.RequireConfigured();
@@ -39,7 +40,7 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
             // Every installed adapter enters through one durable admission boundary.
             // UTF-8 bytes conservatively bound text tokens; framing covers both supported codecs.
             if (!cached) await budget.ReserveAsync(task.OperationId, task.ScopeId, rates.Route.Model,
-                rates.Cost(Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(task)) + 32768, rates.Route.OutputLimit) + rates.SearchUsdPerCall,
+                rates.MaximumCost(Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(task)) + 32768),
                 rates.Limits, ct, task.Lane, rates.Route.Provider);
             var result = await adapter.ExecuteAsync(task, rates, ct);
             await store.UpdateAsync(s => {
@@ -47,7 +48,7 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
                 var attempt = s.ProviderAttempts[task.OperationId];
                 s.ProviderAttempts[task.OperationId] = attempt with { Outcome = cached ? ProviderAttemptOutcome.Cached : ProviderAttemptOutcome.Completed, CompletedAt = clock.GetUtcNow() }; return true;
             }, ct);
-            return new(result.Text, result.Citations, rates.Route);
+            return new(result.Text, result.Citations, result.ServedRoute ?? rates.Route);
         }
         catch {
             try { await store.UpdateAsync(s => {

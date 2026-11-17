@@ -44,6 +44,10 @@ public static class ConfigKeys
     public const string MaxOutputTokens = "MaxOutputTokens";
     public const string RateCardModel = "RateCardModel";
     public const string RateCardDate = "RateCardDate";
+    public const string PromptCachingEnabled = "PromptCachingEnabled";
+    public const string CacheWriteUsdPerMillion = "CacheWriteUsdPerMillion";
+    public const string CacheReadUsdPerMillion = "CacheReadUsdPerMillion";
+    public const string Fallbacks = "Fallbacks";
 
     public static string AiProfilePrefix(string profile) => $"AI:{profile}:";
 }

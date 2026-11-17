@@ -192,7 +192,7 @@ The legacy Core key remains a broad browser credential for compatibility. Signal
 
 ### Reviewed media and model profiles
 
-Each `AI:{profile}` requires its own `RateCardDate` (not future and no more than 90 days old) and `RateCardModel` equal to its selected `Model`. Text profiles accept `MaxOutputTokens` from 1 to 32768; defaults are 1500 for Chat and 2048 for other text profiles. Legacy Anthropic briefs use `PaidAI:MaxOutputTokens`, default 2048. The reservation uses the requested output cap.
+Each `AI:{profile}` requires its own `RateCardDate` (not future and no more than 90 days old) and `RateCardModel` equal to its selected `Model`. Text profiles accept `MaxOutputTokens` from 1 to 32768. OpenAI defaults remain 1500 for Chat and 2048 for other text profiles. Anthropic defaults are 8192 for Chat/Coach and 16384 for other profiles, including `PaidAI:MaxOutputTokens` for LegacyInterview. Thinking consumes this output allowance. An explicitly configured smaller cap is respected. The reservation follows the selected cap, including every configured fallback attempt.
 
 The Release 0.2 example selects `gpt-6-luna` for Chat and Coach. To activate it, set each profile's model and its matching reviewed rate-card model, date and rates. For an OpenAI Chat profile, keep `OpenAI:Model` equal to `AI:Chat:Model`. OpenAI lists Luna as the successor to the deprecated GPT-4.1 mini snapshot. [OpenAI deprecations](https://developers.openai.com/api/docs/deprecations)
 
@@ -224,6 +224,43 @@ Grounded public search requires the Research profile, Public data class, an inst
 Every text attempt enters a shared durable reservation before adapter dispatch. Attempt records contain provider/model, profile, capability, data class, consent, reviewed rate revision, reservation ID and outcome. Keys and prompt text are excluded from these records. The selected model, key and prices are captured for that attempt; configuration changes during the response cannot change its billing calculation. Known completed responses can be returned from cache. Pending, failed or uncertain attempts cannot be automatically replayed; old paid workflow claims can reuse a matching completed result but cannot silently pay again when it is unavailable.
 
 Source deletion fences subsequent publication, clears cached text and removes the attempt's content fingerprint. The content-free route/charge record remains alongside the existing financial ledger. Full Core erasure removes attempt records while retaining the separately defined financial commitments. Attempt fingerprints also expire with the seven-day disposable-cache policy. Hardware, private configuration and paid-provider acceptance remain separate operator steps.
+
+### Anthropic adaptive output, caching and refusal fallback
+
+The LegacyInterview example now selects `claude-sonnet-5-5`; its prices and review date are unset until reviewed for that model. Existing private settings are never rewritten. Routing Coach to Sonnet or deep tasks to Opus remains an owner configuration decision, with explicit `AllowedDataClasses` for each new destination. Research and realtime voice keep their existing codecs.
+
+Under `AI:{profile}` (or `PaidAI` for LegacyInterview), `PromptCachingEnabled` defaults to false. Enabling it requires positive, reviewed `CacheWriteUsdPerMillion` and `CacheReadUsdPerMillion` alongside the ordinary rates. Only the stable system instruction prefix receives an explicit five-minute cache breakpoint. User messages receive none. Short prompts may not meet the provider's cache threshold. Ordinary input, cache creation, cache reads and output are charged separately; thinking output is included. An unexpected one-hour write is held for reconciliation because its price has not been reviewed. [Anthropic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+
+`Fallbacks` defaults to an empty array. To opt in, add up to three entries, each with `Model`, matching `RateCardModel`, recent `RateCardDate`, `InputUsdPerMillion`, `OutputUsdPerMillion`, and both cache rates when caching is enabled. Each entry's model must be distinct from the primary and the other entries, and must be an allowed fallback target for the primary according to Anthropic's Models API. Use exact served model identifiers; an unreviewed returned identifier stops publication and holds the reservation. Each entry inherits the profile's output cap and approved data classes. The sanitized shape below intentionally cannot dispatch until its null values are reviewed and filled:
+
+```json
+{
+  "Provider": "anthropic",
+  "Model": "claude-sonnet-5-5",
+  "RateCardModel": "claude-sonnet-5-5",
+  "RateCardDate": "",
+  "InputUsdPerMillion": null,
+  "OutputUsdPerMillion": null,
+  "MaxOutputTokens": 8192,
+  "AllowedDataClasses": ["Personal"],
+  "PromptCachingEnabled": false,
+  "CacheWriteUsdPerMillion": null,
+  "CacheReadUsdPerMillion": null,
+  "Fallbacks": [{
+    "Model": "claude-sonnet-5",
+    "RateCardModel": "claude-sonnet-5",
+    "RateCardDate": "",
+    "InputUsdPerMillion": null,
+    "OutputUsdPerMillion": null,
+    "CacheWriteUsdPerMillion": null,
+    "CacheReadUsdPerMillion": null
+  }]
+}
+```
+
+Configured fallback uses one HTTP request with an explicit `fallbacks` list and beta header `server-side-fallback-2026-07-01`. This bounds possible destinations and costs. No client retry is sent for a refusal, error, timeout or overload. The adapter prices `usage.iterations` at each model's captured rates, without also charging the final top-level usage. Known zero-output, non-billable refusal categories cost zero; unknown categories require reconciliation. `ProviderAttempts.Route` retains the requested route, `ServedRoute` records the returned model, and `ModelUsage` records each model's token classes and charge. Cached completion returns the same served route. [Anthropic refusal and fallback accounting](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback)
+
+The request uses API version `2026-10-21` and omits removed sampling parameters. Thinking stays at the model default. `max_tokens` and `refusal` stops settle known usage but discard partial output and cannot be replayed automatically. Unknown models, missing fallback accounting or unpriced token classes retain the conservative reservation and block new paid work pending reconciliation. [Anthropic version guidance](https://platform.claude.com/docs/en/api/versioning)
 
 Home Assistant now requires HTTPS outside loopback unless `HomeAssistant:AllowInsecureLan=true` is explicitly set by the operator. The public example defaults this exception to false. This does not encrypt an insecure LAN link; TLS is preferred.
 
