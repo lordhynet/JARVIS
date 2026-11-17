@@ -1,0 +1,31 @@
+namespace Jarvis.Api;
+
+public static class ConfigKeys
+{
+    public const string CoreApiKey = "Jarvis:ApiKey";
+    public const string OwnerKey = "BudgetManagement:OwnerKey";
+    public const string OwnerSubjectId = "BudgetManagement:SubjectId";
+    public const string OpenAiApiKey = "OpenAI:ApiKey";
+    public const string OpenAiModel = "OpenAI:Model";
+    public const string OpenAiTranscriptionModel = "OpenAI:TranscriptionModel";
+    public const string AnthropicApiKey = "Anthropic:ApiKey";
+    public const string AnthropicModel = "Anthropic:Model";
+
+    public const string PaidAiPrefix = "PaidAI:";
+    public const string PaidAiEnabled = PaidAiPrefix + "Enabled";
+    public const string DailyLimitUsd = PaidAiPrefix + "DailyLimitUsd";
+    public const string MonthlyLimitUsd = PaidAiPrefix + "MonthlyLimitUsd";
+    public const string BackgroundLimitUsd = PaidAiPrefix + "BackgroundLimitUsd";
+    public const string VoiceLimitUsd = "AI:VoiceLimitUsd";
+    public const string InteractiveLimitUsd = "AI:InteractiveLimitUsd";
+
+    public const string VoiceProfile = "AI:Voice:";
+    public const string TranscriptionProfile = "AI:Transcription:";
+    public const string Model = "Model";
+    public const string Provider = "Provider";
+    public const string MaxOutputTokens = "MaxOutputTokens";
+    public const string RateCardModel = "RateCardModel";
+    public const string RateCardDate = "RateCardDate";
+
+    public static string AiProfilePrefix(string profile) => $"AI:{profile}:";
+}

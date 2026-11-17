@@ -1,0 +1,8 @@
+# Optional local HTTPS listener for certificate-pinned Android debugging.
+# Run scripts/prepare-mobile-https.ps1 first. This exposes no LAN/public listener.
+services:
+  api:
+    ports:
+      - "127.0.0.1:${JARVIS_TLS_PORT:?Run scripts/start-server.ps1}:${JARVIS_CONTAINER_TLS_PORT:?Run scripts/start-server.ps1}"
+    volumes:
+      - "${JARVIS_CERTIFICATE_SOURCE:?Run scripts/start-server.ps1}:${JARVIS_CERTIFICATE_TARGET:?Run scripts/start-server.ps1}:ro"
