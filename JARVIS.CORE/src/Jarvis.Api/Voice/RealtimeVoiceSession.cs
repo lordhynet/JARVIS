@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Api.Integrations;
+using Jarvis.Api.Security;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
 using Jarvis.Orchestrator.Workflows;
@@ -12,7 +13,7 @@ namespace Jarvis.Api.Voice;
 
 internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership ownership, IRealtimeConnectionFactory connections,
     ManagedAi ai, UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, TimeProvider clock,
-    CoreVoiceTools tools, VoiceTranscriptService transcripts, AudioFenceChanges fenceChanges)
+    CoreVoiceTools tools, VoiceTranscriptService transcripts, AudioFenceChanges fenceChanges, CoreRequestLimits limits)
 {
     private enum Phase { Starting, Ready, EndingBeforeReady, Ending }
 
@@ -118,6 +119,7 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
         try
         {
             lease = await RealtimeGateway.AuthenticateAsync(client, ownership, timeout.Token);
+            Guard.Require(limits.AdmitVoiceStream(lease.DeviceId), 429, "Too many voice connections for this device.");
             using var audioFence = new LiveAudioFence(lease, ownership, fenceChanges, clock);
             fence = audioFence;
             var (model, instructions) = await PrepareWindowAsync();
@@ -432,7 +434,17 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
         {
             using var last = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             await clientSend.WaitAsync(last.Token);
-            try { await SendAsync(client, new { type = "error", detail = error is DomainException d ? d.Message : "Voice stopped. Reconnect to resume the saved session." }, last.Token); }
+            try
+            {
+                var detail = error is DomainException d ? d.Message : "Voice stopped. Reconnect to resume the saved session.";
+                string? code = null;
+                if (lease is null && !limits.AdmitAnonymous())
+                {
+                    detail = "Too many unauthenticated requests.";
+                    code = "rate_limited";
+                }
+                await SendAsync(client, new { type = "error", detail, code }, last.Token);
+            }
             finally { clientSend.Release(); }
         }
         catch { }

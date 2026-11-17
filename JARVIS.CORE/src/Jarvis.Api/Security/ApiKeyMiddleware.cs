@@ -17,7 +17,8 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
     // SignalR WebSocket clients cannot set custom headers, so they send the key as access_token.
     private const string QueryName = "access_token";
 
-    public async Task InvokeAsync(HttpContext context, DeviceCredentials credentials, IPrivacyReader privacy, HubTickets hubTickets)
+    public async Task InvokeAsync(HttpContext context, DeviceCredentials credentials, IPrivacyReader privacy, HubTickets hubTickets,
+        CoreRequestLimits limits)
     {
         if (!IsProtected(context.Request.Path))
         {
@@ -50,6 +51,12 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
         var legacy = supplied is { Length: <= 1024 } && FixedTimeEquals(supplied, expected);
         if (actor is null && !legacy)
         {
+            if (!limits.AdmitAnonymous())
+            {
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                await context.Response.WriteAsJsonAsync(new { error = "Too many unauthenticated requests." });
+                return;
+            }
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             if (supplied?.StartsWith(DeviceCredentials.Prefix, StringComparison.Ordinal) == true)
             {

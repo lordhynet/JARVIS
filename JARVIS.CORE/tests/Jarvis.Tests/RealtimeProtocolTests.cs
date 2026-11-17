@@ -13,7 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Jarvis.Tests;
 
-public sealed class RealtimeProtocolTests
+public sealed partial class RealtimeProtocolTests
 {
     private sealed class ProviderSocket : WebSocket, IRealtimeConnectionFactory
     {

@@ -31,6 +31,6 @@ public static class VoiceEndpoints
         app.MapPost(CoreRoutes.VoiceTickets, (VoiceStartRequest request, HttpContext context, ManagedAi ai, AudioOwnership ownership, CancellationToken ct) =>
         { ApiKeyMiddleware.RequireDevice(context, request.DeviceId); ai.RequireReady("Voice"); return ownership.StartAsync(request, ct); }).RequireRateLimiting("voice").RequireAuthorization(CorePolicies.OwnerOrCompanion);
         // No reusable key in a URL. Authentication is a single-use 15-second ticket in the first frame.
-        app.Map(CoreRoutes.VoiceStream, (HttpContext context, RealtimeGateway gateway) => gateway.RunAsync(context)).RequireRateLimiting("voice").AllowAnonymous();
+        app.Map(CoreRoutes.VoiceStream, (HttpContext context, RealtimeGateway gateway) => gateway.RunAsync(context)).AllowAnonymous();
     }
 }

@@ -66,14 +66,15 @@ builder.Services.AddHttpClient("providers", client =>
     client.Timeout = TimeSpan.FromSeconds(45);
     client.MaxResponseContentBufferSize = 8_000_000;
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<CoreRequestLimits>();
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = 429;
-    foreach (var policy in new[] { "cloud", "voice" })
+    foreach (var policy in new[] { CoreRequestLimits.Cloud, CoreRequestLimits.Voice })
         o.AddPolicy(policy, context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
-            context.Items[ApiKeyMiddleware.ActorItem] is CoreActor actor ? actor.SubjectId : "unauthenticated:" + context.Connection.RemoteIpAddress,
-            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = policy == "voice" ? 40 : 20,
-                Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+            context.Items[ApiKeyMiddleware.ActorItem] is CoreActor actor ? actor.SubjectId : "unauthenticated",
+            _ => CoreRequestLimits.Window(context.Items[ApiKeyMiddleware.ActorItem] is not CoreActor ? CoreRequestLimits.AnonymousPermits :
+                policy == CoreRequestLimits.Voice ? CoreRequestLimits.VoicePermits : CoreRequestLimits.CloudPermits)));
 });
 
 // Enums as readable strings ("MockInterview") in JSON, for both REST and SignalR.

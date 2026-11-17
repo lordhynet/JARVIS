@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Api.Integrations;
+using Jarvis.Api.Security;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
 using Jarvis.Orchestrator.Workflows;
@@ -21,7 +22,7 @@ public sealed class RealtimeConnectionFactory(IConfiguration config) : IRealtime
 }
 public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectionFactory connections, ManagedAi ai,
     UsageBudget budget, IRuntimeStore runtime, ISessionStore sessions, IPrivacyReader privacy, TimeProvider clock, CoreVoiceTools tools,
-    VoiceTranscriptService transcripts, AudioFenceChanges fenceChanges)
+    VoiceTranscriptService transcripts, AudioFenceChanges fenceChanges, CoreRequestLimits limits)
 {
     public async Task RunAsync(HttpContext context)
     {
@@ -29,18 +30,25 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         var privacyStatus = await privacy.StatusAsync(context.RequestAborted);
         PrivacyContext.RequireWrite(privacyStatus);
         using var privacyScope = PrivacyContext.Enter(privacyStatus.Epoch);
-        if (!context.WebSockets.IsWebSocketRequest) { context.Response.StatusCode = 400; return; }
+        if (!context.WebSockets.IsWebSocketRequest)
+        {
+            context.Response.StatusCode = limits.AdmitAnonymous() ? StatusCodes.Status400BadRequest : StatusCodes.Status429TooManyRequests;
+            return;
+        }
         using var client = await context.WebSockets.AcceptWebSocketAsync();
         var session = new RealtimeVoiceSession(client, ownership, connections, ai, budget, runtime, sessions, clock,
-            tools, transcripts, fenceChanges);
+            tools, transcripts, fenceChanges, limits);
         await session.RunAsync(context.RequestAborted);
     }
 
     internal static async Task<AudioLease> AuthenticateAsync(WebSocket client, AudioOwnership ownership, CancellationToken ct)
     {
         var first = await ReadAsync(client, 2048, ct);
-        Guard.Require(first.GetProperty("type").GetString() == "authenticate", 401, "A one-time voice ticket is required.");
-        return await ownership.ConsumeAsync(Guard.Text(first.GetProperty("ticket").GetString(), "Ticket", 100), ct);
+        Guard.Require(first.ValueKind == JsonValueKind.Object && first.TryGetProperty("type", out var type) &&
+            type.ValueKind == JsonValueKind.String && type.ValueEquals("authenticate"), 401, "A one-time voice ticket is required.");
+        if (!first.TryGetProperty("ticket", out var token) || token.ValueKind != JsonValueKind.String)
+            throw new DomainException(401, "A one-time voice ticket is required.");
+        return await ownership.ConsumeAsync(Guard.Text(token.GetString(), "Ticket", 100), ct);
     }
 
     public static async Task<JsonElement> ReadAsync(WebSocket socket, int maximum, CancellationToken ct)
