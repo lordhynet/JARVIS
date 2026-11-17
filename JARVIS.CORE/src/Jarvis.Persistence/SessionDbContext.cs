@@ -54,6 +54,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.HasKey(s => s.Id);
             b.Property(s => s.Title).HasMaxLength(120);
             b.Property(s => s.PendingVoiceProjectionIdsJson).HasColumnType("jsonb");
+            b.Property(s => s.VoiceSummaryJson).HasColumnType("jsonb");
             b.HasIndex(s => s.UpdatedAt);
             b.HasMany(s => s.Checkpoints).WithOne().HasForeignKey(c => c.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -121,13 +122,15 @@ public sealed class SessionRow
     public string? HandoffJson { get; set; }
     public string MessagesJson { get; set; } = "[]";
     public string PendingVoiceProjectionIdsJson { get; set; } = "[]";
+    public string? VoiceSummaryJson { get; set; }
 
     public ConversationSession ToContract() => new(Id, Activity, Title, Status, ActiveDeviceId,
         CurrentTask, CreatedAt, UpdatedAt,
         Checkpoints.OrderBy(c => c.Sequence).Select(c => c.ToContract()).ToList(),
         HandoffJson is null ? null : JsonSerializer.Deserialize<SessionHandoff>(HandoffJson),
         JsonSerializer.Deserialize<List<ChatMessage>>(MessagesJson),
-        JsonSerializer.Deserialize<List<Guid>>(PendingVoiceProjectionIdsJson));
+        JsonSerializer.Deserialize<List<Guid>>(PendingVoiceProjectionIdsJson),
+        VoiceSummaryJson is null ? null : JsonSerializer.Deserialize<SessionVoiceSummary>(VoiceSummaryJson));
 
     public static SessionRow FromContract(ConversationSession s) => new()
     {
@@ -137,7 +140,8 @@ public sealed class SessionRow
         Checkpoints = s.Checkpoints.Select(CheckpointRow.FromContract).ToList(),
         HandoffJson = s.Handoff is null ? null : JsonSerializer.Serialize(s.Handoff),
         MessagesJson = JsonSerializer.Serialize(s.Messages ?? []),
-        PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(s.PendingVoiceProjectionIds ?? [])
+        PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(s.PendingVoiceProjectionIds ?? []),
+        VoiceSummaryJson = s.VoiceSummary is null ? null : JsonSerializer.Serialize(s.VoiceSummary)
     };
 
     // PostgreSQL timestamps store microseconds; normalize responses before returning

@@ -1,4 +1,5 @@
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Intelligence;
 
 namespace Jarvis.Orchestrator.Runtime;
 
@@ -34,13 +35,16 @@ public sealed class VoiceTranscriptService(ICoreTransaction transaction, TimePro
                 {
                     Guard.Require(previous.Role == role && previous.Text == text && (!previous.IsVoice || previous.SpeechSeconds == speechSeconds),
                         409, "Transcript ID was reused.");
-                    return previous.IsVoice ? current : current with
+                    return previous.IsVoice ? current : VoiceConversationMemory.RefreshSummary(current with
                     {
                         Messages = current.Messages!.Select(m => m.RequestId == id ? m with { IsVoice = true, SpeechSeconds = speechSeconds } : m).ToArray()
-                    };
+                    });
                 }
                 Guard.Require((current.Messages?.Count ?? 0) < 2000, 409, "Session transcript is full.");
-                return current with { UpdatedAt = now, Messages = [.. current.Messages ?? [], new(id, role, text, now, true, speechSeconds)] };
+                return VoiceConversationMemory.RefreshSummary(current with
+                {
+                    UpdatedAt = now, Messages = [.. current.Messages ?? [], new(id, role, text, now, true, speechSeconds)]
+                });
             });
             Guard.Require(session is not null, 404, "Session not found.");
             var canonical = VoiceTranscriptRules.Turn(sessionId, session.Messages!.Single(m => m.RequestId == id));

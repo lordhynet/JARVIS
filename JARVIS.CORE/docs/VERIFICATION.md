@@ -1,5 +1,12 @@
 # Verification results
 
+## Rolling conversation memory for live voice, 2026-11-17
+
+- The full Core suite against isolated PostgreSQL 17 finished with **442 passed, 1 skipped and 0 failed**. The skipped case is the opt-in runtime measurement harness. The evidence is `tests/Jarvis.Tests/TestResults/voice-memory-full.trx`.
+- Tests cover the 20-turn limit, UTF-8 JSON budgets with escaped text, hidden practice answers, and persistence across restart. Retention removed the stored summary with its source transcript, and rebuilding used the remaining conversation. Upgrade fixtures verified older sessions and EF reported no model drift after the additive migration.
+- Renewal tests verified the same session and audio fence, the reservation formula for 300 seconds, the fresh summary, and no greeting at cutover. Oversize growth re-reserved before sending the prompt. Budget denial and expired ownership ended the stream and settled the unused successor reservation.
+- All **54 browser tests** passed. Android contract and frontend source parity passed. Physical listening across the handoff remains pending.
+
 ## Longer voice windows and background renewal, 2026-11-17
 
 - The full Core suite against isolated PostgreSQL 17 finished with **436 passed, 1 skipped and 0 failed**. The skipped case is the opt-in runtime measurement harness. The evidence is `tests/Jarvis.Tests/TestResults/voice-renewal-final.trx`.

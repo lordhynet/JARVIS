@@ -108,7 +108,10 @@ public sealed class PrivacyTests
         var sessions = services.GetRequiredService<ISessionStore>(); var runtime = services.GetRequiredService<IRuntimeStore>(); var privacy = services.GetRequiredService<IPrivacyStore>();
         var oldId = Guid.NewGuid(); var activeId = Guid.NewGuid(); var voiceId = Guid.NewGuid(); var typedId = Guid.NewGuid();
         await sessions.AddAsync(Session(oldId, "Old ended", SessionStatus.Ended, Now.AddDays(-400)));
-        await sessions.AddAsync(Session(activeId, "Old active", at: Now.AddDays(-400), messages: [new(voiceId, "user", "Retire this voice", Now.AddDays(-40)), new(typedId, "user", "Keep this typed text", Now.AddDays(-40))]));
+        await sessions.AddAsync(Session(activeId, "Old active", at: Now.AddDays(-400), messages: [new(voiceId, "user", "Retire this voice", Now.AddDays(-40)), new(typedId, "user", "Keep this typed text", Now.AddDays(-40))]) with
+        {
+            VoiceSummary = new([new(ChatRoles.User, "Retire this voice")])
+        });
         var expired = Guid.NewGuid(); var corrected = Guid.NewGuid(); var cascade = Guid.NewGuid(); var q = QuestionBank.All[0];
         await runtime.UpdateAsync(s =>
         {
@@ -127,6 +130,7 @@ public sealed class PrivacyTests
         Assert.Equal(job, await privacy.RetainAsync(request, policy, Now.AddMinutes(1)));
         Assert.Null(await sessions.GetAsync(oldId)); Assert.NotNull(await sessions.GetAsync(activeId));
         Assert.Single((await sessions.GetAsync(activeId))!.Messages!); Assert.Equal(typedId, (await sessions.GetAsync(activeId))!.Messages![0].RequestId);
+        Assert.Null((await sessions.GetAsync(activeId))!.VoiceSummary);
         Assert.NotNull(await runtime.ReadAsync(s => s.TrainingAttempts[expired].DeletedAt)); Assert.Null(await runtime.ReadAsync(s => s.TrainingAttempts[corrected].DeletedAt));
         Assert.Empty(await runtime.ReadAsync(s => s.ProviderResults)); Assert.Contains(oldId, await runtime.ReadAsync(s => s.RetiredSessions));
         await Assert.ThrowsAsync<DomainException>(() => privacy.RetainAsync(request with { AsOf = Now.AddMinutes(-1) }, policy, Now));

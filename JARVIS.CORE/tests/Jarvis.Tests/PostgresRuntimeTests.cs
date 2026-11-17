@@ -56,6 +56,7 @@ public sealed partial class PostgresSessionTests
         using var host = new PostgresApiFactory(database.ConnectionString); using var client = host.AuthorisedClient();
         var session = await client.GetFromJsonAsync<ConversationSession>($"/api/sessions/{id}", Json);
         Assert.Equal("Existing milestone two session", session!.Title); Assert.Empty(session.Messages!); Assert.Null(session.Handoff);
+        Assert.Null(session.VoiceSummary);
         var updated = await LifeScenarioTests.Post<ConversationSession>(client, $"/api/sessions/{id}/checkpoints", new AddCheckpointRequest("After upgrade", null));
         Assert.Single(updated.Checkpoints);
     }
