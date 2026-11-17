@@ -1,5 +1,12 @@
 # Verification results
 
+## FX refresh and Android provisioning hotfix, 2026-11-17
+
+- Core passed **422 tests** against isolated PostgreSQL 17. The opt-in runtime measurement harness was skipped. A fixed clock and fake ECB response demonstrated 72 hours of continuous budget readiness across a weekend. Other tests covered source validation, rejected refreshes, expiry, a restart and the quote stored with each commitment. Evidence is `tests/Jarvis.Tests/TestResults/ops-hotfix-full.trx`.
+- All **54 Playwright tests** passed. The desktop and mobile browser fixtures verified the quote source, age and last error in AI workflows.
+- Android **0.10.3** (version code 14) passed all **37** release JVM tests and release lint. The APK passed signature verification with the same certificate as 0.10.2. Kotlin contracts and frontend bundle parity passed.
+- Owner activation of automatic FX and physical Tailscale re-pairing remain pending.
+
 ## Native Android goals — 0.9.0, 2026-11-14
 
 - Added Today → Your goals and More → Goals, with encrypted local drafts, workflow/status/date controls, explicit cloud consent, confirmed revision-checked deletion, conflict comparison and lost-acknowledgement recovery. Unconfirmed writes persist their exact ID/body before dispatch, lock fields and require explicit check/retry. Goals never enter the automatic/offline practice replay queue.

@@ -24,6 +24,21 @@ async function connect(page) {
   await page.goto('/'); await page.getByLabel('API key', { exact: true }).fill(key); await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
   await page.getByRole('button', { name: 'Connect', exact: true }).click(); await expect(page.locator('#workspace')).toBeVisible();
 }
+test('shows the last FX quote and refresh failure in AI workflows', async ({ page }) => {
+  await page.route('**/api/budget/status', route => route.fulfill({ json: {
+    detail: 'A current quote is required.',
+    conversionBasis: { fxStatus: {
+      lastAcceptedQuote: { source: 'ECB reference fixture', observedAt: new Date(Date.now() - 25 * 3600000).toISOString() },
+      lastError: 'The ECB feed did not return a successful response.'
+    } }
+  } }));
+  await connect(page);
+  await page.getByRole('button', { name: 'AI workflows', exact: true }).click();
+  const rate = page.locator('[data-panel=workflows] .list-item').filter({ has: page.getByRole('heading', { name: 'Budget exchange rate' }) });
+  await expect(rate).toContainText('ECB reference fixture · observed 25 h ago');
+  await expect(rate).toContainText('Last automatic refresh failed.');
+  await expect(rate).toContainText('A current quote is required.');
+});
 test('coaching saves, corrects and reviews a canonical session without a provider key', async ({ page }) => {
   await connect(page); await page.getByRole('button', { name: 'Coaching', exact: true }).click();
   const panel = page.locator('[data-panel=coaching]'); await panel.getByLabel('Exercise', { exact: true }).selectOption('point-first');

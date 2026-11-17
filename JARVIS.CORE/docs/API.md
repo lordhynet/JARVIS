@@ -184,6 +184,7 @@ The fixed realtime tool `core_recall` accepts `{ action, utterance_id, rating }`
 ## GBP budget API (additive)
 
 - `GET /api/budget/status`: Core-authenticated GBP readiness, scope/environment/month, ceiling, committed amount, unclassified legacy count, policy/conversion hashes, revision, approvals and public conversion basis. USD daily/month/lane checks remain additional restrictions. These are conservative normalized GBP amounts, not a claim of verified final card/invoice FX charges.
+- The conversion basis includes the effective FX quote and automatic refresh status. `fxStatus` reports whether refresh is enabled, whether the automatic quote is in use, the last accepted automatic quote and the last attempt or error. ECB quotes include their publication date.
 - `POST /api/budget/approvals`: owner-only `BudgetApprovalRequest { requestId, policyHash, month, ceilingGbp, expiresAt, expectedRevision, confirmation }`; exact confirmation `APPROVE MONTHLY AI CEILING`. Preview current status first. Approval is a total ceiling, not an increment; only current production month, >£100 and ≤£200.
 - `POST /api/budget/approvals/{id}/revoke`: owner-only `{ requestId, expectedRevision, confirmation: "REVOKE AI CEILING APPROVAL" }`. Revocation blocks further authority but never refunds committed charges.
 - `GET /api/budget/legacy/{id}/preview`: owner-only read of original USD amount, proposed frozen GBP commitment and conversion hash; does not assign or forgive any charge.

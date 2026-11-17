@@ -8,7 +8,7 @@ public sealed class BudgetApprovalService(IRuntimeStore store, IBudgetPolicySour
 {
     public Task<GbpBudgetStatus> StatusAsync(CancellationToken ct = default) => store.ReadAsync(s =>
     {
-        var now = clock.GetUtcNow(); var p = policies.Read(); string detail;
+        var now = clock.GetUtcNow(); var p = policies.Read(s); string detail;
         var ready = true;
         try {
             GbpBudgetRules.Validate(p, now);
@@ -29,7 +29,7 @@ public sealed class BudgetApprovalService(IRuntimeStore store, IBudgetPolicySour
     {
         BudgetAuthorization.RequireOwner(actor);
         return store.ReadAsync(s => {
-            var p = policies.Read(); GbpBudgetRules.Validate(p, clock.GetUtcNow());
+            var p = policies.Read(s); GbpBudgetRules.Validate(p, clock.GetUtcNow());
             Guard.Require(s.BudgetScopeId is null || s.BudgetScopeId == p.ScopeId, 503, "Budget accounting scope needs explicit migration.");
             Guard.Require(s.UsageReservations.TryGetValue(id, out var charge), 404, "Legacy charge not found.");
             Guard.Require(!s.GbpCommitments.ContainsKey(id), 409, "That charge is already classified.");
@@ -42,7 +42,7 @@ public sealed class BudgetApprovalService(IRuntimeStore store, IBudgetPolicySour
         BudgetAuthorization.RequireOwner(actor);
         Guard.Require(request.RequestId != Guid.Empty && request.Confirmation == "APPROVE MONTHLY AI CEILING", 400, "Explicit monthly AI ceiling confirmation is required.");
         return store.UpdateAsync(s => {
-            var now = clock.GetUtcNow(); var p = policies.Read(); GbpBudgetRules.ValidateIdentity(p); GbpBudgetRules.BindScope(s, p);
+            var now = clock.GetUtcNow(); var p = policies.Read(s); GbpBudgetRules.ValidateIdentity(p); GbpBudgetRules.BindScope(s, p);
             var fingerprint = Fingerprint(actor, request);
             if (Replay(s, request.RequestId, "approve", request.RequestId, fingerprint)) return s.BudgetApprovals[request.RequestId];
             Guard.Require(request.PolicyHash == GbpBudgetRules.PolicyHash(p) && request.ExpectedRevision == s.BudgetRevision, 409, "Budget policy or approval state changed. Review the latest preview.");
@@ -76,7 +76,7 @@ public sealed class BudgetApprovalService(IRuntimeStore store, IBudgetPolicySour
         Guard.Require(request.RequestId != Guid.Empty && request.Confirmation == "ASSIGN LEGACY AI CHARGE", 400, "Explicit legacy charge assignment is required.");
         var evidence = Guard.Text(request.Evidence, "Accounting evidence reference", 500);
         return store.UpdateAsync(s => {
-            var now = clock.GetUtcNow(); var p = policies.Read(); GbpBudgetRules.Validate(p, now); GbpBudgetRules.BindScope(s, p);
+            var now = clock.GetUtcNow(); var p = policies.Read(s); GbpBudgetRules.Validate(p, now); GbpBudgetRules.BindScope(s, p);
             var fingerprint = Fingerprint(actor, new { id, request });
             if (Replay(s, request.RequestId, "classify", id, fingerprint)) return s.GbpCommitments[id];
             Guard.Require(request.PolicyHash == GbpBudgetRules.PolicyHash(p) && request.ConversionHash == GbpBudgetRules.ConversionHash(p), 409, "Policy or conversion basis changed. Review the latest preview.");

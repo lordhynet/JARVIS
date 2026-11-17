@@ -4,6 +4,9 @@ using Jarvis.Contracts;
 
 namespace Jarvis.Orchestrator.Runtime;
 
+public sealed record FxRefreshState(BudgetFxQuote? Quote = null, decimal? UnadjustedRate = null,
+    DateTimeOffset? LastAttemptAt = null, string? LastError = null);
+
 public sealed class RuntimeState
 {
     // In-memory registry only. PostgreSQL keeps definitions in the dedicated relational tables.
@@ -14,6 +17,7 @@ public sealed class RuntimeState
     public Dictionary<string, DeviceCredential> DeviceCredentials { get; set; } = [];
     public Dictionary<Guid, VoiceCoaching> VoiceCoachings { get; set; } = [];
     public string? BudgetScopeId { get; set; }
+    public FxRefreshState? FxRefresh { get; set; }
     public long BudgetEpoch { get; set; }
     public int BudgetRevision { get; set; }
     public Dictionary<Guid, GbpCommitment> GbpCommitments { get; set; } = [];

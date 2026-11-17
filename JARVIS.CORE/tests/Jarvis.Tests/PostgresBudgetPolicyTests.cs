@@ -1,12 +1,39 @@
 using Jarvis.Contracts;
+using Jarvis.Api.Integrations;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Workflows;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 
 namespace Jarvis.Tests;
 
 public sealed partial class PostgresSessionTests
 {
+    [PostgresFact]
+    public async Task Accepted_automatic_quote_survives_a_host_restart_and_is_used_by_the_ledger()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var clock = new BudgetClock();
+        var quote = new BudgetFxQuote("ECB fixture", .816m, clock.Now, clock.Now.AddHours(24), new DateOnly(2026, 11, 13));
+        var published = new FxRefreshState(quote, .80m, clock.Now);
+        using (var original = new PostgresApiFactory(database.ConnectionString))
+        {
+            await original.Services.GetRequiredService<IRuntimeStore>().UpdateAsync(s => s.FxRefresh = published);
+        }
+
+        using var restarted = new PostgresApiFactory(database.ConnectionString);
+        var store = restarted.Services.GetRequiredService<IRuntimeStore>();
+        Assert.Equal(published, await store.ReadAsync(s => s.FxRefresh));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Budget:Enabled"] = "true", ["Budget:ScopeId"] = "fx-postgres", ["Budget:Environment"] = "Development",
+            ["Budget:TaxMultiplier"] = "1", ["Budget:SafetyMultiplier"] = "1", ["Budget:FxAuto:Enabled"] = "true"
+        }).Build();
+        var budget = new UsageBudget(store, clock, new BudgetSettings(config, clock));
+        var charge = await budget.ReserveAsync(Guid.NewGuid(), Guid.NewGuid(), "fixture", 1m, new(10, 10, 10), default);
+        Assert.Equal(quote, await store.ReadAsync(s => s.GbpCommitments[charge.Id].Fx));
+    }
+
     [PostgresFact]
     public async Task GBP_reservations_are_atomic_across_hosts_and_failed_settlement_cannot_partially_commit()
     {

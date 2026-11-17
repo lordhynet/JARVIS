@@ -151,6 +151,10 @@ builder.Services.AddSingleton<IWorkflowStepExecutor, LegacyPracticePlanExecutor>
 builder.Services.AddSingleton<IWorkflowStepExecutor, LegacyInterviewBriefExecutor>();
 builder.Services.AddSingleton<UsageBudget>();
 builder.Services.AddSingleton<IBudgetPolicySource, BudgetSettings>();
+builder.Services.AddSingleton<FxQuoteCache>();
+builder.Services.AddHttpClient(FxAutoSettings.ClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+builder.Services.AddHostedService<FxQuoteRefresher>();
 builder.Services.AddSingleton<BudgetApprovalService>();
 builder.Services.AddSingleton<BudgetManagementAuthorization>();
 builder.Services.AddSingleton<ManagedAi>();

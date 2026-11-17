@@ -5,6 +5,12 @@ public static class ConfigKeys
     public const string CoreApiKey = "Jarvis:ApiKey";
     public const string OwnerKey = "BudgetManagement:OwnerKey";
     public const string OwnerSubjectId = "BudgetManagement:SubjectId";
+    public const string Budget = "Budget";
+    public const string BudgetFx = "Fx";
+    public const string BudgetFxAuto = "FxAuto";
+    public const string BudgetFxRefreshHours = "RefreshHours";
+    public const string BudgetFxMarginPercent = "MarginPercent";
+    public const string BudgetFxMaxPublicationAgeDays = "MaxPublicationAgeDays";
     public const string OpenAiApiKey = "OpenAI:ApiKey";
     public const string OpenAiModel = "OpenAI:Model";
     public const string OpenAiTranscriptionModel = "OpenAI:TranscriptionModel";

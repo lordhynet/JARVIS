@@ -298,8 +298,20 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
   const workBody = el('div', '', workflows, 'list');
   action(workflows, 'Refresh workflows', loadWorkflows);
   async function loadWorkflows() {
-    const [paid, runs] = await Promise.all([api('/workflows/paid-ai'), api('/workflows')]); workBody.replaceChildren();
+    const [paid, runs, budget] = await Promise.all([api('/workflows/paid-ai'), api('/workflows'), api('/budget/status').catch(() => null)]); workBody.replaceChildren();
     el('p', paid.detail, workBody); el('p', `Today committed: $${paid.todayCommittedUsd} / $${paid.dailyLimitUsd}`, workBody);
+    const exchange = el('div', '', workBody, 'list-item');
+    el('h3', 'Budget exchange rate', exchange);
+    if (budget) {
+      const refresh = budget.conversionBasis?.fxStatus;
+      const quote = budget.conversionBasis?.fx ?? refresh?.lastAcceptedQuote;
+      el('p', budget.detail, exchange);
+      if (quote) {
+        const hours = Math.max(0, Math.floor((Date.now() - Date.parse(quote.observedAt)) / 3600000));
+        el('p', `${quote.source} · observed ${hours} h ago`, exchange);
+      }
+      if (refresh?.lastError) el('p', `Last automatic refresh failed. ${refresh.lastError}`, exchange);
+    } else el('p', 'Budget exchange rate is unavailable.', exchange);
     action(workBody, 'Build unpaid practice plan', async () => { const body = { notBefore: null }; await api('/workflows/practice-plans', request('practice-plan', body)); notice('Plan accepted. Refresh to check its status.'); await loadWorkflows(); pending.delete('practice-plan' + JSON.stringify(body)); });
     const consent = field(workBody, 'I allow Claude to process selected saved story facts and due-card prompts for this brief.', 'input', { type: 'checkbox' });
     const generate = action(workBody, 'Generate paid interview brief', async () => { if (!consent.checked) throw Error('Approve cloud processing for this brief first.'); const body = { allowCloudProcessing: true }; await api('/workflows/interview-briefs', request('paid-brief', body)); notice('Brief accepted. Refresh to check its status before creating another.'); await loadWorkflows(); pending.delete('paid-brief' + JSON.stringify(body)); }); generate.disabled = !paid.ready;

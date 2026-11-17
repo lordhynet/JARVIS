@@ -4,7 +4,11 @@ using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Orchestrator.Workflows;
 
-public interface IBudgetPolicySource { GbpBudgetPolicy Read(); }
+public interface IBudgetPolicySource
+{
+    GbpBudgetPolicy Read();
+    GbpBudgetPolicy Read(RuntimeState state) => Read();
+}
 
 public static class GbpBudgetRules
 {
@@ -20,10 +24,17 @@ public static class GbpBudgetRules
     public static void Validate(GbpBudgetPolicy p, DateTimeOffset now)
     {
         ValidateIdentity(p);
-        Guard.Require(p.Fx is { UsdToGbp: > 0 and <= 1000 } q && q.Source is { Length: > 0 and <= 200 } &&
-            q.ObservedAt <= now && q.ExpiresAt > now && q.ExpiresAt > q.ObservedAt && q.ExpiresAt <= q.ObservedAt.AddHours(24),
-            503, "A sourced, current USD-to-GBP quote valid for at most 24 hours is required.");
+        Guard.Require(IsCurrentQuote(p.Fx, now), 503, "A sourced, current USD-to-GBP quote valid for at most 24 hours is required." +
+            (p.FxStatus switch {
+                { AutomaticEnabled: false } => " Automatic FX refresh is disabled.",
+                { LastError: { } error } => " Automatic FX refresh failed. " + error,
+                { AutomaticEnabled: true } => " No current automatic quote is available yet.",
+                _ => ""
+            }));
     }
+    public static bool IsCurrentQuote(BudgetFxQuote? quote, DateTimeOffset now) =>
+        quote is { UsdToGbp: > 0 and <= 1000 } q && q.Source is { Length: > 0 and <= 200 } &&
+        q.ObservedAt <= now && q.ExpiresAt > now && q.ExpiresAt > q.ObservedAt && q.ExpiresAt - q.ObservedAt <= TimeSpan.FromHours(24);
     public static string PolicyHash(GbpBudgetPolicy p) => PrivacyData.Hash(JsonSerializer.Serialize(new { p.ScopeId, p.Environment, p.Version, p.TaxMultiplier, p.SafetyMultiplier }));
     public static string ConversionHash(GbpBudgetPolicy p) => PrivacyData.Hash(JsonSerializer.Serialize(new { Policy = PolicyHash(p), p.Fx }));
     public static decimal Convert(decimal usd, BudgetFxQuote quote, decimal tax, decimal safety)

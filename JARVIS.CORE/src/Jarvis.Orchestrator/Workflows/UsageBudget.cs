@@ -20,7 +20,7 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
         Guard.Require(!s.UsageReservations.Values.Any(x => x.ReconciliationRequired), 503,
             "A provider rate or usage mismatch requires reconciliation before further paid work.");
         var now = clock.GetUtcNow();
-        var policy = policies.Read(); GbpBudgetRules.Validate(policy, now); GbpBudgetRules.BindScope(s, policy);
+        var policy = policies.Read(s); GbpBudgetRules.Validate(policy, now); GbpBudgetRules.BindScope(s, policy);
         Guard.Require(GbpBudgetRules.Unclassified(s, now) == 0, 503, "Legacy AI charges require explicit owner classification before new paid dispatch.");
         var gbp = GbpBudgetRules.Convert(maximum, policy);
         Guard.Require(GbpBudgetRules.Committed(s, policy, now) + gbp <= GbpBudgetRules.Ceiling(s, policy, now),

@@ -65,6 +65,7 @@ public static class PrivacyData
         AudioDrainUntil = old.AudioLease?.ExpiresAt ?? old.AudioDrainUntil,
         BudgetScopeId = old.BudgetScopeId, BudgetEpoch = checked(old.BudgetEpoch + 1), BudgetRevision = checked(old.BudgetRevision + 1),
         GbpCommitments = old.GbpCommitments,
+        FxRefresh = old.FxRefresh,
         BudgetApprovals = old.BudgetApprovals.ToDictionary(x => x.Key, x => x.Value with { Revoked = true, ActorId = "" }),
         BudgetReceipts = old.BudgetReceipts.ToDictionary(x => x.Key, x => x.Value with { ActorId = "", Evidence = "" }),
         UsageReconciliations = old.UsageReconciliations.ToDictionary(x => x.Key, x => x.Value with { Evidence = "" })
