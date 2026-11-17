@@ -75,12 +75,15 @@ public sealed class VoiceModePolicyTests
         Assert.Empty(await store!.ReadAsync(state => state.UsageReservations.Values.ToArray()));
     }
 
-    [Fact]
-    public async Task Serious_cap_counts_existing_gbp_snapshots_and_leaves_everyday_capacity_available()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Serious_cap_counts_existing_gbp_snapshots_and_leaves_everyday_capacity_available(bool guarded)
     {
         var clock = new BudgetClock();
         var policy = new MutableBudgetSource(MutableBudgetSource.Fixture(clock.Now, "Development"));
-        var store = new InMemoryRuntimeStore();
+        var inner = new InMemoryRuntimeStore();
+        IRuntimeStore store = guarded ? new GuardedMemoryRuntime(inner, new MemoryPrivacyBoundary()) : inner;
         var ledger = new UsageBudget(store, clock, policy);
         var limits = new BudgetLimits(10, 50, 5, VoiceSeriousDailyGbp: 1);
         var session = Guid.NewGuid();
@@ -99,6 +102,11 @@ public sealed class VoiceModePolicyTests
         Assert.Equal(VoiceMode.Everyday, everyday.VoiceMode);
         await ledger.SettleAsync(first.Id, .05m, 10, 10, default);
         await ledger.SettleAsync(second.Id, 0m, 0, 0, default);
+        var completed = await store.ReadAsync(state => state.ProviderAttempts[first.Id].CompletedAt);
+        Assert.Equal(clock.GetUtcNow(), completed);
+        clock.Now = clock.Now.AddMinutes(5);
+        await ledger.SettleAsync(first.Id, .05m, 10, 10, default);
+        Assert.Equal(completed, await store.ReadAsync(state => state.ProviderAttempts[first.Id].CompletedAt));
         var status = await new BudgetApprovalService(store, policy, clock).StatusAsync();
         Assert.Equal(3, status.VoiceUsage!.Count);
         Assert.Contains(status.VoiceUsage, x => x is { Mode: VoiceMode.Serious, AccountedGbp: .05m, Outcome: ProviderAttemptOutcome.Completed });

@@ -72,7 +72,7 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
     }, ct);
 
     public Task<UsageReservation> SettleAsync(Guid id, decimal actual, int input, int output, CancellationToken ct) =>
-        store.SettleUsageAsync(id, actual, input, output, ct);
+        store.SettleUsageAsync(id, actual, input, output, ct, completedAt: clock.GetUtcNow());
 
     public Task MarkVoiceDispatchedAsync(Guid id, CancellationToken ct) => store.UpdateAsync(s =>
     {
@@ -97,7 +97,7 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
 // Settlement updates the existing monetary record and existing attempt metadata without recreating source data.
 public static class UsageAccounting
 {
-    public static UsageReservation Settle(RuntimeState s, Guid id, decimal actual, int input, int output)
+    public static UsageReservation Settle(RuntimeState s, Guid id, decimal actual, int input, int output, DateTimeOffset? completedAt = null)
     {
         Guard.Require(s.UsageReservations.TryGetValue(id, out var prior), 404, "Usage reservation not found.");
         Guard.Require(actual >= 0 && input >= 0 && output >= 0, 502, "Provider returned invalid usage.");
@@ -116,7 +116,7 @@ public static class UsageAccounting
             s.ProviderAttempts[id] = attempt with
             {
                 Outcome = attempt.Outcome == ProviderAttemptOutcome.Preparing ? ProviderAttemptOutcome.Refused : ProviderAttemptOutcome.Completed,
-                CompletedAt = DateTimeOffset.UtcNow
+                CompletedAt = completedAt ?? TimeProvider.System.GetUtcNow()
             };
         return settled;
     }
