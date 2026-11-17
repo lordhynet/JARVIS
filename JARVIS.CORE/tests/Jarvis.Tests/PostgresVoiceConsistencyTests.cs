@@ -124,15 +124,16 @@ public sealed partial class PostgresSessionTests
     public async Task Failed_atomic_voice_and_session_writes_roll_back_in_postgres()
     {
         await using var database = await TestDatabase.CreateAsync();
-        using var host = new PostgresApiFactory(database.ConnectionString);
+        var clock = new VoiceFixtureClock();
+        using var host = new PostgresApiFactory(database.ConnectionString, clock);
         var sessions = host.Services.GetRequiredService<ISessionStore>();
         var runtime = host.Services.GetRequiredService<IRuntimeStore>();
         var sessionId = Guid.NewGuid();
         var turnId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
+        var now = clock.GetUtcNow();
         await sessions.AddAsync(new(sessionId, ActivityType.General, "Crash recovery", SessionStatus.Active, "phone", null, now, now, []));
         var failure = new FailBeforeCoreCommit(host.Services.GetRequiredService<ICoreTransaction>());
-        var failing = new VoiceTranscriptService(failure, TimeProvider.System);
+        var failing = new VoiceTranscriptService(failure, clock);
         await Assert.ThrowsAsync<IOException>(() => failing.RecordAsync(sessionId, turnId, "user", "Captured speech", 1.25, default));
         Assert.Empty((await sessions.GetAsync(sessionId))!.Messages!);
         Assert.Empty(await runtime.ReadAsync(s => s.VoiceTurns));
