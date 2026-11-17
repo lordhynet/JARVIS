@@ -39,6 +39,7 @@ internal class VoiceTransport(
     private var pendingTicket: VoiceTicket? = null
     @Volatile private var socket: WebSocket? = null
     @Volatile private var lease: AudioLease? = null
+    @Volatile private var providerWindow = -1
     private val leaseDeadline = AtomicLong(0)
     private val pings = ConcurrentHashMap<Long, Long>()
     private var sequence = 0L
@@ -88,15 +89,18 @@ internal class VoiceTransport(
 
     fun sendAudio(current: Long, window: WebSocket, bytes: ByteArray) {
         if (!isWindow(current, window) || !lifecycle.ready || !leaseIsCurrent()) return
+        val number = providerWindow
+        if (number < 0) return
         if (window.queueSize() > 256000) {
             listener.stopped("Network cannot keep up with live audio.")
             return
         }
-        window.send(gson.toJson(mapOf("type" to "audio", "audio" to Base64.encodeToString(bytes, Base64.NO_WRAP))))
+        window.send(gson.toJson(mapOf("type" to "audio", "window" to number, "audio" to Base64.encodeToString(bytes, Base64.NO_WRAP))))
     }
 
     fun interrupt(itemId: String, playedMs: Long) {
-        socket?.send(gson.toJson(mapOf("type" to "interrupt", "itemId" to itemId, "playedMs" to playedMs)))
+        val number = providerWindow
+        if (number >= 0) socket?.send(gson.toJson(mapOf("type" to "interrupt", "window" to number, "itemId" to itemId, "playedMs" to playedMs)))
     }
 
     private suspend fun heartbeat(current: Long) {
@@ -134,6 +138,7 @@ internal class VoiceTransport(
         val window = synchronized(this) {
             if (!lifecycle.pauseWindow(current)) return
             lease = ticket.lease
+            providerWindow = -1
             leaseDeadline.set(at + 15000)
             pings.clear()
             val websocket = http?.newWebSocket(Request.Builder().url(url).build(), WindowListener(current, ticket, established))
@@ -150,7 +155,7 @@ internal class VoiceTransport(
     ) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             synchronized(this@VoiceTransport) {
-                if (isWindow(current, webSocket)) webSocket.send(gson.toJson(mapOf("type" to "authenticate", "ticket" to ticket.ticket)))
+                if (isWindow(current, webSocket)) webSocket.send(gson.toJson(mapOf("type" to "authenticate", "ticket" to ticket.ticket, "continuous" to true)))
                 else webSocket.close(1000, "Cancelled")
             }
         }
@@ -161,11 +166,13 @@ internal class VoiceTransport(
                 val message = JsonParser.parseString(text).asJsonObject
                 when (message.get("type").asString) {
                     "ready" -> if (synchronized(this@VoiceTransport) { isWindow(current, webSocket) && lifecycle.markReady(current) }) {
+                        providerWindow = message.get("window")?.asInt ?: 0
                         retry.connected()
                         established.complete(Unit)
                         val voiceName = message.get("voiceName")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
                         listener.ready(current, webSocket, voiceName)
                     }
+                    "window_renewing" -> providerWindow = -1
                     "lease" -> pings.remove(message.get("sequence").asLong)?.let { sent ->
                         leaseDeadline.set(sent + message.get("leaseSeconds").asLong * 1000)
                         listener.renewed()
@@ -268,6 +275,7 @@ internal class VoiceTransport(
         val client = core
         lease = null
         pendingTicket = null
+        providerWindow = -1
         renewWanted = false
         val frame = if (reason == "no_speech_timeout") gson.toJson(mapOf("type" to "stop", "reason" to reason)) else "{\"type\":\"stop\"}"
         socket?.send(frame)

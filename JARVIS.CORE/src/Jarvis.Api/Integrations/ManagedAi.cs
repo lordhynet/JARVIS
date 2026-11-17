@@ -16,6 +16,13 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     public (string Model, RealtimePricing Pricing) RealtimeRates() { var rates = rateCards.ReadRealtime(); budget.RequireConfigured(); return rates; }
     internal string RealtimePersona() => RealtimeVoicePrompt.ReadPersona(config);
     internal RealtimeVoiceOutput RealtimeOutput() => RealtimeVoiceOutput.Read(config);
+    internal VoiceWindowLimits RealtimeWindow()
+    {
+        var configured = config[ConfigKeys.VoiceWindowSeconds];
+        if (string.IsNullOrWhiteSpace(configured)) return new(VoiceWindowLimits.DefaultSeconds);
+        Guard.Require(int.TryParse(configured, out var seconds), 503, "The realtime voice window must be a whole number of seconds.");
+        return new(seconds);
+    }
     internal RealtimeTurnDetection VoiceTurnDetection() => RealtimeTurnDetection.Read(config);
     public (string Model, decimal PerMinute, string ApiKey) TranscriptionRates() { var rates = rateCards.ReadTranscription(); budget.RequireConfigured(); return rates; }
     public BudgetLimits Limits => new(config.GetValue(ConfigKeys.DailyLimitUsd, 2m), config.GetValue(ConfigKeys.MonthlyLimitUsd, 50m),
@@ -33,6 +40,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
         {
             RealtimePersona();
             RealtimeOutput();
+            RealtimeWindow();
             VoiceTurnDetection();
             RealtimeRates();
         }

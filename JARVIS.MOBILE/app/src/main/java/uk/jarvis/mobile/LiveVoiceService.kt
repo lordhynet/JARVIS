@@ -229,6 +229,7 @@ class LiveVoiceService : Service() {
         if (!transport.isWindow(current, window) || !lifecycle.ready) return
         val voice = voiceName?.takeIf { it.isNotBlank() }?.let { " · voice $it" }.orEmpty()
         mutable.value = mutable.value.copy(ready = true, message = "LIVE · microphone active$voice · use Stop or headset Pause to finish.")
+        if (captureJob?.isActive == true) return
         captureJob = scope.launch {
             try { captureAudio(current, window) }
             catch (error: Exception) {

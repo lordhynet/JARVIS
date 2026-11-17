@@ -36,14 +36,15 @@ public static class WakeCandidateRules
 
 public sealed class WakeCandidateArbiter(CompanionVoiceService voice, AudioOwnership ownership, IRuntimeStore runtime, TimeProvider clock)
 {
-    public async Task<WakeCandidateResponse> ClaimAsync(WakeCandidateRequest request, CancellationToken ct)
+    public async Task<WakeCandidateResponse> ClaimAsync(WakeCandidateRequest request, CancellationToken ct,
+        int windowSeconds = VoiceWindowLimits.DefaultSeconds)
     {
         Guard.Require(request.RequestId != Guid.Empty && request.AllowCloudProcessing, 400,
             "A unique request and prior live-voice cloud consent are required after local wake detection.");
         await runtime.UpdateAsync(state => { WakeCandidateRules.RecordAttempt(state, request.DeviceId, clock.GetUtcNow()); return true; }, ct);
         var prepared = await voice.PrepareAsync(new(request.RequestId, request.DeviceId, true), ct);
         var sessionId = prepared.SessionId;
-        var ticket = await ownership.StartAsync(new(sessionId, request.DeviceId, true), ct);
+        var ticket = await ownership.StartAsync(new(sessionId, request.DeviceId, true), ct, windowSeconds);
         return new(sessionId, ticket);
     }
 }

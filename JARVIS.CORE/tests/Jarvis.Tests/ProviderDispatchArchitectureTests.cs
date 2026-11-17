@@ -20,10 +20,20 @@ public sealed class ProviderDispatchArchitectureTests
             {
                 var session = File.ReadAllText(Path.Combine(root, "Voice", "RealtimeVoiceSession.cs"));
                 Assert.Contains("await budget.ReserveAsync(", session, StringComparison.Ordinal);
-                var prepare = session.IndexOf("await PrepareWindowAsync()", StringComparison.Ordinal);
-                Assert.True(prepare >= 0 && session.IndexOf("connections.ConnectAsync(", StringComparison.Ordinal) > prepare);
-                Assert.Contains("await session.RunAsync(", text, StringComparison.Ordinal);
+                AssertReservationBeforeConnect("await PrepareWindowAsync(timeout.Token)", "await ConnectReservedAsync(timeout.Token)");
+                AssertReservationBeforeConnect("await PrepareWindowAsync(ct)", "await ConnectReservedAsync(ct)");
+                AssertReservationBeforeConnect("Guard.Require(reservation is not null", "connections.ConnectAsync(");
+                Assert.Equal(session.IndexOf("connections.ConnectAsync(", StringComparison.Ordinal),
+                    session.LastIndexOf("connections.ConnectAsync(", StringComparison.Ordinal));
+                Assert.Contains("await current.RunAsync(", text, StringComparison.Ordinal);
                 continue;
+
+                void AssertReservationBeforeConnect(string admission, string connect)
+                {
+                    var prepare = session.IndexOf(admission, StringComparison.Ordinal);
+                    Assert.True(prepare >= 0 && session.IndexOf(connect, StringComparison.Ordinal) > prepare,
+                        "The voice connection must follow reservation: " + connect);
+                }
             }
             var reserve = text.IndexOf(adapter == "TextReasoningAdapters.cs" ? "ManagedAi.RequireReservedAsync(" : "budget.ReserveAsync(", StringComparison.Ordinal);
             Assert.True(reserve >= 0, "Provider adapter must reserve or verify its durable reservation: " + Path.GetFileName(file));

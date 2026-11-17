@@ -12,10 +12,11 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
   panel.append(start, stop, interrupt, status, transcript); document.querySelector('[data-panel=sessions]').prepend(panel);
   let capability = null, active = false, ready = false, socket, media, context, capture, source, heartbeat, watchdog, leaseDeadline = 0, sequence = 0;
   let nextAudio = 0, currentItem = null, itemStart = 0, itemSamples = 0; const sounds = new Set(); const pings = new Map(); let generation = 0, renewWanted = false;
+  let windowNumber = 0;
   function clearPlayback(send = false) {
     if (send && currentItem && ready && socket?.readyState === WebSocket.OPEN) {
       const playedMs = Math.max(0, Math.min(itemSamples / 24, (context.currentTime - itemStart) * 1000));
-      socket.send(JSON.stringify({ type: 'interrupt', itemId: currentItem, playedMs: Math.floor(playedMs) }));
+      socket.send(JSON.stringify({ type: 'interrupt', window: windowNumber, itemId: currentItem, playedMs: Math.floor(playedMs) }));
     }
     for (const sound of sounds) { try { sound.stop(); } catch {} } sounds.clear(); nextAudio = context?.currentTime || 0; currentItem = null; itemSamples = 0;
   }
@@ -26,7 +27,8 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
   function halt(message = 'Live microphone and playback stopped.') {
     generation++;
     active = ready = false; clearInterval(heartbeat); clearInterval(watchdog); pings.clear();
-    if (socket?.readyState === WebSocket.OPEN) { socket.send(JSON.stringify({ type: 'stop' })); socket.close(); }
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'stop' }));
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
     socket = null; closeMedia(); status.textContent = message; start.disabled = !capability?.ready; stop.disabled = interrupt.disabled = true;
   }
   async function beginWindow(preparedTicket = null, preparedAt = null) {
@@ -37,16 +39,24 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
     leaseDeadline = sentAt + 15000; sequence = 0; pings.clear();
     const url = new URL('/voice-stream', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(url); socket = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ type: 'authenticate', ticket: ticket.ticket }));
+    ws.onopen = () => {
+      if (active && socket === ws) ws.send(JSON.stringify({ type: 'authenticate', ticket: ticket.ticket, continuous: true }));
+      else ws.close();
+    };
     ws.onmessage = async event => {
       if (socket !== ws || !active) return;
       try {
         const message = JSON.parse(event.data);
         if (message.type === 'ready') {
+          windowNumber = Number.isInteger(message.window) ? message.window : 0;
           ready = true;
           const voice = typeof message.voiceName === 'string' && message.voiceName ? ` · voice ${message.voiceName}` : '';
           status.textContent = `LIVE · microphone active${voice} · say a short answer or interrupt the reply.`;
           interrupt.disabled = false;
+        }
+        if (message.type === 'window_renewing') {
+          ready = false;
+          status.textContent = 'Renewing voice…';
         }
         if (message.type === 'lease') {
           const at = pings.get(message.sequence); if (at !== undefined) { leaseDeadline = at + message.leaseSeconds * 1000; pings.delete(message.sequence); }
@@ -90,7 +100,7 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
         if (!active || !ready || performance.now() >= leaseDeadline || socket?.readyState !== WebSocket.OPEN) return;
         if (socket.bufferedAmount > 256000) { halt('Network cannot keep up with live audio. Reconnect on a better connection.'); return; }
         const bytes = new Uint8Array(event.data); let binary = ''; for (const value of bytes) binary += String.fromCharCode(value);
-        socket.send(JSON.stringify({ type: 'audio', audio: btoa(binary) }));
+        socket.send(JSON.stringify({ type: 'audio', window: windowNumber, audio: btoa(binary) }));
       };
       await beginWindow(ticket, sentAt);
     } catch (error) { closeMedia(); await api('/voice/local/release', ticket.lease).catch(() => {}); throw error; }

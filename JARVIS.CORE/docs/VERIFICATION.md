@@ -1,5 +1,12 @@
 # Verification results
 
+## Longer voice windows and background renewal, 2026-11-17
+
+- The full Core suite against isolated PostgreSQL 17 finished with **436 passed, 1 skipped and 0 failed**. The skipped case is the opt-in runtime measurement harness. The evidence is `tests/Jarvis.Tests/TestResults/voice-renewal-final.trx`.
+- Core fixtures verify the configured duration, original duration for older tickets, scaled audio and response caps, and a successor reserved and connected while the current window is active. The successor waits for speech, receives completed turns that arrived after preparation, and rejects frames from an older window. Stop releases an unused successor reservation. Both provider connection paths require a reservation.
+- All **54 browser tests** passed. Both browser renewal cases also passed against the final Core build. Android debug build, lint, APK signature verification and all **33 JVM tests** passed. Frontend assets and Android contracts match their sources.
+- Physical listening across the cutover remains pending. The local deployment's configured daily cap is below the minimum five-minute reservation. It needs a shorter `AI:Voice:WindowSeconds` setting for deployment with that cap.
+
 ## Live voice selection and turn detection, 2026-11-17
 
 - The combined Core suite passed against isolated PostgreSQL 17 with **428 passed, 1 skipped and 0 failed**. The evidence is `tests/Jarvis.Tests/TestResults/voice-turn-detection-full.trx`. The skipped test is the opt-in runtime measurement harness. The provider fixture verified default and custom voice and speed, semantic and server turn detection, and a single server fallback for a rejected semantic VAD setting. Core still controls response creation and interruption.
