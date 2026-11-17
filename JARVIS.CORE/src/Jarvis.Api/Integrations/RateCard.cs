@@ -12,11 +12,18 @@ namespace Jarvis.Api.Integrations;
 public sealed record ReviewedTextRates(ModelRoute Route, decimal SearchUsdPerCall, BudgetLimits Limits)
 {
     [JsonIgnore] public string ApiKey { get; init; } = "";
+    public bool PromptCachingEnabled { get; init; }
+    public IReadOnlyList<ModelRoute> Fallbacks { get; init; } = [];
     public override string ToString() => Route.ToString();
     public decimal Cost(int input, int output) {
         Guard.Require(input >= 0 && output >= 0, 502, "Provider returned invalid token usage.");
         return (input * Route.InputUsdPerMillion + output * Route.OutputUsdPerMillion) / 1_000_000m;
     }
+    // A single server-side call can bill every configured hop. Cache writes and reads
+    // partition input tokens, so reserve all input at the largest reviewed input rate.
+    public decimal MaximumCost(int input) => new[] { Route }.Concat(Fallbacks).Sum(route =>
+        (input * Math.Max(route.InputUsdPerMillion, Math.Max(route.CacheWriteUsdPerMillion ?? 0, route.CacheReadUsdPerMillion ?? 0)) +
+            route.OutputLimit * route.OutputUsdPerMillion) / 1_000_000m) + SearchUsdPerCall;
 }
 
 public sealed record ReviewedVoiceRates(VoiceMode Mode, ModelRoute Route, RealtimePricing Pricing);
@@ -86,7 +93,8 @@ public sealed class RateCard(IConfiguration config, TimeProvider clock)
         if (profile == "Chat" && provider == ProviderIds.OpenAi) Guard.Require(model == config[ConfigKeys.OpenAiModel], 503, "Chat model and its priced profile must match.");
         var date = ReviewedDate(prefix, model);
         var input = config.GetValue<decimal>(prefix + "InputUsdPerMillion"); var output = config.GetValue<decimal>(prefix + "OutputUsdPerMillion");
-        var cap = config.GetValue(prefix + ConfigKeys.MaxOutputTokens, profile == "Chat" ? 1500 : 2048);
+        var cap = config.GetValue(prefix + ConfigKeys.MaxOutputTokens, provider == ProviderIds.Anthropic ?
+            profile is "Chat" or "Coach" ? 8192 : 16384 : profile == "Chat" ? 1500 : 2048);
         Guard.Require(input > 0 && output > 0 && cap is > 0 and <= 32768 && requestedLimit is null or > 0, 503, "Configure positive text rates and a valid output limit.");
         Guard.Require(requestedLimit is null || requestedLimit <= cap, 400, "Requested output exceeds the reviewed profile cap.");
         cap = requestedLimit ?? cap;
@@ -97,11 +105,34 @@ public sealed class RateCard(IConfiguration config, TimeProvider clock)
             403, "This route cannot provide the required public grounding. No fallback was attempted.");
         var search = capability == TextCapability.GroundedPublicSearch ? config.GetValue<decimal>(prefix + "SearchUsdPerCall") : 0;
         Guard.Require(capability != TextCapability.GroundedPublicSearch || search > 0, 503, "Grounded search requires its reviewed per-call price.");
-        var revision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { provider, model, date, input, output, cap, search, allowed }))));
-        var route = new ModelRoute(provider, model!, profile, "text-routing-v1", revision, date, input, output, cap, capability, dataClass);
+        var caching = config.GetValue(prefix + ConfigKeys.PromptCachingEnabled, false);
+        var cacheWrite = config.GetValue<decimal?>(prefix + ConfigKeys.CacheWriteUsdPerMillion);
+        var cacheRead = config.GetValue<decimal?>(prefix + ConfigKeys.CacheReadUsdPerMillion);
+        Guard.Require(cacheWrite is null or > 0 && cacheRead is null or > 0 && (!caching || provider == ProviderIds.Anthropic && cacheWrite > 0 && cacheRead > 0),
+            503, "Prompt caching requires reviewed positive cache-write and cache-read rates on an Anthropic route.");
+        var fallbacks = config.GetSection(prefix + ConfigKeys.Fallbacks).GetChildren().ToArray();
+        Guard.Require(fallbacks.Length <= 3 && (fallbacks.Length == 0 || provider == ProviderIds.Anthropic), 503, "Configure at most three explicit Anthropic fallback rate cards.");
+        var fallbackRoutes = new List<ModelRoute>();
+        foreach (var fallback in fallbacks) {
+            var fallbackModel = fallback[ConfigKeys.Model];
+            var fallbackDate = ReviewedDate(fallback.Path + ":", fallbackModel);
+            var fallbackInput = fallback.GetValue<decimal>("InputUsdPerMillion");
+            var fallbackOutput = fallback.GetValue<decimal>("OutputUsdPerMillion");
+            var fallbackWrite = fallback.GetValue<decimal?>(ConfigKeys.CacheWriteUsdPerMillion);
+            var fallbackRead = fallback.GetValue<decimal?>(ConfigKeys.CacheReadUsdPerMillion);
+            Guard.Require(fallbackInput > 0 && fallbackOutput > 0 && fallbackModel != model && fallbackRoutes.All(r => r.Model != fallbackModel) &&
+                fallbackWrite is null or > 0 && fallbackRead is null or > 0 && (!caching || fallbackWrite > 0 && fallbackRead > 0),
+                503, "Fallback models must be distinct and have complete reviewed rates, including enabled caching.");
+            var fallbackRevision = PrivacyData.Hash(JsonSerializer.Serialize(new { fallbackModel, fallbackDate, fallbackInput, fallbackOutput, fallbackWrite, fallbackRead, cap }));
+            fallbackRoutes.Add(new(provider, fallbackModel!, profile, "text-routing-v1", fallbackRevision, fallbackDate, fallbackInput, fallbackOutput,
+                cap, capability, dataClass, CacheWriteUsdPerMillion: fallbackWrite, CacheReadUsdPerMillion: fallbackRead));
+        }
+        var revision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { provider, model, date, input, output, cap, search, allowed, caching, cacheWrite, cacheRead, fallbackRoutes }))));
+        var route = new ModelRoute(provider, model!, profile, "text-routing-v1", revision, date, input, output, cap, capability, dataClass,
+            CacheWriteUsdPerMillion: cacheWrite, CacheReadUsdPerMillion: cacheRead);
         var limits = new BudgetLimits(config.GetValue(ConfigKeys.DailyLimitUsd, 2m), config.GetValue(ConfigKeys.MonthlyLimitUsd, 50m),
             config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m), config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m));
         Guard.Require(!reload.HasChanged, 409, "Provider settings changed while selecting a route. Retry before dispatch.");
-        return new(route, search, limits) { ApiKey = secret! };
+        return new(route, search, limits) { ApiKey = secret!, PromptCachingEnabled = caching, Fallbacks = fallbackRoutes.ToArray() };
     }
 }
