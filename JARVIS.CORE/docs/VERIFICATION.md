@@ -1,5 +1,9 @@
 # Verification results
 
+## Release source
+
+Build Release 0.2 and subsequent releases from the canonical JARVIS monorepo. The Desktop Core, Frontend and Mobile repositories are frozen at the Release 0.1 baseline (`5931b61`, `4011e00` and `c4c23fe`, respectively).
+
 ## FX refresh and Android provisioning hotfix, 2026-11-17
 
 - Core passed **422 tests** against isolated PostgreSQL 17. The opt-in runtime measurement harness was skipped. A fixed clock and fake ECB response demonstrated 72 hours of continuous budget readiness across a weekend. Other tests covered source validation, rejected refreshes, expiry, a restart and the quote stored with each commitment. Evidence is `tests/Jarvis.Tests/TestResults/ops-hotfix-full.trx`.
