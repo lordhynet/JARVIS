@@ -22,17 +22,41 @@ public static class VoiceTranscriptRules
 
 public sealed class VoiceTranscriptService(ICoreTransaction transaction, TimeProvider clock)
 {
-    public async Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, CancellationToken ct)
+    public Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, CancellationToken ct) =>
+        RecordAsync(sessionId, id, role, text, speechSeconds, clock.GetUtcNow(), null, ct);
+
+    public Task RecordFallbackAsync(AudioLease lease, Guid captureId, DateTimeOffset promptedAt, DateTimeOffset capturedAt,
+        string text, CancellationToken ct)
     {
-        var now = clock.GetUtcNow(); now = new(now.UtcTicks - now.UtcTicks % 10, TimeSpan.Zero);
-        var turn = new VoiceTurn(id, sessionId, role, text, speechSeconds, now); VoiceTranscriptRules.Validate(turn);
+        Guard.Require(capturedAt > promptedAt && capturedAt <= clock.GetUtcNow() && VoiceModePolicy.ConfirmsEveryday(text),
+            409, "A fresh spoken yes is required to continue in Everyday voice.");
+        return RecordAsync(lease.SessionId, captureId, ChatRoles.User, text, null, capturedAt, lease, ct);
+    }
+
+    private async Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, DateTimeOffset at,
+        AudioLease? fallbackLease, CancellationToken ct)
+    {
+        at = new(at.UtcTicks - at.UtcTicks % 10, TimeSpan.Zero);
+        var turn = new VoiceTurn(id, sessionId, role, text, speechSeconds, at);
+        VoiceTranscriptRules.Validate(turn);
         await transaction.ExecuteAsync(async writes =>
         {
+            if (fallbackLease is not null)
+            {
+                var state = writes.Runtime;
+                Guard.Require(AudioFenceChanges.Matches(fallbackLease, state.AudioLease) && state.AudioLease!.ExpiresAt > clock.GetUtcNow() &&
+                    !state.AgentControls.EffectivePaidAiPaused, 409, "Audio ownership changed before confirming Everyday voice.");
+                Guard.Require(!state.VoiceTurns.ContainsKey(id), 409, "This spoken confirmation was already used.");
+            }
             var session = await writes.UpdateSessionAsync(sessionId, current =>
             {
+                if (fallbackLease is not null)
+                    Guard.Require(current.Status == SessionStatus.Active && current.ActiveDeviceId == fallbackLease.DeviceId,
+                        409, "Session audio ownership changed.");
                 var previous = current.Messages?.SingleOrDefault(m => m.RequestId == id);
                 if (previous is not null)
                 {
+                    Guard.Require(fallbackLease is null, 409, "This spoken confirmation was already used.");
                     Guard.Require(previous.Role == role && previous.Text == text && (!previous.IsVoice || previous.SpeechSeconds == speechSeconds),
                         409, "Transcript ID was reused.");
                     return previous.IsVoice ? current : VoiceConversationMemory.RefreshSummary(current with
@@ -43,7 +67,8 @@ public sealed class VoiceTranscriptService(ICoreTransaction transaction, TimePro
                 Guard.Require((current.Messages?.Count ?? 0) < 2000, 409, "Session transcript is full.");
                 return VoiceConversationMemory.RefreshSummary(current with
                 {
-                    UpdatedAt = now, Messages = [.. current.Messages ?? [], new(id, role, text, now, true, speechSeconds)]
+                    UpdatedAt = current.UpdatedAt > at ? current.UpdatedAt : at,
+                    Messages = [.. current.Messages ?? [], new(id, role, text, at, true, speechSeconds)]
                 });
             });
             Guard.Require(session is not null, 404, "Session not found.");

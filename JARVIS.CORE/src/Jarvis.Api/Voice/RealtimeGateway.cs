@@ -39,10 +39,9 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             authentication.CancelAfter(TimeSpan.FromSeconds(8));
             var (ticket, continuous, startEveryday, negotiateMode) = await AuthenticateAsync(socket, ownership, authentication.Token);
             lease = ticket.Lease;
-            if (startEveryday)
-                await ownership.SetVoiceModeAsync(lease, new(VoiceMode.Everyday), authentication.Token);
+            if (startEveryday) client.ModeSelection = new(VoiceMode.Everyday);
             var window = new VoiceWindowLimits(ticket.WindowSeconds);
-            var negotiation = new RealtimeVoiceNegotiation(client, lease, ownership, runtime, transcription, transcripts);
+            var negotiation = new RealtimeVoiceNegotiation(client, lease, ownership, runtime, transcription, transcripts, clock);
             RealtimeVoiceSession CreateWindow(int number) => new(client, ticket.Lease, window, number, continuous, negotiateMode,
                 ownership, connections, ai, budget, runtime, sessions, clock, tools, transcripts, fenceChanges);
             RealtimeVoiceSession? current = CreateWindow(1);

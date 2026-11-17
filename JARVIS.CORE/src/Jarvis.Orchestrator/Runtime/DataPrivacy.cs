@@ -116,12 +116,7 @@ public static class PrivacyData
             state.ProviderResults.Remove(id);
             if (state.ProviderAttempts.TryGetValue(id, out var attempt)) state.ProviderAttempts[id] = attempt with { Fingerprint = "" };
         }
-        foreach (var id in selection.Sessions)
-        {
-            state.SessionVoiceModes.Remove(id);
-            state.RetiredSessions.Add(id);
-            ReasoningLifecycle.Retire(state, id);
-        }
+        foreach (var id in selection.Sessions) { state.RetiredSessions.Add(id); ReasoningLifecycle.Retire(state, id); }
         foreach (var recall in state.VoiceRecalls.Values.Where(x => selection.Sessions.Contains(x.SessionId) ||
             voiceIds.Contains(x.StartUtteranceId) || x.AnswerUtteranceId is Guid answer && voiceIds.Contains(answer) ||
             x.RatingUtteranceId is Guid rated && voiceIds.Contains(rated)).ToList()) state.VoiceRecalls.Remove(recall.Id);

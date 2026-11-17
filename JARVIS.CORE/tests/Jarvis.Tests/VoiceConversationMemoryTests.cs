@@ -32,19 +32,40 @@ public sealed class VoiceConversationMemoryTests
     }
 
     [Fact]
-    public void Json_byte_limits_include_escaping_and_keep_all_twenty_recent_turns()
+    public void Json_byte_limits_include_escaping_and_favour_the_newest_turns()
     {
         const string pattern = "🔑漢\"\\\n";
         var session = Fixture(40, _ => string.Concat(Enumerable.Repeat(pattern, 600)));
         var saved = VoiceConversationMemory.RefreshSummary(session);
         var recent = VoiceConversationMemory.Recent(saved);
         var earlier = saved.VoiceSummary!.EarlierTurns;
-        Assert.Equal(20, recent.Count);
-        Assert.Equal(8, earlier.Count);
+        Assert.Equal(4, recent.Count);
+        Assert.Equal(3, earlier.Count);
         Assert.InRange(JsonSerializer.SerializeToUtf8Bytes(recent).Length, 1, VoiceConversationMemory.RecentByteLimit);
         Assert.InRange(JsonSerializer.SerializeToUtf8Bytes(earlier).Length, 1, VoiceConversationMemory.SummaryByteLimit);
         Assert.All(recent.Concat(earlier), t => Assert.DoesNotContain("\uFFFD", t.Text));
         Assert.EndsWith("…", recent[0].Text);
+        Assert.True(recent[^1].Text.Length > recent[0].Text.Length);
+    }
+
+    [Fact]
+    public void Short_turns_leave_room_for_the_latest_full_answer()
+    {
+        var explanation = new string('a', 1100);
+        var session = Fixture(20, i => i == 20 ? explanation : $"Short turn {i}");
+        var recent = VoiceConversationMemory.Recent(session);
+        Assert.Equal(20, recent.Count);
+        Assert.Equal(explanation, recent[^1].Text);
+        Assert.Equal("Short turn 1", recent[0].Text);
+    }
+
+    [Fact]
+    public void One_long_turn_leaves_room_for_its_three_followups()
+    {
+        var session = Fixture(20, i => i == 17 ? new string('a', 8000) : $"Short turn {i}");
+        var recent = VoiceConversationMemory.Recent(session);
+        Assert.EndsWith("…", recent[16].Text);
+        Assert.Equal(new[] { "Short turn 18", "Short turn 19", "Short turn 20" }, recent.TakeLast(3).Select(t => t.Text));
     }
 
     private static ConversationSession Fixture(int count, Func<int, string>? text = null)

@@ -8,7 +8,7 @@ using Jarvis.Orchestrator.Runtime;
 namespace Jarvis.Api.Voice;
 
 internal sealed class RealtimeVoiceNegotiation(RealtimeVoiceClient client, AudioLease lease, AudioOwnership ownership,
-    IRuntimeReader runtime, OpenAiProvider provider, VoiceTranscriptService transcripts)
+    IRuntimeReader runtime, OpenAiProvider provider, VoiceTranscriptService transcripts, TimeProvider clock)
 {
     private const int CaptureSeconds = 3;
     private const int CaptureBytes = CaptureSeconds * VoiceWindowLimits.BytesPerSecond;
@@ -28,13 +28,15 @@ internal sealed class RealtimeVoiceNegotiation(RealtimeVoiceClient client, Audio
             if (!Matches(message, "offerId", offer)) continue;
             if (message.GetProperty("type").ValueEquals("confirm_voice_mode"))
             {
-                await ownership.SetVoiceModeAsync(lease, new(VoiceMode.Serious, estimate.MaximumGbpForTenMinutes, FollowActivity: true), token);
+                Guard.Require(await CurrentAsync(token), 409, "Audio ownership changed before confirming Serious voice.");
+                client.ModeSelection = new(VoiceMode.Serious, estimate.MaximumGbpForTenMinutes, FollowActivity: true);
                 return true;
             }
             if (message.GetProperty("type").ValueEquals("voice_mode") && message.TryGetProperty("mode", out var mode) &&
                 mode.ValueKind == JsonValueKind.String && mode.ValueEquals(nameof(VoiceMode.Everyday)))
             {
-                await ownership.SetVoiceModeAsync(lease, new(VoiceMode.Everyday), token);
+                Guard.Require(await CurrentAsync(token), 409, "Audio ownership changed before selecting Everyday voice.");
+                client.ModeSelection = new(VoiceMode.Everyday);
                 return true;
             }
         }
@@ -48,6 +50,7 @@ internal sealed class RealtimeVoiceNegotiation(RealtimeVoiceClient client, Audio
         var token = consent.Token;
         Guard.Require(await CurrentAsync(token), 409, "Voice is no longer available on this device.");
         var capture = Guid.NewGuid();
+        var promptedAt = clock.GetUtcNow();
         await client.SendAsync(new { type = "voice_fallback_offer", captureId = capture, detail = reason,
             prompt = "Serious voice is unavailable. Say yes to continue in Everyday voice." }, token);
         bool played = false;
@@ -71,11 +74,12 @@ internal sealed class RealtimeVoiceNegotiation(RealtimeVoiceClient client, Audio
         }
 
         if (audio.Length != CaptureBytes || !HasSpeech(audio.GetBuffer())) return false;
+        var capturedAt = clock.GetUtcNow();
         await client.SendAsync(new { type = "voice_fallback_verifying", captureId = capture }, token);
         var text = await VerifyAsync(audio.ToArray(), token);
         if (text is null || !VoiceModePolicy.ConfirmsEveryday(text) || !await CurrentAsync(token)) return false;
-        await transcripts.RecordAsync(lease.SessionId, capture, ChatRoles.User, text, null, token);
-        await ownership.SetVoiceModeAsync(lease, new(VoiceMode.Everyday), token, fallbackUtterance: capture);
+        await transcripts.RecordFallbackAsync(lease, capture, promptedAt, capturedAt, text, token);
+        client.ModeSelection = new(VoiceMode.Everyday);
         return true;
     }
 

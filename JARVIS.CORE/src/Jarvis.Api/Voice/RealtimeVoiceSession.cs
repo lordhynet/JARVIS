@@ -46,7 +46,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private int phase;
     private int paidPauseRequested;
     private int providerFailed;
-    private SessionVoiceMode? preparedMode;
+    private VoiceStreamMode? preparedMode;
     private VoiceMode recommendedMode;
     internal int Number => number;
 
@@ -98,7 +98,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         persona = ai.RealtimePersona();
         hasDisplay = await runtime.ReadAsync(s => s.Devices.GetValueOrDefault(lease.DeviceId)?.Registration.Capabilities.HasDisplay == true, ct);
         instructions = await ReadInstructionsAsync(ct);
-        var selection = await ReadModeAsync(ct);
+        var selection = ReadMode();
         var voiceRates = ReadRates(selection);
         ApplyRates(selection, voiceRates);
         await ReserveWindowAsync(Encoding.UTF8.GetByteCount(instructions) +
@@ -129,22 +129,22 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1);
     }
 
-    private async Task<SessionVoiceMode?> ReadModeAsync(CancellationToken ct)
+    private VoiceStreamMode? ReadMode()
     {
-        var saved = await runtime.ReadAsync(s => s.SessionVoiceModes.GetValueOrDefault(lease.SessionId), ct);
-        if (saved is { FollowActivity: false }) return saved;
+        var selected = client.ModeSelection;
+        if (selected is { FollowActivity: false }) return selected;
         if (!negotiateMode) return null;
         if (recommendedMode == VoiceMode.Everyday) return null;
         var estimate = ai.VoiceOption(VoiceMode.Serious, window);
         if (!estimate.PricingReady || estimate.MaximumGbpForTenMinutes is not decimal maximum)
             throw new SeriousVoiceUnavailableException(new DomainException(503, estimate.Detail));
-        if (saved?.ConfirmedGbpForTenMinutes is decimal confirmed && maximum <= confirmed) return saved;
+        if (selected?.ConfirmedGbpForTenMinutes is decimal confirmed && maximum <= confirmed) return selected;
         throw new SeriousVoiceConfirmationRequired(estimate);
     }
 
-    private static VoiceMode SelectedMode(SessionVoiceMode? selection) => selection?.Mode ?? VoiceMode.Everyday;
+    private static VoiceMode SelectedMode(VoiceStreamMode? selection) => selection?.Mode ?? VoiceMode.Everyday;
 
-    private ReviewedVoiceRates ReadRates(SessionVoiceMode? selection)
+    private ReviewedVoiceRates ReadRates(VoiceStreamMode? selection)
     {
         var mode = SelectedMode(selection);
         try
@@ -166,7 +166,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         }
     }
 
-    private void ApplyRates(SessionVoiceMode? selection, ReviewedVoiceRates reviewed)
+    private void ApplyRates(VoiceStreamMode? selection, ReviewedVoiceRates reviewed)
     {
         preparedMode = selection;
         pricing = reviewed.Pricing;
@@ -194,7 +194,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     {
         Guard.Require(await ownership.CurrentAsync(lease, ct), 409, "Audio ownership expired before voice renewal.");
         instructions = await ReadInstructionsAsync(ct);
-        var selection = await ReadModeAsync(ct);
+        var selection = ReadMode();
         var voiceRates = ReadRates(selection);
         var bytes = Encoding.UTF8.GetByteCount(instructions);
         var routeChanged = voiceRates.Route != route || voiceRates.Pricing != pricing;

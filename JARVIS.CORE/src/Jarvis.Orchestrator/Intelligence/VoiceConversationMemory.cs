@@ -10,6 +10,8 @@ public static class VoiceConversationMemory
     public const int RecentByteLimit = 5000;
     public const int SummaryTurnLimit = 8;
     public const int SummaryByteLimit = 1800;
+    private const int RecentTextByteLimit = 1500;
+    private const int SummaryTextByteLimit = 600;
 
     public static ConversationSession RefreshSummary(ConversationSession session)
     {
@@ -17,28 +19,33 @@ public static class VoiceConversationMemory
         if (older.Length == 0)
             return session.VoiceSummary is null ? session : session with { VoiceSummary = null };
 
-        var excerpts = Excerpts(older, SummaryByteLimit);
+        var excerpts = Excerpts(older, SummaryByteLimit, SummaryTextByteLimit);
         return session.VoiceSummary?.EarlierTurns.SequenceEqual(excerpts) == true
             ? session : session with { VoiceSummary = new(excerpts) };
     }
 
     public static IReadOnlyList<VoiceMemoryTurn> Recent(ConversationSession session) =>
-        Excerpts(Turns(session).TakeLast(RecentTurnLimit).ToArray(), RecentByteLimit);
+        Excerpts(Turns(session).TakeLast(RecentTurnLimit).ToArray(), RecentByteLimit, RecentTextByteLimit);
 
     private static IEnumerable<ChatMessage> Turns(ConversationSession session) =>
         (session.Messages ?? []).Where(turn => (turn.Role is ChatRoles.User or ChatRoles.Assistant)
             && !string.IsNullOrWhiteSpace(turn.Text));
 
-    private static VoiceMemoryTurn[] Excerpts(ChatMessage[] turns, int byteLimit)
+    private static VoiceMemoryTurn[] Excerpts(ChatMessage[] turns, int byteLimit, int textByteLimit)
     {
-        if (turns.Length == 0) return [];
-        var bytesPerTurn = (byteLimit - 2 - (turns.Length - 1)) / turns.Length;
-        return turns.Select(turn =>
+        var excerpts = new List<VoiceMemoryTurn>(turns.Length);
+        var remaining = byteLimit - 2; // JSON array brackets.
+        foreach (var turn in turns.Reverse())
         {
             var empty = new VoiceMemoryTurn(turn.Role, "");
-            var textBytes = bytesPerTurn - JsonSerializer.SerializeToUtf8Bytes(empty).Length;
-            return empty with { Text = ClipJsonText(turn.Text, textBytes) };
-        }).ToArray();
+            var overhead = JsonSerializer.SerializeToUtf8Bytes(empty).Length + (excerpts.Count > 0 ? 1 : 0);
+            var text = ClipJsonText(turn.Text, Math.Min(textByteLimit, remaining - overhead));
+            if (text.Length == 0) break;
+            excerpts.Add(empty with { Text = text });
+            remaining -= overhead + EncodedBytes(text);
+        }
+        excerpts.Reverse();
+        return excerpts.ToArray();
     }
 
     // Measure JSON escapes as well as UTF-8 bytes. Avoid cutting a surrogate pair.

@@ -1,17 +1,26 @@
 using System.Net.WebSockets;
 using System.Text.Json;
+using Jarvis.Contracts;
 
 namespace Jarvis.Api.Voice;
+
+internal sealed record VoiceStreamMode(VoiceMode Mode, decimal? ConfirmedGbpForTenMinutes = null, bool FollowActivity = false);
 
 // One receive survives the cutover. Cancelling a window's wait must not abort the client's socket.
 internal sealed class RealtimeVoiceClient(WebSocket socket, CancellationToken disconnected)
 {
     private Task<JsonElement>? pending;
     private int stopRequested;
+    private VoiceStreamMode? modeSelection;
 
     public WebSocketState State => socket.State;
     public bool StopRequested => Volatile.Read(ref stopRequested) != 0;
     public void RecordStop() => Volatile.Write(ref stopRequested, 1);
+    public VoiceStreamMode? ModeSelection
+    {
+        get => Volatile.Read(ref modeSelection);
+        set => Volatile.Write(ref modeSelection, value);
+    }
 
     public async Task<JsonElement> ReadAsync(CancellationToken ct)
     {

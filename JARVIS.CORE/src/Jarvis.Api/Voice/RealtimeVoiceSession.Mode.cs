@@ -79,11 +79,11 @@ internal sealed partial class RealtimeVoiceSession
         await SelectModeAsync(new(VoiceMode.Serious, offer.MaximumGbpForTenMinutes));
     }
 
-    private async Task SelectModeAsync(SessionVoiceMode selection)
+    private async Task SelectModeAsync(VoiceStreamMode selection)
     {
         if (!await CurrentAudioAsync(timeout.Token)) return;
         if (selection.Mode == VoiceMode.Everyday) Interlocked.Exchange(ref modeOffer, null);
-        await ownership.SetVoiceModeAsync(lease, selection, timeout.Token);
+        client.ModeSelection = selection;
         await SendClientAsync(new { type = "voice_mode_queued", window = number, mode = selection.Mode.ToString() });
     }
 

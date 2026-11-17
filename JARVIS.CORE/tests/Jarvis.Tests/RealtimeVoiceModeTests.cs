@@ -23,8 +23,8 @@ public sealed partial class RealtimeProtocolTests
         var first = new ProviderSocket();
         var standby = new ProviderSocket();
         var serious = new ProviderSocket();
-        var providers = new WindowProviders(first, standby, serious);
-        var clock = new WindowClock(30);
+        var providers = new WindowProviders(first, standby, serious, new ProviderSocket());
+        var clock = new WindowClock(30, frozenUtc: true);
         using var host = root.WithWebHostBuilder(builder =>
         {
             builder.UseSetting(ConfigKeys.VoiceWindowSeconds, "30");
@@ -71,13 +71,11 @@ public sealed partial class RealtimeProtocolTests
         Assert.Equal("assistant", (await Read("transcript")).GetProperty("role").GetString());
         first.Transcript("Please don't use serious mode.", "negative-mode-fixture");
         Assert.Equal("user", (await Read("transcript")).GetProperty("role").GetString());
-        Assert.Empty(await runtime.ReadAsync(s => s.SessionVoiceModes, ct));
         first.Transcript("Let’s do a proper interview!");
         if (disabled)
         {
             Assert.Contains("Serious voice is disabled", (await Read("voice_mode_rejected")).GetProperty("detail").GetString()!);
             await Read("transcript");
-            Assert.Empty(await runtime.ReadAsync(s => s.SessionVoiceModes, ct));
             await Send(socket, new { type = "stop" }, ct);
             await Read("ended");
             Assert.Empty(standby.Sent);
@@ -90,10 +88,8 @@ public sealed partial class RealtimeProtocolTests
         await Read("transcript");
         await Send(socket, new { type = "confirm_voice_mode", window = 1, offerId = Guid.NewGuid() }, ct);
         await Read("voice_mode_rejected");
-        Assert.Empty(await runtime.ReadAsync(s => s.SessionVoiceModes, ct));
         await Send(socket, new { type = "confirm_voice_mode", window = 1, offerId }, ct);
         Assert.Equal("Serious", (await Read("voice_mode_queued")).GetProperty("mode").GetString());
-        Assert.Equal(VoiceMode.Serious, (await runtime.ReadAsync(s => s.SessionVoiceModes[id], ct)).Mode);
         Assert.All(first.Sent.Where(frame => frame.GetProperty("type").ValueEquals("session.update")),
             frame => Assert.Equal(initial.GetProperty("model").GetString(), frame.GetProperty("session").GetProperty("model").GetString()));
         Assert.Empty(standby.Sent);
@@ -106,7 +102,6 @@ public sealed partial class RealtimeProtocolTests
             Assert.Contains("daily GBP cap reached", error.GetProperty("detail").GetString()!);
             Assert.Equal(WebSocketMessageType.Close, (await socket.ReceiveAsync(new ArraySegment<byte>(new byte[128]), ct)).MessageType);
             Assert.Equal(2, providers.Models.Count);
-            Assert.Equal(VoiceMode.Serious, (await runtime.ReadAsync(s => s.SessionVoiceModes[id], ct)).Mode);
             Assert.Null(await runtime.ReadAudioLeaseAsync(ct));
         }
         else
@@ -123,12 +118,18 @@ public sealed partial class RealtimeProtocolTests
             Assert.Contains("Previous turn 06.", configured.GetProperty("instructions").GetString()!);
             Assert.Contains("proper interview", configured.GetProperty("instructions").GetString()!);
             Assert.Contains("never re-greet", configured.GetProperty("instructions").GetString()!);
-            serious.Transcript("Back to normal.");
-            Assert.Equal("Everyday", (await Read("voice_mode_queued")).GetProperty("mode").GetString());
-            await Read("transcript");
-            Assert.Equal(VoiceMode.Everyday, (await runtime.ReadAsync(s => s.SessionVoiceModes[id], ct)).Mode);
             await Send(socket, new { type = "stop" }, ct);
             await Read("ended");
+
+            var restarted = await ownership.StartAsync(new(id, device, true), ct, 30);
+            using var again = await host.Server.CreateWebSocketClient().ConnectAsync(new("ws://localhost/voice-stream"), ct);
+            await Send(again, new { type = "authenticate", ticket = restarted.Ticket, continuous = true }, ct);
+            var firstNewWindow = await ReadFrameAsync(again, "ready", ct);
+            Assert.Equal("Everyday", firstNewWindow.GetProperty("mode").GetString());
+            Assert.NotEqual(ticket.Lease.Fence, firstNewWindow.GetProperty("fence").GetInt64());
+            await ReadFrameAsync(again, "transcript", ct);
+            await Send(again, new { type = "stop" }, ct);
+            await ReadFrameAsync(again, "ended", ct);
         }
 
         Assert.Empty(standby.Sent);
