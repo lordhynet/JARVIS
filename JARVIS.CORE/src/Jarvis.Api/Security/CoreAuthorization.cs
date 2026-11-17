@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 
 namespace Jarvis.Api.Security;
@@ -98,6 +99,11 @@ public static class CoreAuthorizationRegistration
     {
         services.AddHttpContextAccessor();
         services.AddAuthentication(CorePolicies.Scheme).AddScheme<AuthenticationSchemeOptions, JarvisItemAuthenticationHandler>(CorePolicies.Scheme, _ => { });
+        // Core authenticates with keys and tickets. Keep framework protection in process memory and skip disk key-ring startup.
+        services.AddDataProtection().UseEphemeralDataProtectionProvider();
+        var keyRingStartup = services.SingleOrDefault(descriptor => descriptor.ServiceType == typeof(IHostedService) &&
+            descriptor.ImplementationType?.FullName == "Microsoft.AspNetCore.DataProtection.Internal.DataProtectionHostedService");
+        if (keyRingStartup is not null) services.Remove(keyRingStartup);
         services.AddAuthorization(options =>
         {
             options.AddPolicy(CorePolicies.Owner, p => p.RequireAuthenticatedUser().AddRequirements(new JarvisActorRequirement("owner")));

@@ -62,3 +62,15 @@ public sealed partial class RealtimeProtocolTests
         Assert.Equal("ended", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
     }
 }
+
+public sealed class ReleaseReadinessTests
+{
+    [Fact]
+    public void Core_uses_process_only_framework_data_protection()
+    {
+        using var host = new JarvisApiFactory();
+        Assert.IsType<EphemeralDataProtectionProvider>(host.Services.GetRequiredService<IDataProtectionProvider>());
+        Assert.DoesNotContain(host.Services.GetServices<IHostedService>(),
+            service => service.GetType().Name == "DataProtectionHostedService");
+    }
+}
