@@ -1,10 +1,12 @@
 # JARVIS audio-only Android companion
 
-Version 0.10.2 continues the earbuds-first audio interface with bounded transport recovery. Core owns conversations, memory, practice, CVs, goals, stories and tools. Android handles secure connection, microphone/playback, permissions and start/stop; there are no native feature dashboards or editors.
+Version 0.10.3 supports system-trusted HTTPS for pairing links that name a DNS host. Core owns conversations, memory, practice, CVs, goals, stories and tools. Android handles secure connection, microphone, playback, permissions and start/stop.
 
-Build with JDK 17 and `./build.ps1 -Clean`. This builds, runs JVM tests/lint and verifies the signed `../artifacts/JARVIS-Android-0.10.2.apk`. Pinned tools are in `../.tools`.
+Build with JDK 17 and `./build.ps1 -Clean`. This builds, runs JVM tests and lint, and verifies the signed `../artifacts/JARVIS-Android-0.10.3.apk`. Pinned tools are in `../.tools`.
 
 Install through authorized ADB: `adb -s <serial> install -r <apk>`. From Core use `./scripts/connect-android.ps1 -Device <serial>`, then accept Connect to my Core. Provider credentials stay on Core.
+
+Pairing links for a DNS host can use the Android system certificate store. Links for IP addresses and localhost require a certificate fingerprint. A pinned connection is confirmed against its saved certificate and asks you to re-pair if the fingerprint changes.
 
 Physically check microphone and earbuds, confirm the check in settings, grant permissions and consent to provider processing before starting. Core prepares/resumes its canonical conversation. Headset Pause/Stop ends voice; Next interrupts the reply. Start is an explicit screen gesture.
 

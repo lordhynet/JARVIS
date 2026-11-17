@@ -110,7 +110,11 @@ internal class VoiceTransport(
             if (pings.size > 8) { reconnect(current); continue }
             try { core?.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java) }
             catch (e: CoreHttpException) { if (lifecycle.isLive(current)) listener.stopped(e.message ?: "Core rejected device access.") }
-            catch (_: IOException) { reconnect(current) }
+            catch (error: IOException) {
+                val changed = CertificatePin.failureMessage(error)
+                if (changed != null && lifecycle.isLive(current)) listener.stopped(changed)
+                else reconnect(current)
+            }
             catch (e: Exception) { if (lifecycle.isLive(current)) listener.stopped(e.message ?: "Core privacy access changed.") }
         }
     }
@@ -208,7 +212,10 @@ internal class VoiceTransport(
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             val wasEstablished = established.isCompleted
             established.completeExceptionally(IOException("Live connection failed", t))
-            if (wasEstablished && isWindow(current, webSocket)) reconnect(current)
+            if (wasEstablished && isWindow(current, webSocket)) {
+                val changed = CertificatePin.failureMessage(t)
+                if (changed != null) listener.stopped(changed) else reconnect(current)
+            }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -233,7 +240,10 @@ internal class VoiceTransport(
             try { connectWindow(saved, current); return }
             catch (e: CoreHttpException) { throw e }
             catch (e: CancellationException) { if (e !is TimeoutCancellationException) throw e; wait = true }
-            catch (_: IOException) { wait = true }
+            catch (error: IOException) {
+                if (CertificatePin.failureMessage(error) != null) throw error
+                wait = true
+            }
             // A missing ready frame can leave a live lease on Core.
             val drain = remainingLeaseMillis()
             if (drain > 0 && lifecycle.isLive(current)) delay(drain)
@@ -255,7 +265,7 @@ internal class VoiceTransport(
                 if (drain > 0) delay(drain)
                 connectRecovering(saved, current, initialDelay = !immediate)
             } catch (e: Exception) {
-                if (lifecycle.isLive(current)) listener.stopped(e.message ?: "Voice reconnection failed.")
+                if (lifecycle.isLive(current)) listener.stopped(CertificatePin.failureMessage(e) ?: e.message ?: "Voice reconnection failed.")
             }
         }
     }

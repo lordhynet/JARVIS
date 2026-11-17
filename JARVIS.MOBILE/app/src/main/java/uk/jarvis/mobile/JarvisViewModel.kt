@@ -4,11 +4,9 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.JsonObject
-import com.google.gson.JsonParser
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import uk.jarvis.mobile.contracts.*
@@ -18,7 +16,8 @@ data class ScreenState(
     val connected: Boolean = false, val busy: Boolean = false, val notice: String = "",
     val url: String = "", val pairingOffered: Boolean = false, val offline: Boolean = false,
     val audioStarting: Boolean = false, val privacyRevoked: Boolean = false,
-    val verified: Boolean = false, val voice: AiCapabilityStatus? = null, val legacyDrafts: Boolean = false
+    val verified: Boolean = false, val voice: AiCapabilityStatus? = null, val legacyDrafts: Boolean = false,
+    val certificateTrust: String? = null
 )
 
 /** Connection/device/audio transport only. Conversation and feature state live on Core. */
@@ -39,20 +38,22 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     fun offerPairing(encoded: String) {
         runCatching {
-            require(encoded.length <= 8192)
-            val json = JsonParser.parseString(String(Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8)).asJsonObject
-            val token = json.get("token").asString
-            require(token.length in 16..512 && !token.contains('\n'))
-            offer = SavedConnection(CoreAddress.validate(json.get("url").asString), token, CertificatePin.normalize(json.get("certificateSha256").asString))
-            mutable.update { it.copy(pairingOffered = true, notice = "") }
-        }.onFailure { reportAudioIssue("Pairing details were invalid. Send them again from your trusted Core computer.") }
+            val parsed = Provisioning.parse(encoded)
+            offer = parsed
+            mutable.update { it.copy(pairingOffered = true, certificateTrust = CertificatePin.trustLabel(parsed.certificateSha256, connected = false), notice = "") }
+        }.onFailure {
+            offer = null
+            mutable.update { it.copy(pairingOffered = false, certificateTrust = connection?.let { saved -> CertificatePin.trustLabel(saved.certificateSha256) },
+                notice = "Pairing details were invalid. Send them again from your trusted Core computer.") }
+        }
     }
     fun acceptPairing() { offer?.let { connect(it.url, it.token, it.certificateSha256) } }
     fun connect(url: String, token: String, pin: String? = null) {
         if (vault.read() != SavedConnection(url.trim().trimEnd('/'), token.trim(), pin)) stopAudio()
         api?.invalidate(); viewModelScope.coroutineContext.cancelChildren(); api = null; connection = null; preparationId = null
         viewModelScope.launch {
-            mutable.value = ScreenState(busy = true, pairingOffered = offer != null)
+            val offeredTrust = offer?.let { CertificatePin.trustLabel(it.certificateSha256, connected = false) }
+            mutable.value = ScreenState(busy = true, pairingOffered = offer != null, certificateTrust = offeredTrust)
             var client: CoreApi? = null
             try {
                 require(token.isNotBlank()) { "Enter the Core connection key." }
@@ -74,12 +75,14 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 val voice = client.get(CoreCompanionRoutes.VOICE_STATUS, AiCapabilityStatus::class.java)
                 vault.save(saved.url, saved.token, saved.certificateSha256); offer = null
                 mutable.value = ScreenState(connected = true, url = saved.url, voice = voice,
+                    certificateTrust = CertificatePin.trustLabel(saved.certificateSha256),
                     verified = existing?.let { it.device.capabilitiesVerified && "audio-only" in it.device.registration.capabilities.extra } == true,
                     legacyDrafts = LegacyDraftRecovery.available(getApplication(), saved))
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (client != null && revoked(error)) revoke(client, CompanionAccessPolicy.eraseLegacyFor(error))
-                else mutable.value = ScreenState(pairingOffered = offer != null, notice = if (error is CompanionSetupException) error.message.orEmpty() else "Could not reach Core: ${error.message.orEmpty()}")
+                else mutable.value = ScreenState(pairingOffered = offer != null, certificateTrust = offeredTrust,
+                    notice = CertificatePin.failureMessage(error) ?: if (error is CompanionSetupException) error.message.orEmpty() else "Could not reach Core: ${error.message.orEmpty()}")
             } finally { mutable.update { it.copy(busy = false) } }
         }
     }
@@ -93,7 +96,9 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (revoked(error)) revoke(client, CompanionAccessPolicy.eraseLegacyFor(error))
-                else if (api === client) mutable.update { it.copy(notice = error.message ?: "Core could not complete the request.", offline = error is java.io.IOException) }
+                else if (api === client) mutable.update { it.copy(
+                    notice = CertificatePin.failureMessage(error) ?: error.message ?: "Core could not complete the request.",
+                    offline = error is java.io.IOException) }
             } finally { if (api === client) mutable.update { it.copy(busy = false, audioStarting = false) } }
         }
     }
@@ -129,7 +134,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             if (revoked(error)) revoke(client, CompanionAccessPolicy.eraseLegacyFor(error))
-            else if (api === client) mutable.update { it.copy(offline = true, notice = "Core is unreachable. Voice requires a live connection.") }
+            else if (api === client) mutable.update { it.copy(offline = true,
+                notice = CertificatePin.failureMessage(error) ?: "Core is unreachable. Voice requires a live connection.") }
         }
     }
     fun reportAudioIssue(message: String) { mutable.update { it.copy(notice = message, audioStarting = false) } }

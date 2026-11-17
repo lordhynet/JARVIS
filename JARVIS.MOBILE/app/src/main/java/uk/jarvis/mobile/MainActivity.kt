@@ -129,6 +129,7 @@ private fun VoiceCompanion(model: JarvisViewModel, start: () -> Unit, enableWake
             } else if (settings) {
                 Text("Connection & audio", style = MaterialTheme.typography.headlineMedium)
                 Text(state.url)
+                state.certificateTrust?.let { Text(it) }
                 Text("Your phone sends live audio to Core and plays Core's reply. Conversations, practice, memory, CVs and tools stay on Core.")
                 Text("For away-from-home use, connect to Core through a persistent private HTTPS/VPN address. A localhost ADB bridge only works while debugging is connected.", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = model::refresh, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("Check Core connection") }

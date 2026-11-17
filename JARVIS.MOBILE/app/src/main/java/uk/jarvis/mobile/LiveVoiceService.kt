@@ -154,7 +154,9 @@ class LiveVoiceService : Service() {
                     .apply { setReferenceCounted(false); acquire(20000) }
                 initializationJob = scope.launch {
                     try { initialize(current) }
-                    catch (error: Exception) { if (lifecycle.isLive(current)) stopVoice(error.message ?: "Live voice failed.") }
+                    catch (error: Exception) {
+                        if (lifecycle.isLive(current)) stopVoice(CertificatePin.failureMessage(error) ?: error.message ?: "Live voice failed.")
+                    }
                 }
             }
         }
