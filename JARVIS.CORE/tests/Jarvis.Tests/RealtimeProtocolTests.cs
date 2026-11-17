@@ -33,6 +33,72 @@ public sealed class RealtimeProtocolTests
         Assert.Equal(503, error.StatusCode);
     }
 
+    [Theory]
+    [InlineData("session.audio.input.turn_detection.type", false, false, 2, true)]
+    [InlineData("audio.input.turn_detection", false, false, 2, true)]
+    [InlineData("session.audio.input.turn_detection", true, false, 1, false)]
+    [InlineData("session.audio.output.voice", false, false, 1, false)]
+    [InlineData("session.audio.input.turn_detection.eagerness", false, true, 2, false)]
+    public async Task Voice_retries_only_a_semantic_turn_detection_rejection_during_setup(
+        string rejectedParameter, bool wrongEvent, bool rejectFallback, int expectedUpdates, bool opensWindow)
+    {
+        using var factory = new ProviderFactory(_ => throw new InvalidOperationException("No HTTP provider call expected."));
+        var provider = new ProviderSocket
+        {
+            EmitAudio = true,
+            RejectedSessionParameter = rejectedParameter,
+            RejectWithWrongEventId = wrongEvent,
+            RejectFallback = rejectFallback
+        };
+        using var host = factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting(ConfigKeys.VoiceTurnDetectionEagerness, "low");
+            builder.ConfigureServices(services => services.AddSingleton<IRealtimeConnectionFactory>(provider));
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var devices = host.Services.GetRequiredService<DeviceService>();
+        await devices.RegisterAsync(new("vad-phone", "VAD fixture", DeviceKind.AndroidCompanion, new(true, true, false, false, [])));
+        await devices.VerifyAsync("vad-phone");
+        var id = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        await host.Services.GetRequiredService<ISessionStore>().AddAsync(new(id, ActivityType.General, "Voice", SessionStatus.Active, "vad-phone", null, now, now, []));
+        var ticket = await host.Services.GetRequiredService<AudioOwnership>().StartAsync(new(id, "vad-phone", true), timeout.Token);
+        using var socket = await host.Server.CreateWebSocketClient().ConnectAsync(new("ws://localhost/voice-stream"), timeout.Token);
+        await Send(socket, new { type = "authenticate", ticket = ticket.Ticket }, timeout.Token);
+
+        var firstEvent = await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token);
+        Assert.Equal(opensWindow ? "ready" : "error", firstEvent.GetProperty("type").GetString());
+        if (opensWindow)
+        {
+            Assert.Equal("audio", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+            Assert.Equal("audio", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+            await Send(socket, new { type = "stop" }, timeout.Token);
+            Assert.Equal("ended", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+        }
+
+        var events = provider.Sent.Where(x => x.GetProperty("type").ValueEquals("session.update")).ToArray();
+        Assert.Equal(expectedUpdates, events.Length);
+        var semantic = TurnDetection(events[0]);
+        Assert.Equal("semantic_vad", semantic.GetProperty("type").GetString());
+        Assert.Equal("low", semantic.GetProperty("eagerness").GetString());
+        if (expectedUpdates == 2)
+        {
+            Assert.NotEqual(events[0].GetProperty("event_id").GetString(), events[1].GetProperty("event_id").GetString());
+            var fallback = TurnDetection(events[1]);
+            Assert.Equal("server_vad", fallback.GetProperty("type").GetString());
+            Assert.Equal(650, fallback.GetProperty("silence_duration_ms").GetInt32());
+        }
+        Assert.All(events.Select(TurnDetection), detection =>
+        {
+            Assert.False(detection.GetProperty("create_response").GetBoolean());
+            Assert.True(detection.GetProperty("interrupt_response").GetBoolean());
+        });
+        Assert.Equal(opensWindow ? 1 : 0, provider.Sent.Count(x => x.GetProperty("type").ValueEquals("response.create")));
+
+        static JsonElement TurnDetection(JsonElement update) =>
+            update.GetProperty("session").GetProperty("audio").GetProperty("input").GetProperty("turn_detection");
+    }
+
     private sealed class ProviderSocket : WebSocket, IRealtimeConnectionFactory
     {
         private readonly Channel<(byte[] Bytes, bool CompletesUsage)> incoming =
@@ -41,6 +107,8 @@ public sealed class RealtimeProtocolTests
         private WebSocketState state = WebSocketState.Open;
         public int Connections;
         public bool ToolScenario, CancelTool, Coaching, EmitAudio;
+        public string? RejectedSessionParameter;
+        public bool RejectWithWrongEventId, RejectFallback;
         private int responses;
         private Guid captured;
         private bool usageDelivered;
@@ -82,7 +150,15 @@ public sealed class RealtimeProtocolTests
             var message = JsonSerializer.Deserialize<JsonElement>(bytes.AsSpan()); lock (Sent) Sent.Add(message);
             switch (message.GetProperty("type").GetString())
             {
-                case "session.update": Queue(new { type = "session.updated" }); break;
+                case "session.update":
+                    var turnDetection = message.GetProperty("session").GetProperty("audio").GetProperty("input").GetProperty("turn_detection");
+                    if (RejectedSessionParameter is { } parameter && (RejectFallback || turnDetection.GetProperty("type").ValueEquals("semantic_vad")))
+                    {
+                        var eventId = RejectWithWrongEventId ? "unrelated-event" : message.GetProperty("event_id").GetString();
+                        Queue(new { type = "error", error = new { code = "invalid_value", param = parameter, event_id = eventId } });
+                    }
+                    else Queue(new { type = "session.updated" });
+                    break;
                 case "response.create":
                     if (ToolScenario) {
                         responses++; Queue(new { type = "response.created", response = new { id = "response-" + responses } });
@@ -196,6 +272,7 @@ public sealed class RealtimeProtocolTests
                 builder.UseSetting(ConfigKeys.VoicePersona, ownerPersona);
                 builder.UseSetting(ConfigKeys.VoiceName, "cedar");
                 builder.UseSetting(ConfigKeys.VoiceSpeed, "0.9");
+                builder.UseSetting(ConfigKeys.VoiceTurnDetectionMode, "server_vad");
             }
             builder.ConfigureServices(s => s.AddSingleton<IRealtimeConnectionFactory>(provider));
         });
@@ -233,7 +310,12 @@ public sealed class RealtimeProtocolTests
         Assert.Contains("latest captured utterance_id", Definition("core_home"));
         string Definition(string name) => definitions.Single(tool => tool.GetProperty("name").GetString() == name)
             .GetProperty("description").GetString()!;
-        Assert.False(settings.GetProperty("audio").GetProperty("input").GetProperty("turn_detection").GetProperty("create_response").GetBoolean());
+        var detection = settings.GetProperty("audio").GetProperty("input").GetProperty("turn_detection");
+        Assert.Equal(hasDisplay ? "semantic_vad" : "server_vad", detection.GetProperty("type").GetString());
+        Assert.False(detection.GetProperty("create_response").GetBoolean());
+        Assert.True(detection.GetProperty("interrupt_response").GetBoolean());
+        if (hasDisplay) Assert.Equal("auto", detection.GetProperty("eagerness").GetString());
+        else Assert.Equal(650, detection.GetProperty("silence_duration_ms").GetInt32());
         Assert.Equal(24000, settings.GetProperty("audio").GetProperty("input").GetProperty("format").GetProperty("rate").GetInt32());
         var saved = await host.Services.GetRequiredService<ISessionReader>().GetAsync(id);
         Assert.Equal("Explain one concrete decision.", Assert.Single(saved!.Messages!).Text);

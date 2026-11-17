@@ -25,6 +25,8 @@ public static class ConfigKeys
     public const string Model = "Model";
     public const string VoiceName = VoiceProfile + "VoiceName";
     public const string VoiceSpeed = VoiceProfile + "Speed";
+    public const string VoiceTurnDetectionMode = VoiceProfile + "TurnDetection:Mode";
+    public const string VoiceTurnDetectionEagerness = VoiceProfile + "TurnDetection:Eagerness";
     public const string Provider = "Provider";
     public const string MaxOutputTokens = "MaxOutputTokens";
     public const string RateCardModel = "RateCardModel";

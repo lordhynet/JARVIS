@@ -30,6 +30,8 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
     private UsageReservation reservation = null!;
     private RealtimePricing pricing = null!;
     private RealtimeVoiceOutput voiceOutput;
+    private RealtimeTurnDetection turnDetection;
+    private string configurationEventId = "";
     private Guid sessionId;
     private bool hasDisplay;
     private int phase;
@@ -79,6 +81,7 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
     {
         ai.RequireReady("Voice");
         voiceOutput = ai.RealtimeOutput();
+        turnDetection = ai.VoiceTurnDetection();
         var session = await sessions.GetAsync(lease.SessionId, timeout.Token);
         Guard.Require(session is not null, 404, "Session not found.");
         sessionId = session.Id;
@@ -120,7 +123,7 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
             started = clock.GetTimestamp();
 
             using var inputStop = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
-            var upstream = Task.Run(PumpProviderAsync, timeout.Token);
+            var upstream = Task.Run(() => PumpProviderAsync(model, instructions), timeout.Token);
             pumps.Add(upstream);
             var downstream = Task.Run(() => PumpClientAsync(inputStop.Token), timeout.Token);
             pumps.Add(downstream);
@@ -152,15 +155,19 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
         }
     }
 
-    private Task ConfigureProviderAsync(string model, string instructions) =>
-        SendProviderAsync(new { type = "session.update", session = new { type = "realtime", model = model, output_modalities = new[] { "audio" },
+    private Task ConfigureProviderAsync(string model, string instructions)
+    {
+        configurationEventId = Guid.NewGuid().ToString("N");
+        return SendProviderAsync(new { type = "session.update", event_id = configurationEventId,
+            session = new { type = "realtime", model = model, output_modalities = new[] { "audio" },
             instructions, max_output_tokens = OutputTokens, tools = CoreVoiceTools.Definitions,
             truncation = new { type = "retention_ratio", retention_ratio = .8, token_limits = new { post_instructions = ConversationTokens } },
             audio = new { input = new { format = new { type = "audio/pcm", rate = 24000 }, transcription = new { model = pricing.TranscriptionModel },
-                turn_detection = new { type = "server_vad", threshold = .5, prefix_padding_ms = 300, silence_duration_ms = 650, create_response = false, interrupt_response = true } },
+                turn_detection = turnDetection.ToProviderSettings() },
                 output = new { format = new { type = "audio/pcm", rate = 24000 }, voice = voiceOutput.Name, speed = voiceOutput.Speed } } } }, requireAudio: true);
+    }
 
-    private async Task PumpProviderAsync()
+    private async Task PumpProviderAsync(string model, string instructions)
     {
         while (!timeout.IsCancellationRequested && provider.State == WebSocketState.Open)
         {
@@ -176,7 +183,7 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
                 case "conversation.item.input_audio_transcription.completed": await HandleTranscriptAsync(message, ChatRoles.User); break;
                 case "response.output_audio_transcript.done": await HandleTranscriptAsync(message, ChatRoles.Assistant); break;
                 case "response.output_audio.delta": await HandleOutputAudioAsync(message); break;
-                case "error": HandleProviderError(message); break;
+                case "error": await HandleProviderErrorAsync(message, model, instructions); break;
             }
         }
     }
@@ -296,11 +303,34 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
         await SendClientAsync(new { type = "audio", delta = message.GetProperty("delta").GetString(), itemId = message.GetProperty("item_id").GetString() }, fence);
     }
 
-    private void HandleProviderError(JsonElement message)
+    private async Task HandleProviderErrorAsync(JsonElement message, string model, string instructions)
     {
-        if (message.TryGetProperty("error", out var error) && error.TryGetProperty("code", out var code) && code.GetString() == "response_cancel_not_active") return;
+        if (message.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)
+        {
+            if (error.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String
+                && code.ValueEquals("response_cancel_not_active")) return;
+            if (!IsReady && !IsEnding && turnDetection.IsSemantic && RejectsTurnDetection(error))
+            {
+                turnDetection = turnDetection with { Mode = RealtimeTurnDetection.Server };
+                await ConfigureProviderAsync(model, instructions);
+                return;
+            }
+        }
         Volatile.Write(ref providerFailed, 1);
         throw new DomainException(502, "Realtime provider rejected the session or an audio event.");
+    }
+
+    private bool RejectsTurnDetection(JsonElement error)
+    {
+        if (error.TryGetProperty("event_id", out var eventId) && eventId.ValueKind != JsonValueKind.Null
+            && (eventId.ValueKind != JsonValueKind.String || !eventId.ValueEquals(configurationEventId))) return false;
+
+        if (!error.TryGetProperty("param", out var param) || param.ValueKind != JsonValueKind.String) return false;
+        var path = param.GetString()!;
+        const string sessionPrefix = "session.";
+        const string turnDetectionPath = "audio.input.turn_detection";
+        if (path.StartsWith(sessionPrefix, StringComparison.Ordinal)) path = path[sessionPrefix.Length..];
+        return path == turnDetectionPath || path.StartsWith(turnDetectionPath + ".", StringComparison.Ordinal);
     }
 
     private async Task PumpClientAsync(CancellationToken inputToken)

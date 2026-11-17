@@ -1,5 +1,12 @@
 # Verification results
 
+## Live voice selection and turn detection, 2026-11-17
+
+- The combined Core suite passed against isolated PostgreSQL 17 with **428 passed, 1 skipped and 0 failed**. The evidence is `tests/Jarvis.Tests/TestResults/voice-turn-detection-full.trx`. The skipped test is the opt-in runtime measurement harness. The provider fixture verified default and custom voice and speed, semantic and server turn detection, and a single server fallback for a rejected semantic VAD setting. Core still controls response creation and interruption.
+- Two PostgreSQL audio-fence fixtures now use a controlled clock for projection and rollback assertions. Dedicated fence tests advance the clock to verify expiry and freshness.
+- Android debug build, lint and all **33 JVM tests** passed. The browser suite passed **53 of 54** initially, including the new desktop and mobile voice-name cases. The existing desktop session handoff case timed out and passed on a separate rerun. The browser module bundle matches its source.
+- Listening acceptance with a live provider and the physical phone is pending.
+
 ## Natural live voice persona, 2026-11-17
 
 - A fake Realtime provider received both the default British English style and a custom owner persona ahead of the Core rules. The protocol fixture verified that coaching, correction, staged practice and recall instructions are present in the tool definitions. Configuration tests verify the 2,000-character limit and the blank-value default.
