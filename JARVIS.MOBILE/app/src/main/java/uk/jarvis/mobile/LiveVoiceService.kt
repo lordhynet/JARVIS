@@ -56,7 +56,7 @@ class LiveVoiceService : Service() {
 
     private val transport = VoiceTransport(scope, lifecycle, object : VoiceTransport.Listener {
         override suspend fun stopCapture(current: Long) = stopCaptureAndJoin(current)
-        override fun ready(current: Long, window: WebSocket) = startCapture(current, window)
+        override fun ready(current: Long, window: WebSocket, voiceName: String?) = startCapture(current, window, voiceName)
         override fun renewed() { wakeLock?.let { if (it.isHeld) it.release(); it.acquire(20000) } }
         override fun audio(current: Long, window: WebSocket, itemId: String, bytes: ByteArray) =
             queuePlayback(current, window, itemId, bytes)
@@ -225,9 +225,10 @@ class LiveVoiceService : Service() {
         }
     }
 
-    private fun startCapture(current: Long, window: WebSocket) {
+    private fun startCapture(current: Long, window: WebSocket, voiceName: String?) {
         if (!transport.isWindow(current, window) || !lifecycle.ready) return
-        mutable.value = mutable.value.copy(ready = true, message = "LIVE · microphone active · use Stop or headset Pause to finish.")
+        val voice = voiceName?.takeIf { it.isNotBlank() }?.let { " · voice $it" }.orEmpty()
+        mutable.value = mutable.value.copy(ready = true, message = "LIVE · microphone active$voice · use Stop or headset Pause to finish.")
         captureJob = scope.launch {
             try { captureAudio(current, window) }
             catch (error: Exception) {

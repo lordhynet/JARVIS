@@ -42,7 +42,12 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
       if (socket !== ws || !active) return;
       try {
         const message = JSON.parse(event.data);
-        if (message.type === 'ready') { ready = true; status.textContent = 'LIVE · microphone active · say a short answer or interrupt the reply.'; interrupt.disabled = false; }
+        if (message.type === 'ready') {
+          ready = true;
+          const voice = typeof message.voiceName === 'string' && message.voiceName ? ` · voice ${message.voiceName}` : '';
+          status.textContent = `LIVE · microphone active${voice} · say a short answer or interrupt the reply.`;
+          interrupt.disabled = false;
+        }
         if (message.type === 'lease') {
           const at = pings.get(message.sequence); if (at !== undefined) { leaseDeadline = at + message.leaseSeconds * 1000; pings.delete(message.sequence); }
         }

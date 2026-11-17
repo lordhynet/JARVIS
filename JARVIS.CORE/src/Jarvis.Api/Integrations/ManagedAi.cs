@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Net.Http.Json;
+using Jarvis.Api.Voice;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Workflows;
@@ -14,6 +15,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     private readonly RateCard rateCards = cards ?? new RateCard(config, clock);
     public (string Model, RealtimePricing Pricing) RealtimeRates() { var rates = rateCards.ReadRealtime(); budget.RequireConfigured(); return rates; }
     internal string RealtimePersona() => RealtimeVoicePrompt.ReadPersona(config);
+    internal RealtimeVoiceOutput RealtimeOutput() => RealtimeVoiceOutput.Read(config);
     public (string Model, decimal PerMinute, string ApiKey) TranscriptionRates() { var rates = rateCards.ReadTranscription(); budget.RequireConfigured(); return rates; }
     public BudgetLimits Limits => new(config.GetValue(ConfigKeys.DailyLimitUsd, 2m), config.GetValue(ConfigKeys.MonthlyLimitUsd, 50m),
         config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m), config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m));
@@ -29,6 +31,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
         if (profile == "Voice")
         {
             RealtimePersona();
+            RealtimeOutput();
             RealtimeRates();
         }
         else { rateCards.ReadText(profile, profile == "Research" ? TextCapability.GroundedPublicSearch : TextCapability.JsonReasoning,

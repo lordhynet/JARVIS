@@ -29,6 +29,7 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
     private LiveAudioFence fence = null!;
     private UsageReservation reservation = null!;
     private RealtimePricing pricing = null!;
+    private RealtimeVoiceOutput voiceOutput;
     private Guid sessionId;
     private bool hasDisplay;
     private int phase;
@@ -77,6 +78,7 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
     private async Task<(string Model, string Instructions)> PrepareWindowAsync()
     {
         ai.RequireReady("Voice");
+        voiceOutput = ai.RealtimeOutput();
         var session = await sessions.GetAsync(lease.SessionId, timeout.Token);
         Guard.Require(session is not null, 404, "Session not found.");
         sessionId = session.Id;
@@ -156,7 +158,7 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
             truncation = new { type = "retention_ratio", retention_ratio = .8, token_limits = new { post_instructions = ConversationTokens } },
             audio = new { input = new { format = new { type = "audio/pcm", rate = 24000 }, transcription = new { model = pricing.TranscriptionModel },
                 turn_detection = new { type = "server_vad", threshold = .5, prefix_padding_ms = 300, silence_duration_ms = 650, create_response = false, interrupt_response = true } },
-                output = new { format = new { type = "audio/pcm", rate = 24000 }, voice = "marin" } } } }, requireAudio: true);
+                output = new { format = new { type = "audio/pcm", rate = 24000 }, voice = voiceOutput.Name, speed = voiceOutput.Speed } } } }, requireAudio: true);
 
     private async Task PumpProviderAsync()
     {
@@ -183,7 +185,8 @@ internal sealed class RealtimeVoiceSession(WebSocket client, AudioOwnership owne
     {
         Guard.Require(fence.IsCurrent(), 409, "Audio lease expired before the voice session was ready.");
         MarkReady();
-        await SendClientAsync(new { type = "ready", fence = lease.Fence, leaseSeconds = 15, windowSeconds = 60, sampleRate = 24000 });
+        await SendClientAsync(new { type = "ready", fence = lease.Fence, leaseSeconds = 15, windowSeconds = 60,
+            sampleRate = 24000, voiceName = voiceOutput.Name, speed = voiceOutput.Speed });
         if (requested == 0) { requested++; await SendProviderAsync(new { type = "response.create" }, requireAudio: true); }
     }
 

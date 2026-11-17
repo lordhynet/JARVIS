@@ -20,7 +20,7 @@ internal class VoiceTransport(
 ) {
     interface Listener {
         suspend fun stopCapture(current: Long)
-        fun ready(current: Long, window: WebSocket)
+        fun ready(current: Long, window: WebSocket, voiceName: String?)
         fun renewed()
         fun audio(current: Long, window: WebSocket, itemId: String, bytes: ByteArray)
         fun interrupt(send: Boolean = true)
@@ -163,7 +163,8 @@ internal class VoiceTransport(
                     "ready" -> if (synchronized(this@VoiceTransport) { isWindow(current, webSocket) && lifecycle.markReady(current) }) {
                         retry.connected()
                         established.complete(Unit)
-                        listener.ready(current, webSocket)
+                        val voiceName = message.get("voiceName")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+                        listener.ready(current, webSocket, voiceName)
                     }
                     "lease" -> pings.remove(message.get("sequence").asLong)?.let { sent ->
                         leaseDeadline.set(sent + message.get("leaseSeconds").asLong * 1000)

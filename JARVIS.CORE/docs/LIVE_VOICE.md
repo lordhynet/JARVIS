@@ -16,6 +16,10 @@ Core issues a one-use ticket valid for 15 seconds. The WebSocket authenticates w
 
 Core controls response generation, context size, input rate and output caps. Speech interruption cancels the response and truncates unheard playback. Completed text transcripts are saved to the canonical session; raw PCM is not archived by this implementation. A provider failure can leave an uncertain charge, so Core retains the conservative reservation rather than assuming it was free.
 
+## Voice and playback speed
+
+Set `AI:Voice:VoiceName` in the private root `appsettings.json` to choose a built-in Realtime voice. JARVIS defaults to `marin`. Set `AI:Voice:Speed` from 0.25 to 1.5, with 1.0 as the normal speed. Start a new voice window to apply either setting. The browser and Android report the active voice once Core has opened the window.
+
 ## AI feedback
 
 Save an answer before requesting AI feedback. The request includes explicit consent and expected record/text versions. The browser displays the model source and evidence quotes; Android has no feedback dashboard. Core rejects fabricated quotes and stale publication; editing an answer clears its current AI-feedback pointer. Personal stories are unverified user claims, so the interview adapter does not assign technical accuracy without a technical reference. Technical assessment uses the supplied question reference and the shared review scheduler.
