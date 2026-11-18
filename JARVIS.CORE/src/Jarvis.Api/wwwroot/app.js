@@ -6,6 +6,7 @@ import { initPlanning } from './planning.js';
 import { initImports } from './imports.js';
 import { initNotifications } from './notifications.js';
 import { initTravel } from './travel.js';
+import { qrSvg } from './qr.js';
 let liveVoice;
 let connectionGeneration = 0;
 const $ = id => document.getElementById(id);
@@ -49,6 +50,7 @@ async function api(path, body, method) {
     verb === 'POST' && path === '/intelligence/evaluations' ||
     verb === 'POST' && ['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply'].includes(path) ||
     ['POST', 'DELETE'].includes(verb) && /^\/devices\/[^/]+\/(verify|credential)$/.test(path) ||
+    verb === 'POST' && path === '/devices/pairing-codes' ||
     verb === 'POST' && /^\/devices\/[^/]+\/grants$/.test(path) ||
     ['GET', 'DELETE'].includes(verb) && /^\/device-grants(?:\/[^/]+)?$/.test(path) ||
     verb === 'POST' && /^\/device-commands\/[^/]+\/confirm$/.test(path) ||
@@ -237,8 +239,34 @@ async function loadDevices() {
   $('device-list').replaceChildren(); const oldTarget = $('target-device').value; $('target-device').replaceChildren(node('option', 'Choose target device'));
   $('target-device').firstChild.value = '';
   for (const d of state.devices) { const r = d.device.registration; const div = node('div', '', 'list-item'); div.append(node('strong', r.name), node('p', `${r.deviceId} · ${d.online ? 'Online' : 'Offline'} · ${d.device.capabilitiesVerified ? 'Verified' : 'Needs capability test'}`, 'muted')); $('device-list').append(div);
+    if (r.kind === 'AndroidCompanion' && r.capabilities.extra?.includes('audio-only')) div.append(button('Pair again', () => showPairing(r.deviceId, r.name)));
     if (r.deviceId !== deviceId && d.online && d.device.capabilitiesVerified) { const option = node('option', r.name); option.value = r.deviceId; $('target-device').append(option); }
   } $('target-device').value = oldTarget;
+  if (!document.getElementById('phone-pairing')) {
+    const panel = node('div', '', 'card'); panel.id = 'phone-pairing';
+    panel.append(node('h3', 'Add a phone'), node('p', 'Show a one-time code, then scan it with the phone camera. The phone gets its own key; this computer keeps the master key.', 'muted'),
+      button('Pair a phone', () => showPairing(null, 'a new phone')));
+    $('device-list').after(panel);
+  }
+}
+let pairingTimer = null;
+async function showPairing(targetDeviceId, label) {
+  const host = location.hostname;
+  if (location.protocol !== 'https:' || host === 'localhost' || /^[\d.]+$/.test(host) || host.includes(':'))
+    throw new Error('Open this dashboard at your private HTTPS name (for example jarvis.your-tailnet.ts.net) to pair a phone.');
+  const issued = await api('/devices/pairing-codes', { deviceId: targetDeviceId });
+  const link = `jarvis://pair?u=${encodeURIComponent(location.origin)}&c=${encodeURIComponent(issued.code)}`;
+  const panel = $('phone-pairing'); clearInterval(pairingTimer);
+  const view = node('div', '', 'pairing-code'); view.id = 'pairing-code';
+  const countdown = node('p', '', 'muted'); countdown.setAttribute('role', 'status');
+  view.append(node('p', `Scan with ${label}'s camera, then tap Connect in JARVIS.`), qrSvg(link), countdown,
+    button('Hide code', () => { clearInterval(pairingTimer); view.remove(); }));
+  document.getElementById('pairing-code')?.remove(); panel.append(view);
+  const expires = new Date(issued.expiresAt).getTime();
+  const tick = () => { const left = Math.max(0, Math.round((expires - Date.now()) / 1000));
+    countdown.textContent = left ? `Works once · expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Expired. Create a new code.';
+    if (!left) { clearInterval(pairingTimer); view.querySelector('svg')?.remove(); } };
+  tick(); pairingTimer = setInterval(tick, 1000);
 }
 on('device-form', 'submit', async () => { await api('/devices', { deviceId, name: $('device-name').value, kind: /Quest|Oculus/i.test(navigator.userAgent) ? 'QuestClient' : /Android/i.test(navigator.userAgent) ? 'AndroidCompanion' : 'WindowsAgent', capabilities: { canListen: !!navigator.mediaDevices?.getUserMedia, canSpeak: 'speechSynthesis' in window, hasDisplay: true, canControlHome: false, extra: ['browser-companion'] } }); await loadDevices(); notice('Registered. Test microphone and speaker to verify this device.'); });
 on('test-device', 'click', async () => {

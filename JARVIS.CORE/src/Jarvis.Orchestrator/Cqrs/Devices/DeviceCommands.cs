@@ -22,3 +22,14 @@ public sealed class DeviceCommandHandlers(DeviceService devices, DeviceCredentia
     public Task<IssuedDeviceCredential> HandleAsync(IssueDeviceCredential command, CancellationToken ct = default) => credentials.IssueAsync(command.DeviceId, ct);
     public Task<bool> HandleAsync(RevokeDeviceCredential command, CancellationToken ct = default) => credentials.RevokeAsync(command.DeviceId, ct);
 }
+
+public sealed record CreatePairingCode(CreatePairingCodeRequest Request) : ICommand<IssuedPairingCode>;
+public sealed record ExchangePairingCode(PairingExchangeRequest Request) : ICommand<IssuedDeviceCredential>;
+
+public sealed class DevicePairingHandlers(DevicePairing pairing) :
+    ICommandHandler<CreatePairingCode, IssuedPairingCode>,
+    ICommandHandler<ExchangePairingCode, IssuedDeviceCredential>
+{
+    public Task<IssuedPairingCode> HandleAsync(CreatePairingCode command, CancellationToken ct = default) => pairing.CreateAsync(command.Request, ct);
+    public Task<IssuedDeviceCredential> HandleAsync(ExchangePairingCode command, CancellationToken ct = default) => pairing.ExchangeAsync(command.Request, ct);
+}

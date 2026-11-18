@@ -27,6 +27,7 @@ public sealed class RuntimeState
     public HashSet<Guid> RetiredReasoningScopes { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<string, HubAccessTicket> HubTickets { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<string, DeviceCredential> DeviceCredentials { get; set; } = [];
+    public Dictionary<string, DevicePairingCode> DevicePairingCodes { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, VoiceCoaching> VoiceCoachings { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public string? BudgetScopeId { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
     public FxRefreshState? FxRefresh { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
