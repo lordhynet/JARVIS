@@ -58,7 +58,8 @@ public static class PrivacyData
         state.AgentSchedules.Values.ToList(), state.AgentControls, state.AgentOutbox.Values.ToList(), state.ProviderResults.Values.ToList(),
         state.UsageReservations.Values.ToList(), jobs, state.Goals.Values.Where(x => x.Status != GoalStatus.Deleted).ToList(),
         state.AgentTriggers.Values.ToList(), state.UsageReconciliations.Values.ToList(), state.ImportedDocuments.Values.Where(x => x.DeletedAt is null).ToList(), state.SourceClaims.Values.ToList(), state.VoiceRecalls.Values.ToList(),
-        state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList(), domains ?? state.DomainRegistry.Export());
+        state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList(), domains ?? state.DomainRegistry.Export(),
+        state.AgentToolGrants.Values.ToArray(), state.AgentToolInvocations.Values.ToArray());
     public static RuntimeState EmptyAfterErase(RuntimeState old) => new()
     {
         UsageReservations = old.UsageReservations, NextAudioFence = checked(old.NextAudioFence + 1), AgentControls = new(Paused: true, PaidAiPaused: true, AgentsPaused: true),
@@ -126,6 +127,7 @@ public static class PrivacyData
             state.Tools[tool.Invocation.Id] = tool with { Invocation = tool.Invocation with { ArgumentsJson = "{}", Status = ToolInvocationStatus.Rejected, Permission = ToolPermission.Denied }, Result = null, CompletedAt = at };
         foreach (var run in state.AgentRuns.Values.Where(x => selection.Agents.Contains(x.Id)).ToList())
         {
+            Jarvis.Orchestrator.Workflows.AgentToolLifecycle.Retire(state, run.Id, at, true);
             state.AgentRuns[run.Id] = run with { DeletedAt = at, Status = AgentRunStatus.Cancelled,
                 WorkflowPolicy = run.WorkflowPolicy is { } policy ? policy with { DomainContext = null, PracticeTemplate = null } : null };
             foreach (var id in run.TaskIds)

@@ -98,9 +98,10 @@ public sealed partial class AgentRuntime
         return count;
     }
 
-    private static void Supersede(RuntimeState s, Guid runId, string reason)
+    private void Supersede(RuntimeState s, Guid runId, string reason)
     {
         if (!s.AgentRuns.TryGetValue(runId, out var run)) return;
+        AgentToolLifecycle.Retire(s, runId, clock.GetUtcNow(), false);
         s.AgentRuns[runId] = run with { Status = AgentRunStatus.Cancelled };
         foreach (var id in run.TaskIds)
         {

@@ -25,6 +25,7 @@ public sealed class PaidAiTests
         using var root = new PaidFactory(_ => { Interlocked.Increment(ref calls); return Task.FromResult(Response(source)); });
         using var host = root.WithWebHostBuilder(builder => builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(clock)));
         var first = await Prepare(host, source); var provider = host.Services.GetRequiredService<PaidAiProvider>();
+        using var origin = CoreInvocationContext.Enter(InvocationOrigin.Agent);
         var original = await provider.GenerateAsync(first, default);
         clock.Now = clock.Now.Add(WorkflowService.LeaseDuration).AddSeconds(1);
         var recovered = (await host.Services.GetRequiredService<WorkflowService>().ClaimAsync("replacement-worker"))!;
