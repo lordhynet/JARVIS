@@ -174,8 +174,9 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
         if (message.type === 'ended') {
           ready = false; clearPlayback(); ws.onclose = null; ws.close();
           if (active && (message.reason === 'window_complete' || renewWanted)) { renewWanted = false; closeMedia(); status.textContent = 'Renewing the budgeted voice window…'; await prepareWindow(generation); }
-          else halt(message.reason === 'voice_mode_declined'
-            ? 'Voice stopped. Everyday voice needs a spoken yes after the prompt.'
+          else halt(message.reason === 'owner_closed' ? 'Bye for now.'
+            : message.reason === 'idle' ? 'Stopped after a quiet minute.'
+            : message.reason === 'voice_mode_declined' ? 'Voice stopped. Everyday voice needs a spoken yes after the prompt.'
             : 'Voice stopped. Your completed transcript remains in Core.');
         }
       } catch (error) { halt(error.message || 'Voice protocol failed.'); }

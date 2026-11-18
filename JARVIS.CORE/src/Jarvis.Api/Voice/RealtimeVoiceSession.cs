@@ -73,6 +73,15 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private decimal tokenCost;
     private long firstAudioAt;
 
+    // Spoken goodbye and idle ending. The provider pump and the idle monitor share this state under closingSync.
+    private readonly object closingSync = new();
+    private readonly TaskCompletionSource<string> closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private string? closingReason;
+    private bool closeScheduled;
+    private int closingGeneration;
+    private long responseAudioBytes;
+    private long lastActivity;
+
     // Only the client pump counts microphone bytes. The runner joins that pump before settlement.
     private long started;
     private long bytes;
@@ -276,14 +285,17 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
             var expiry = Task.Delay(TimeSpan.FromSeconds(window.Seconds), clock, timeout.Token);
             var leaseMonitor = MonitorLeaseAsync();
             pumps.Add(leaseMonitor);
+            Interlocked.Exchange(ref lastActivity, clock.GetTimestamp());
+            pumps.Add(MonitorIdleAsync());
 
             if (continuous)
             {
                 next = createWindow(checked(number + 1));
                 nextPreparation = PrepareSuccessorAsync(next, preparationStop.Token);
             }
-            var finished = await Task.WhenAny(upstream, downstream, expiry, leaseMonitor, limitReached.Task);
-            var rollover = finished == expiry || finished == limitReached.Task;
+            var finished = await Task.WhenAny(upstream, downstream, expiry, leaseMonitor, limitReached.Task, closed.Task);
+            var ownerEnded = finished == closed.Task;
+            var rollover = !ownerEnded && (finished == expiry || finished == limitReached.Task);
             await finished;
             BeginEnding();
             if (rollover && next is not null) await SendClientAsync(new { type = "window_renewing", window = number });
@@ -311,6 +323,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
                 passedNext = true;
                 return (next, null);
             }
+            if (ownerEnded) return (null, closed.Task.Result);
             return (null, rollover ? "window_complete" : Volatile.Read(ref paidPauseRequested) == 1 ? "paid_ai_paused" : "stopped");
         }
         finally
@@ -401,6 +414,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         if (IsEnding) return;
         Guard.Require(fence.IsCurrent(), 409, "Audio lease expired before the voice session was ready.");
         MarkReady();
+        Interlocked.Exchange(ref lastActivity, clock.GetTimestamp());
         await SendClientAsync(new { type = "ready", fence = lease.Fence, leaseSeconds = 15, windowSeconds = window.Seconds,
             window = number, sampleRate = VoiceWindowLimits.SampleRate, voiceName = voiceOutput.Name, speed = voiceOutput.Speed,
             mode = SelectedMode(preparedMode).ToString(), model, recommendedMode = recommendedMode.ToString(), locked = windowLocked });
@@ -411,6 +425,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     {
         if (createdIds.Add(message.GetProperty("response").GetProperty("id").GetString()!))
         {
+            Interlocked.Exchange(ref responseAudioBytes, 0);
             Interlocked.Increment(ref created);
             Interlocked.Exchange(ref firstAudioAt, clock.GetTimestamp());
         }
@@ -439,8 +454,103 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         if (!IsEnding && response.TryGetProperty("status", out var status) && status.GetString() == "completed" &&
             response.TryGetProperty("output", out var items) && items.ValueKind == JsonValueKind.Array)
             await DispatchCompletedToolsAsync(items);
+        // The reply keeps playing on the device after its last audio delta, so idle time starts after that audio.
+        Interlocked.Exchange(ref lastActivity, clock.GetTimestamp() +
+            (long)(Interlocked.Read(ref responseAudioBytes) / (double)(VoiceWindowLimits.SampleRate * 2) * clock.TimestampFrequency));
+        if (!ResponsePending) ScheduleClose();
         if (continuous && requested == window.MaxTurns && completed == requested)
             limitReached.TrySetResult();
+    }
+
+    private bool ResponsePending => Volatile.Read(ref requested) != Volatile.Read(ref created) || Volatile.Read(ref created) != Volatile.Read(ref completed);
+
+    // A code-owned goodbye: the whole captured utterance was closing words. The reply already requested at
+    // speech_stopped serves as the farewell; Core ends the window after it plays plus a short grace period.
+    private void BeginOwnerClosing()
+    {
+        int generation;
+        lock (closingSync)
+        {
+            if (closingReason is not null || IsEnding) return;
+            closingReason = VoiceEndReasons.OwnerClosed; closeScheduled = false; generation = ++closingGeneration;
+        }
+        _ = EnsureClosedAsync(generation);
+        if (!ResponsePending) ScheduleClose();
+    }
+
+    private async Task BeginIdleClosingAsync()
+    {
+        int generation;
+        lock (closingSync)
+        {
+            if (closingReason is not null || IsEnding) return;
+            closingReason = VoiceEndReasons.Idle; closeScheduled = false; generation = ++closingGeneration;
+        }
+        _ = EnsureClosedAsync(generation);
+        await SendProviderAsync(new { type = "conversation.item.create", item = new { type = "message", role = "system", content = new[] {
+            new { type = "input_text", text = VoiceClosing.IdleInstruction } } } });
+        if (Volatile.Read(ref requested) < window.MaxTurns)
+        {
+            Interlocked.Increment(ref requested);
+            await SendProviderAsync(new { type = "response.create" }, requireAudio: true);
+        }
+        else ScheduleClose();
+    }
+
+    // New speech during the farewell or grace period means "one more thing": the conversation continues.
+    private void CancelClosing()
+    {
+        lock (closingSync)
+        {
+            if (closingReason is null) return;
+            closingReason = null; closeScheduled = false; closingGeneration++;
+        }
+    }
+
+    private void ScheduleClose()
+    {
+        int generation; double audioSeconds;
+        lock (closingSync)
+        {
+            if (closingReason is null || closeScheduled) return;
+            closeScheduled = true; generation = closingGeneration;
+            audioSeconds = Interlocked.Read(ref responseAudioBytes) / (double)(VoiceWindowLimits.SampleRate * 2);
+        }
+        _ = CloseAfterAsync(generation, VoiceClosing.GraceAfterFarewell(audioSeconds));
+    }
+
+    private async Task CloseAfterAsync(int generation, TimeSpan delay)
+    {
+        try { await Task.Delay(delay, clock, timeout.Token); } catch (OperationCanceledException) { return; }
+        string? reason;
+        lock (closingSync) reason = closingGeneration == generation ? closingReason : null;
+        if (reason is not null) closed.TrySetResult(reason);
+    }
+
+    // A farewell that never completes (cancelled or missing usage) must not keep the microphone open.
+    private async Task EnsureClosedAsync(int generation)
+    {
+        try { await Task.Delay(VoiceClosing.MaximumFarewellWait, clock, timeout.Token); } catch (OperationCanceledException) { return; }
+        bool current;
+        lock (closingSync) current = closingGeneration == generation && closingReason is not null;
+        if (current) ScheduleClose();
+    }
+
+    private async Task MonitorIdleAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), clock);
+            while (await timer.WaitForNextTickAsync(timeout.Token))
+            {
+                if (IsEnding || !IsReady) continue;
+                bool closing;
+                lock (closingSync) closing = closingReason is not null;
+                if (VoiceClosing.IsIdle(clock.GetElapsedTime(Interlocked.Read(ref lastActivity)), ResponsePending, closing))
+                    await BeginIdleClosingAsync();
+            }
+        }
+        catch (OperationCanceledException) { /* The window ended. */ }
     }
 
     private async Task DispatchCompletedToolsAsync(JsonElement items)
@@ -478,6 +588,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private async Task HandleSpeechStartedAsync(JsonElement message)
     {
         speechStarts[message.GetProperty("item_id").GetString()!] = message.GetProperty("audio_start_ms").GetInt32();
+        Interlocked.Exchange(ref lastActivity, clock.GetTimestamp());
+        CancelClosing();
         await SendClientAsync(new { type = "interrupt" });
     }
 
@@ -521,6 +633,11 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
                 } } });
             }
             else if (role == ChatRoles.User && !utterances.Contains(id)) latestUtterance = Guid.Empty;
+            if (role == ChatRoles.User)
+            {
+                Interlocked.Exchange(ref lastActivity, clock.GetTimestamp());
+                if (VoiceClosing.IsClosing(bounded)) BeginOwnerClosing();
+            }
             if (hasDisplay) await SendClientAsync(new { type = "transcript", role, text = bounded, speechSeconds = duration });
         }
     }
@@ -529,6 +646,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     {
         var itemId = message.GetProperty("item_id").GetString()!;
         audioItems.TryAdd(itemId, 0);
+        Interlocked.Add(ref responseAudioBytes, (message.GetProperty("delta").GetString()?.Length ?? 0) * 3L / 4);
+        Interlocked.Exchange(ref lastActivity, clock.GetTimestamp());
         await SendClientAsync(new { type = "audio", delta = message.GetProperty("delta").GetString(), itemId }, fence);
     }
 

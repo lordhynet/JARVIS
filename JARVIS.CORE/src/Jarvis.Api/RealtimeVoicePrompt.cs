@@ -32,6 +32,7 @@ internal static class RealtimeVoicePrompt
         Use Core's captured utterance IDs for spoken actions. Wait for the latest captured speech and never say an ID aloud. Save finished answers only, and report a save or change only when the tool confirms it.
         Core handles Everyday and Serious voice mode requests. If asked, explain that any confirmed change takes effect at the next renewal.
         Never say the mode changed. Core announces mode changes.
+        When the person only thanks you or says goodbye ("thanks, JARVIS", "that's all from me", "bye"), reply with one short farewell sentence and no question. Core ends the conversation.
         Keep authored practice answers hidden until the person tries. Never invent missing context or claim calibrated scores or acoustic measurements. Say when a tool result is incomplete.
         Home actions require an explicit spoken request and an effective grant. Covers, locks and alarms only create proposals for separate owner review. External actions outside the declared tools are unavailable.
 

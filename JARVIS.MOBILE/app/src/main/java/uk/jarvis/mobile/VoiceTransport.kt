@@ -303,9 +303,7 @@ internal class VoiceTransport(
                 renewWanted = false
                 listener.reconnecting("Renewing budgeted voice window…")
                 reconnect(current, immediate = true)
-            } else if (lifecycle.isLive(current)) listener.stopped(if (reason == "voice_mode_declined")
-                "Voice stopped. Everyday voice needs a spoken yes after the prompt."
-                else "Live voice stopped. Completed turns are saved in Core.")
+            } else if (lifecycle.isLive(current)) listener.stopped(VoiceEndMessages.forReason(reason))
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
