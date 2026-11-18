@@ -50,6 +50,8 @@ public static class DomainPolicy
         if (configuration.TryGetValue("coachingExerciseId", out var exerciseId)) Guard.Require(
             Jarvis.Orchestrator.Coaching.CoachingCatalog.Exercises.Any(e => e.Id == exerciseId && !e.RequiresStory && !e.RequiresClaim),
             400, "Choose an installed standalone coaching exercise for a reusable domain template.");
+        if (configuration.TryGetValue("coachingScenarioId", out var scenarioId)) Guard.Require(
+            Jarvis.Orchestrator.Coaching.CoachingScenarios.Contains(scenarioId), 400, "Coaching scenarios must reference installed authored code.");
         Guard.Require(manifest.ParentKey is null || manifest.ParentKey.Length <= 60 && Regex.IsMatch(manifest.ParentKey, "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$") && manifest.ParentKey != manifest.Key, 400, "Invalid parent domain.");
         var guidance = string.IsNullOrWhiteSpace(manifest.StudyGuidance) ? null : Guard.Text(manifest.StudyGuidance, "Domain study guidance", 3000);
         var sources = ValidateKnowledge(manifest.KnowledgeSources);
@@ -110,8 +112,17 @@ public static class DomainPolicy
         Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.ManualClient && !string.IsNullOrWhiteSpace(actor.SubjectId) && actor.Scopes.Contains("domain.manage"),
             403, "Domain activation requires a manual owner approval.");
     }
-    public static DomainManifest BuiltIn(DomainDescriptor domain) => Validate(new(1, domain.Key,
+    public static DomainManifest BuiltIn(DomainDescriptor domain) {
+        if (Jarvis.Orchestrator.Coaching.CoachingScenarios.Contains(domain.Key)) {
+            var scenario = Jarvis.Orchestrator.Coaching.CoachingScenarios.Get(domain.Key);
+            return Validate(new(1, domain.Key, scenario.Title, domain.Instructions, [],
+                [domain.Key == "scenario-presentation" ? AgentRole.CommunicationCoach : AgentRole.InterviewCoach], [new("core_template_practice")],
+                scenario.Turns.Select(t => t.Question).ToArray(), DomainExecutionMode.Template,
+                Configuration: new Dictionary<string, string> { ["coachingScenarioId"] = scenario.Key }));
+        }
+        return Validate(new(1, domain.Key,
         CultureInfo.InvariantCulture.TextInfo.ToTitleCase(domain.Key.Replace('-', ' ')), domain.Instructions,
         domain.Workflows.ToArray(), [AgentRole.TechnicalTrainer], [new("core_template_practice")],
         ["Describe your learning goal for " + domain.Key.Replace('-', ' ') + ".", "Explain one example in your own words.", "Choose one small next practice step."], DomainExecutionMode.Template));
+    }
 }

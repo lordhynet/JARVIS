@@ -102,7 +102,9 @@ test('programme check-ins are explicit self reports and module status does not i
   if (await check.isVisible()) { await panel.getByLabel('Weekly reflection · optional').fill('Practised one concrete answer.'); await check.click(); }
   await expect(panel).toContainText('1 weekly self check-ins');
   await page.getByRole('button', { name: 'All modules', exact: true }).click(); const modules = page.locator('[data-panel=modules]');
-  await modules.getByText('Research & review specialists · Incremental', { exact: true }).click(); await expect(modules).toContainText('Pending: Claim-level source evidence');
+  await modules.getByText('Research & review specialists · Incremental', { exact: true }).click();
+  await expect(modules).toContainText('Available: Claim-level source mappings and citation coverage validation');
+  await expect(modules).toContainText('Pending: Independent source verification');
   await page.getByRole('button', { name: 'Connections', exact: true }).click(); await page.getByRole('button', { name: 'Disconnect this tab' }).click();
   await expect(page.locator('#workspace')).toBeHidden(); expect(await page.evaluate(() => document.body.textContent.includes('Practised one concrete answer.'))).toBeFalsy();
 });

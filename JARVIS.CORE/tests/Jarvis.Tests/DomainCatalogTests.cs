@@ -46,7 +46,8 @@ public sealed class DomainCatalogTests
             return (language, state.Versions[language.LatestVersionId], state.UserStates[DomainPolicy.OwnerSubject + ":" + language.Id]);
         });
         IDomainRegistry restarted = new DomainRegistryService(services.GetRequiredService<IDomainRegistryStore>(), services.GetRequiredService<ICapabilityCatalog>(), services.GetRequiredService<TimeProvider>());
-        var all = await restarted.ListAsync(default); Assert.Equal(14, all.Count);
+        var all = await restarted.ListAsync(default); Assert.Equal(18, all.Count);
+        Assert.Equal(4, all.Count(d => d.Definition.Key.StartsWith("scenario-", StringComparison.Ordinal)));
         Assert.Equal(original.language, all.Single(d => d.Definition.Key == "languages").Definition);
         Assert.Equal(JsonSerializer.Serialize(original.Item2, DomainPolicy.Json), JsonSerializer.Serialize(all.Single(d => d.Definition.Key == "languages").Version, DomainPolicy.Json));
         Assert.Equal(original.Item3, await runtime.ReadAsync(s => s.DomainRegistry.UserStates[DomainPolicy.OwnerSubject + ":" + original.language.Id]));

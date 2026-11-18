@@ -11,6 +11,8 @@ public static class DomainExecutionLifecycle
 
     public static void DisableRuns(RuntimeState state, IReadOnlySet<string> keys)
     {
+        foreach (var practice in state.VoiceCoachings.Values.Where(v => v.ScenarioKey is { } key && keys.Contains(key) && v.Status is "Question" or "Correcting").ToArray())
+            state.VoiceCoachings[practice.Id] = practice with { Status = "Cancelled", UpdatedAt = DateTimeOffset.UtcNow };
         foreach (var run in state.AgentRuns.Values.Where(r => r.DeletedAt is null && r.WorkflowPolicy?.DomainKey is { } key && keys.Contains(key) &&
             r.Status is AgentRunStatus.Queued or AgentRunStatus.Running or AgentRunStatus.AwaitingSetup).ToArray()) {
             AgentToolLifecycle.Retire(state, run.Id, DateTimeOffset.UtcNow, false);

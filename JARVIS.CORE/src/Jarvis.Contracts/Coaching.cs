@@ -5,7 +5,12 @@ public sealed record VoiceCoaching(Guid Id, Guid SessionId, string ExerciseId, G
     int? StoryVersion, int? ClaimIndex, Guid StartUtteranceId, DateTimeOffset CreatedAt,
     string Status = "Question", Guid? AnswerUtteranceId = null, Guid? AttemptId = null, Guid? StopUtteranceId = null, int ExerciseVersion = 1,
     Guid? CorrectionStartUtteranceId = null, int? CorrectionExpectedRevision = null, DateTimeOffset? CorrectionStartedAt = null,
-    DateTimeOffset? UpdatedAt = null);
+    DateTimeOffset? UpdatedAt = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ScenarioKey = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? ScenarioVersionId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)] int ScenarioStep = 0,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<Guid>? ScenarioAttempts = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<Guid>? ScenarioAnswers = null);
 public sealed record CoachingExercise(string Id, int Version, CoachingArea Area, string Title, string Prompt,
     IReadOnlyList<string> Framework, IReadOnlyList<string> FollowUps, int? TargetSeconds = null, bool RequiresStory = false, bool RequiresClaim = false);
 public sealed record CoachingPrompt(CoachingExercise Exercise, string Question, Guid? StoryId, int? StoryVersion, int? ClaimIndex);

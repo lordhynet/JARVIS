@@ -50,6 +50,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         }),
         Tool("core_coaching",
             "List core_coaching_catalog to help the user choose an exercise. core_coaching_prompt only previews. Start or stop only on request. " +
+            "Turn-based scenarios use scenario-panel, scenario-recruiter, scenario-presentation or scenario-hostile-qa, in Everyday voice. Each answer returns the next authored question; ask it once and wait. Completed scenarios return a checklist debrief, evidence and measured delivery when available. Never call checklist coverage a competence grade. " +
             "Use the selected story and current version from Core for story or CV coaching. Use null selection fields except for start. " +
             "Use current to resume, with an empty utterance_id. After starting, ask the prompt and wait for a separate finished answer. " +
             "Use answer to save the latest captured user speech verbatim. Never save questions or commands. Stop keeps history. " +
@@ -91,7 +92,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
     private static string Clip(string value, int length) => value.Length <= length ? value : value[..length];
 
     public async Task<string> ExecuteAsync(string name, string arguments, Guid sessionId, IReadOnlySet<Guid> windowUtterances,
-        CancellationToken ct, Guid latestUtterance = default, Func<CancellationToken, Task<bool>>? currentAudio = null)
+        CancellationToken ct, Guid latestUtterance = default, Func<CancellationToken, Task<bool>>? currentAudio = null, VoiceMode voiceMode = VoiceMode.Everyday)
     {
         try
         {
@@ -157,12 +158,12 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
                         args.GetProperty("exercise_id").GetString(),
                         args.GetProperty("story_id").ValueKind == JsonValueKind.Null ? null : args.GetProperty("story_id").GetGuid(),
                         args.GetProperty("story_version").ValueKind == JsonValueKind.Null ? null : args.GetProperty("story_version").GetInt32(),
-                        args.GetProperty("claim_index").ValueKind == JsonValueKind.Null ? null : args.GetProperty("claim_index").GetInt32(), ct);
+                        args.GetProperty("claim_index").ValueKind == JsonValueKind.Null ? null : args.GetProperty("claim_index").GetInt32(), ct, voiceMode);
                     result = coachingView is null ? null : new { coachingView.Id, coachingView.Status, coachingView.AttemptId, coachingView.Revision,
                         Question = coachingView.Prompt is { } p ? Clip(p.Question, 1800) : null,
                         Framework = coachingView.Prompt?.Exercise.Framework, CapturedAnswer = coachingView.CapturedAnswer is { } a ? Clip(a, 1600) : null,
                         contentTruncated = coachingView.Prompt?.Question.Length > 1800 || coachingView.CapturedAnswer?.Length > 1600,
-                        WordCount = coachingView.TextAnalysis?.WordCount, TimingSource = "not_measured",
+                        WordCount = coachingView.TextAnalysis?.WordCount, TimingSource = "not_measured", coachingView.Scenario, coachingView.QuestionNumber, coachingView.TotalQuestions,
                         Observations = coachingView.TextAnalysis?.Observations.Take(2).Select(o => new { o.Code, Detail = Clip(o.Detail, 350) }).ToArray(),
                         NextDrills = coachingView.TextAnalysis?.NextDrills.Take(2).Select(d => Clip(d, 200)).ToArray(),
                         assessment = "Text-only observations. No calibrated AI score or acoustic measurement." }; break;

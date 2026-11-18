@@ -33,7 +33,8 @@ public sealed class DomainCatalog : IDomainCatalog
         new("api-security", "Practice API security concepts with defensive examples and explicit trust boundaries.", [], [], ["core_recall"]),
         new("production-devops", "Practice production operations concepts, observability and reversible recovery plans without executing commands.", [], [], ["core_recall"]),
         new("payments-fintech", "Practice payments and finance concepts using supplied examples. Keep study read-only and distinguish assumptions from verified facts.", [], [], ["core_recall"])
-    }.Select(Freeze).ToArray());
+    }.Concat(Jarvis.Orchestrator.Coaching.CoachingScenarios.All.Select(s => new DomainDescriptor(s.Key,
+        "Rehearse " + s.Title + " one authored question at a time. Use Everyday voice. Keep evidence and uncertainty explicit.", [], [], ["core_coaching"]))).Select(Freeze).ToArray());
     private readonly IReadOnlyDictionary<string, DomainDescriptor> domains;
     private readonly IReadOnlyDictionary<ActivityType, DomainDescriptor> activities;
     public DomainCatalog(ICapabilityCatalog capabilities, IWorkflowCatalog workflows, IEnumerable<DomainDescriptor>? extensions = null)
