@@ -45,13 +45,28 @@ public sealed class CompanionProtocolTests
     }
 
     [Fact]
-    public void Owner_name_defaults_to_generic_and_rejects_unbounded_or_control_text()
+    public void Owner_name_defaults_to_generic_and_invalid_values_fall_back_without_breaking_discovery()
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection().Build();
         Assert.Equal("", OwnerDisplayName.Read(config));
-        foreach (var invalid in new[] { new string('x', 81), "Ca\nsey" }) {
+        foreach (var invalid in new[] { new string('x', 81), "Ca\nsey", "Casey\n" }) {
             config[ConfigKeys.OwnerDisplayName] = invalid;
-            Assert.Equal(503, Assert.Throws<DomainException>(() => OwnerDisplayName.Read(config)).StatusCode);
+            Assert.Equal("", OwnerDisplayName.Read(config));
+        }
+    }
+
+    [Fact]
+    public async Task Invalid_greeting_configuration_does_not_break_owner_or_scoped_device_listing()
+    {
+        using var factory = new ProviderFactory(_ => throw new InvalidOperationException("No provider call."));
+        factory.Services.GetRequiredService<IConfiguration>()[ConfigKeys.OwnerDisplayName] = new string('x', 81);
+        var devices = factory.Services.GetRequiredService<DeviceService>();
+        await devices.RegisterAsync(new("greeting-fixture", "Fixture", DeviceKind.WindowsAgent, new(true, true, false, false, [CompanionVoiceProtocol.AudioOnly])));
+        var credential = await factory.Services.GetRequiredService<DeviceCredentials>().IssueAsync("greeting-fixture", default);
+        using var owner = factory.Client(); using var device = factory.CreateClient(); device.DefaultRequestHeaders.Add(CompanionHeaders.ApiKey, credential.Secret);
+        foreach (var client in new[] { owner, device }) {
+            var listed = (await client.GetFromJsonAsync<DeviceView[]>(CompanionRoutes.Devices, LifeScenarioTests.Json))!;
+            Assert.Equal("", Assert.Single(listed).OwnerDisplayName);
         }
     }
 
