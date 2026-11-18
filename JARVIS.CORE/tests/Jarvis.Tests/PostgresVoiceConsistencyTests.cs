@@ -183,8 +183,8 @@ public sealed partial class PostgresSessionTests
             oldState.VoiceTurns[existingId] = new(existingId, sessionId, "assistant", "Original projection", null, now);
             oldState.RetiredSessions.Add(retiredId);
             oldState.DeviceCredentials["old-device"] = new("old-device", "current-hash", now);
-            var runtimeRow = await before.RuntimeDocuments.SingleAsync();
-            runtimeRow.Json = System.Text.Json.JsonSerializer.Serialize(oldState);
+            var legacyRuntimeJson = System.Text.Json.JsonSerializer.Serialize(oldState);
+            await before.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"RuntimeDocuments\" SET \"Json\"=CAST({legacyRuntimeJson} AS jsonb) WHERE \"Id\"=1");
             const string constraints = "{}";
             await before.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO "DeviceGrants" ("Id", "DeviceId", "CapabilityId", "CapabilityVersion", "ConstraintsJson",

@@ -10,67 +10,89 @@ public sealed record FxRefreshState(BudgetFxQuote? Quote = null, decimal? Unadju
 
 public sealed class RuntimeState
 {
+    private Action? coldLoader;
+    [System.Text.Json.Serialization.JsonIgnore] public bool AreColdPropertiesLoaded => coldLoader is null;
+    public void DeferColdProperties(Action loader) => coldLoader = loader;
+    public void LoadColdProperties() {
+        if (coldLoader is not { } load) return;
+        coldLoader = null;
+        try { load(); } catch { coldLoader = load; throw; }
+    }
+    public void CloseColdProperties() {
+        if (coldLoader is not null) coldLoader = () => throw new InvalidOperationException("Materialize runtime projections inside the store callback.");
+    }
     // In-memory registry only. PostgreSQL keeps definitions in the dedicated relational tables.
-    public Jarvis.Orchestrator.Domains.DomainRegistryState DomainRegistry { get; set; } = new();
-    public Dictionary<Guid, ProviderAttempt> ProviderAttempts { get; set; } = [];
-    public HashSet<Guid> RetiredReasoningScopes { get; set; } = [];
-    public Dictionary<string, HubAccessTicket> HubTickets { get; set; } = [];
+    public Jarvis.Orchestrator.Domains.DomainRegistryState DomainRegistry { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = new();
+    public Dictionary<Guid, ProviderAttempt> ProviderAttempts { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public HashSet<Guid> RetiredReasoningScopes { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<string, HubAccessTicket> HubTickets { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<string, DeviceCredential> DeviceCredentials { get; set; } = [];
-    public Dictionary<Guid, VoiceCoaching> VoiceCoachings { get; set; } = [];
-    public string? BudgetScopeId { get; set; }
-    public FxRefreshState? FxRefresh { get; set; }
-    public long BudgetEpoch { get; set; }
-    public int BudgetRevision { get; set; }
-    public Dictionary<Guid, GbpCommitment> GbpCommitments { get; set; } = [];
-    public Dictionary<Guid, BudgetApproval> BudgetApprovals { get; set; } = [];
-    public Dictionary<Guid, BudgetManagementReceipt> BudgetReceipts { get; set; } = [];
-    public Dictionary<Guid, VoiceRecall> VoiceRecalls { get; set; } = [];
-    public Dictionary<Guid, BrowserPushSubscription> PushSubscriptions { get; set; } = [];
-    public Dictionary<Guid, PushDelivery> PushDeliveries { get; set; } = [];
-    public Dictionary<Guid, ImportedDocument> ImportedDocuments { get; set; } = [];
-    public Dictionary<Guid, SourceClaim> SourceClaims { get; set; } = [];
-    public Dictionary<Guid, PersonalGoal> Goals { get; set; } = [];
-    public Dictionary<Guid, DurableAgentTrigger> AgentTriggers { get; set; } = [];
-    public Dictionary<Guid, UsageReconciliation> UsageReconciliations { get; set; } = [];
-    public HashSet<Guid> RetiredSessions { get; set; } = [];
-    public Dictionary<Guid, TrainingDrill> TrainingDrills { get; set; } = [];
-    public Dictionary<Guid, UsageReservation> UsageReservations { get; set; } = [];
-    public Dictionary<Guid, ProviderResult> ProviderResults { get; set; } = [];
+    public Dictionary<Guid, VoiceCoaching> VoiceCoachings { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public string? BudgetScopeId { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
+    public FxRefreshState? FxRefresh { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
+    public long BudgetEpoch { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
+    public int BudgetRevision { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
+    public Dictionary<Guid, GbpCommitment> GbpCommitments { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, BudgetApproval> BudgetApprovals { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, BudgetManagementReceipt> BudgetReceipts { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, VoiceRecall> VoiceRecalls { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, BrowserPushSubscription> PushSubscriptions { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, PushDelivery> PushDeliveries { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, ImportedDocument> ImportedDocuments { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, SourceClaim> SourceClaims { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, PersonalGoal> Goals { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, DurableAgentTrigger> AgentTriggers { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, UsageReconciliation> UsageReconciliations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public HashSet<Guid> RetiredSessions { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, TrainingDrill> TrainingDrills { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, UsageReservation> UsageReservations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, ProviderResult> ProviderResults { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public AgentControls AgentControls { get; set; } = new();
-    public Dictionary<Guid, AgentSchedule> AgentSchedules { get; set; } = [];
-    public Dictionary<Guid, AgentRun> AgentRuns { get; set; } = [];
-    public Dictionary<Guid, AgentTask> AgentTasks { get; set; } = [];
-    public Dictionary<Guid, AgentToolGrant> AgentToolGrants { get; set; } = [];
-    public Dictionary<Guid, AgentToolInvocation> AgentToolInvocations { get; set; } = [];
-    public Dictionary<Guid, AgentActionProposal> AgentActions { get; set; } = [];
-    public Dictionary<Guid, AgentVoiceReview> AgentVoiceReviews { get; set; } = [];
-    public Dictionary<Guid, DeviceVoiceAuthority> DeviceVoiceAuthorities { get; set; } = [];
-    public Dictionary<Guid, ContextMemoryItem> ContextMemories { get; set; } = [];
-    public Dictionary<Guid, AgentNotification> AgentOutbox { get; set; } = [];
-    public Dictionary<Guid, AiCoachAssessment> AiCoachAssessments { get; set; } = [];
-    public Dictionary<Guid, AiCoachAssessmentClaim> AiCoachAssessmentClaims { get; set; } = [];
+    public Dictionary<Guid, AgentSchedule> AgentSchedules { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AgentRun> AgentRuns { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AgentTask> AgentTasks { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AgentToolGrant> AgentToolGrants { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AgentToolInvocation> AgentToolInvocations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AgentActionProposal> AgentActions { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AgentVoiceReview> AgentVoiceReviews { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, DeviceVoiceAuthority> DeviceVoiceAuthorities { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, ContextMemoryItem> ContextMemories { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AgentNotification> AgentOutbox { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AiCoachAssessment> AiCoachAssessments { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AiCoachAssessmentClaim> AiCoachAssessmentClaims { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public AudioLease? AudioLease { get; set; }
     public AudioLease? AudioDrainLease { get; set; }
     public DateTimeOffset? AudioDrainUntil { get; set; }
     public long NextAudioFence { get; set; } = 1;
     public Dictionary<string, VoiceTicketRecord> VoiceTickets { get; set; } = [];
     public Dictionary<string, List<DateTimeOffset>> WakeCandidateAttempts { get; set; } = [];
-    public Dictionary<Guid, VoiceTurn> VoiceTurns { get; set; } = [];
-    public Dictionary<Guid, CoachingAttempt> CoachingAttempts { get; set; } = [];
-    public Dictionary<Guid, TrainingOperation> CoachingOperations { get; set; } = [];
-    public Dictionary<Guid, ImprovementProgramme> Programmes { get; set; } = [];
-    public Guid? ActiveProgrammeId { get; set; }
-    public Dictionary<Guid, TrainingAttempt> TrainingAttempts { get; set; } = [];
-    public Dictionary<Guid, TrainingOperation> TrainingOperations { get; set; } = [];
-    public Dictionary<Guid, LearningItem> TrainingBaselines { get; set; } = [];
-    public Dictionary<Guid, HashSet<Guid>> TrainingBaselineReviews { get; set; } = [];
-    public Dictionary<Guid, long> TrainingManualSequences { get; set; } = [];
-    public long NextTrainingSequence { get; set; } = 1;
-    public Dictionary<Guid, Story> Stories { get; set; } = [];
+    private Dictionary<Guid, VoiceTurn>? voiceTurns = [];
+    private Func<Dictionary<Guid, VoiceTurn>>? voiceLoader;
+    public Dictionary<Guid, VoiceTurn> VoiceTurns {
+        get { if (voiceTurns is null) { voiceTurns = voiceLoader!(); voiceLoader = null; } return voiceTurns; }
+        set { voiceTurns = value; voiceLoader = null; }
+    }
+    [System.Text.Json.Serialization.JsonIgnore] public bool AreVoiceTurnsLoaded => voiceTurns is not null;
+    // Persistence-only hydration inside the existing transaction; callbacks remain synchronous.
+    public void DeferVoiceTurns(Func<Dictionary<Guid, VoiceTurn>> loader) { voiceTurns = null; voiceLoader = loader; }
+    public void CloseVoiceTurns() {
+        if (voiceTurns is null) voiceLoader = () => throw new InvalidOperationException("Materialize runtime projections inside the store callback.");
+    }
+    public Dictionary<Guid, CoachingAttempt> CoachingAttempts { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, TrainingOperation> CoachingOperations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, ImprovementProgramme> Programmes { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Guid? ActiveProgrammeId { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
+    public Dictionary<Guid, TrainingAttempt> TrainingAttempts { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, TrainingOperation> TrainingOperations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, LearningItem> TrainingBaselines { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, HashSet<Guid>> TrainingBaselineReviews { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, long> TrainingManualSequences { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public long NextTrainingSequence { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = 1;
+    public Dictionary<Guid, Story> Stories { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<string, RegisteredDevice> Devices { get; set; } = [];
-    public Dictionary<Guid, LearningItem> Learning { get; set; } = [];
-    public Dictionary<Guid, LearningReview> Reviews { get; set; } = [];
-    public Dictionary<Guid, AuditedTool> Tools { get; set; } = [];
+    public Dictionary<Guid, LearningItem> Learning { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, LearningReview> Reviews { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, AuditedTool> Tools { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
 }
 
 public sealed record AiCoachAssessmentClaim(Guid RequestId, Guid AttemptId, Guid ClaimId,
