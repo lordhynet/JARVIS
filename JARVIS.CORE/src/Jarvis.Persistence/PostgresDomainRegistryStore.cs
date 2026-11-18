@@ -36,7 +36,12 @@ public sealed class PostgresDomainRegistryStore(IDbContextFactory<SessionDbConte
         var status = await PostgresPrivacyGate.LockAsync(db, ct);
         // Administrative catalogue mutations serialize independently of the runtime JSONB hot row.
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(746271591)", ct);
-        var state = await Snapshot(db, ct); var result = update(state, status.Epoch);
+        var state = await Snapshot(db, ct); var enabled = DomainExecutionLifecycle.Enabled(state); var result = update(state, status.Epoch);
+        enabled.ExceptWith(DomainExecutionLifecycle.Enabled(state));
+        if (enabled.Count > 0) {
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            await PostgresRuntimeStore.UpdateInTransactionAsync(db, s => { DomainExecutionLifecycle.DisableRuns(s, enabled); return Task.FromResult(true); }, started, started, ct);
+        }
         var existingDefinitions = db.DomainDefinitions.Local.ToDictionary(x => x.Id);
         foreach (var definition in state.Definitions.Values.Where(d => !existingDefinitions.ContainsKey(d.Id))) {
             var row = DomainDefinitionRow.From(definition); row.CurrentVersionId = null; db.DomainDefinitions.Add(row);

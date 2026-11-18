@@ -12,6 +12,28 @@ namespace Jarvis.Tests;
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
+    public async Task Domain_memory_survives_restart_and_disabled_domains_keep_notes_but_cancel_active_runs()
+    {
+        await using var database = await TestDatabase.CreateAsync(); Guid memoryId;
+        using (var first = new PostgresApiFactory(database.ConnectionString))
+        using (var client = first.AuthorisedClient()) {
+            var draft = await DomainRegistryTests.Post<DomainPreview>(client, "/api/domains/drafts", DomainRegistryTests.Draft(DomainRegistryTests.Education()));
+            var approved = await DomainRegistryTests.Activate(client, draft);
+            var item = await DomainRegistryTests.Post<ContextMemoryItem>(client, "/api/domains/education/memory", new SaveContextMemoryRequest(Guid.NewGuid(), "note", null, "Explain Spanish verbs", DateTimeOffset.UtcNow.AddDays(10)));
+            memoryId = item.Id;
+            var runtime = first.Services.GetRequiredService<Jarvis.Orchestrator.Workflows.AgentRuntime>();
+            var run = await runtime.StartAsync(new(Guid.NewGuid(), draft.Definition.WorkflowKey, false), default);
+            await DomainRegistryTests.Post<DomainOperationReceipt>(client, "/api/domains/education/disable", new DisableDomainRequest(Guid.NewGuid(), approved.Revision));
+            Assert.Equal(AgentRunStatus.Cancelled, await first.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AgentRuns[run.Run.Id].Status));
+        }
+        using var restarted = new PostgresApiFactory(database.ConnectionString); using var owner = restarted.AuthorisedClient();
+        var memory = await owner.GetFromJsonAsync<ContextMemoryItem[]>("/api/domains/education/memory", Json);
+        Assert.Equal(memoryId, Assert.Single(memory!).Id);
+        var status = await owner.GetFromJsonAsync<PrivacyStatus>("/api/privacy/status", Json);
+        await DomainRegistryTests.Post<PrivacyStatus>(owner, "/api/privacy/erase", new EraseCoreRequest(Guid.NewGuid(), status!.Revision, PrivacyData.ErasePhrase));
+        Assert.Empty((await restarted.Services.GetRequiredService<IPrivacyReader>().ExportAsync(DateTimeOffset.UtcNow)).ContextMemories!);
+    }
+    [PostgresFact]
     public async Task Domain_registry_survives_restart_and_is_relational_and_privacy_erasable()
     {
         await using var database = await TestDatabase.CreateAsync(); DomainPreview draft; DomainOperationReceipt approved;

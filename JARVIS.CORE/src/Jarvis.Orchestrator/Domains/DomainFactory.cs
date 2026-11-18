@@ -38,6 +38,8 @@ public sealed class DomainFactory(IDomainRegistry registry, ICapabilityCatalog c
     {
         Guard.Require(request.RequestId != Guid.Empty && request.AllowCloudProcessing, 403, "Proposal generation requires an ID and explicit cloud-processing consent.");
         var description = Guard.Text(request.Description, "Domain request", 3000);
+        var knowledge = DomainPolicy.ValidateKnowledge(request.KnowledgeSources);
+        await runtime.ReadAsync(s => { RequireImports(s, knowledge); return true; }, ct);
         var fingerprint = PrivacyData.Hash(JsonSerializer.Serialize(new { request, sessionId, utteranceId }));
         if (await registry.FindProposalAsync(request.RequestId, fingerprint, ct) is { } replay) return replay;
         var existing = await registry.ListAsync(ct);
@@ -52,22 +54,34 @@ public sealed class DomainFactory(IDomainRegistry registry, ICapabilityCatalog c
             "Default to Template: authored practice questions only, never claim quizzes, retrieval, scoring or progress features that are not installed. " +
             "Preserve every requested unavailable feature as an unmet capability dependency using an honest uninstalled ID. Reuse equivalent existing domain keys/aliases. " +
             "Sensitive legal/medical requests require trusted sources, cannot use personal context or external actions, and stay drafts if unavailable. " +
+            "Omit studyGuidance and knowledgeSources: Core binds the owner's original request and references after validation. " +
+            "For reusable coaching, configuration.coachingExerciseId may select exactly one supplied standalone installed exercise. Never invent an exercise ID. " +
             "The installed roles are " + string.Join(',', Enum.GetNames<AgentRole>()) + ". Example valid schema: " + DomainPolicy.Serialize(new(1, "education", "Education", "Practice explaining a topic.", [],
                 [AgentRole.TechnicalTrainer], [new("core_template_practice")], ["Explain one example."], DomainExecutionMode.Template));
         var input = JsonSerializer.Serialize(new { Request = description, SelectedKey = request.Key,
+            CoachingExercises = Jarvis.Orchestrator.Coaching.CoachingCatalog.Exercises.Where(e => !e.RequiresStory && !e.RequiresClaim).Select(e => new { e.Id, e.Title }),
             InstalledCapabilities = capabilities.Installed, ExistingDomains = existing.Select(x => new { x.Definition.Key, x.Version.Manifest.Aliases, x.Version.Manifest.Description }) });
         var result = await reasoning.ReasonAsync(new(request.RequestId, sessionId ?? request.RequestId, "Agent", TextCapability.JsonReasoning,
             ReasoningDataClass.Personal, true, instructions, [new(ChatRoles.User, input)], UsageLane.Background, 1200), ct);
         Guard.Require(result.Text.Length <= 16000, 502, "Generated manifest exceeded its bound.");
         using var parsed = JsonDocument.Parse(result.Text, new JsonDocumentOptions { MaxDepth = 10 });
         var manifest = DomainPolicy.Parse(parsed.RootElement);
+        Guard.Require(manifest.KnowledgeSources is null && manifest.StudyGuidance is null, 409, "Generated drafts cannot invent owner knowledge references or study guidance.");
+        manifest = DomainPolicy.Validate(manifest with { StudyGuidance = description, KnowledgeSources = knowledge });
         Guard.Require(!manifest.UsesPersonalContext, 409, "Generated drafts cannot opt into personal context; review a manual manifest separately.");
         Guard.Require(request.Key is null || request.Key == manifest.Key, 409, "Generated key differs from the selected domain.");
         var equivalent = existing.FirstOrDefault(d => DomainPolicy.Names(d.Version.Manifest).Overlaps(DomainPolicy.Names(manifest)));
         if (equivalent is not null && request.ExpectedRevision is null) return new(equivalent, true, null);
         if (sessionId is Guid session && utteranceId is Guid utterance) Guard.Require(await Captured(session, utterance, ct) == description, 409, "Captured request changed during generation.");
+        await runtime.ReadAsync(s => { RequireImports(s, knowledge); return true; }, ct);
         var provenance = new DomainDraftProvenance(request.RequestId, fingerprint, sessionId is null ? "manual-generation" : "captured-voice-generation", sessionId, utteranceId, result.Route.Provider, result.Route.Model);
         var draft = await registry.SaveDraftAsync(new(request.RequestId, request.ExpectedRevision, JsonSerializer.SerializeToElement(manifest, DomainPolicy.Json), provenance), "domain-factory", ct);
         return new(draft, false, provenance);
+    }
+    private static void RequireImports(RuntimeState state, IReadOnlyList<DomainKnowledgeReference> references)
+    {
+        foreach (var source in references.Where(r => r.Kind == "import"))
+            Guard.Require(state.ImportedDocuments.TryGetValue(Guid.Parse(source.Reference), out var document) && document.DeletedAt is null,
+                409, "An owner knowledge import is unavailable. Reload the proposal sources.");
     }
 }

@@ -11,7 +11,7 @@ public sealed record ContextCard(Guid Id, LearningDomain Domain, string Prompt, 
 public sealed record SelectedContext(IReadOnlyList<ContextStory> Stories, IReadOnlyList<ContextCard> Due, int Bytes);
 
 /// <summary>Deterministic lexical retrieval. Source text is data; no model call, answer disclosure or new memory store.</summary>
-public static class ContextSelector
+public static partial class ContextSelector
 {
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
         { "the", "a", "an", "my", "me", "i", "to", "for", "with", "and", "of", "please", "story", "practise", "practice" };

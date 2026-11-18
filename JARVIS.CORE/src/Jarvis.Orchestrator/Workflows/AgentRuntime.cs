@@ -216,12 +216,19 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
     {
         "story" => s.Stories.TryGetValue(source.Id, out var story) && story.Version.ToString(CultureInfo.InvariantCulture) == source.Version,
         "learning" => s.Learning.TryGetValue(source.Id, out var item) && LearningVersion(item) == source.Version,
+        "import" => s.ImportedDocuments.TryGetValue(source.Id, out var document) && document.DeletedAt is null && document.ContentHash == source.Version,
+        "voice" => s.VoiceTurns.TryGetValue(source.Id, out var turn) && !turn.Restricted && turn.Role == ChatRoles.User && !s.RetiredSessions.Contains(turn.SessionId) &&
+            PrivacyData.Hash(System.Text.Json.JsonSerializer.Serialize(turn)) == source.Version,
+        "memory" => s.ContextMemories.TryGetValue(source.Id, out var memory) && Jarvis.Orchestrator.Intelligence.ContextMemoryService.Version(memory) == source.Version &&
+            memory.ExpiresAt > DateTimeOffset.UtcNow && Jarvis.Orchestrator.Intelligence.ContextMemoryService.Current(s, memory),
         _ => false
     };
     public static void InvalidateSource(RuntimeState s, string kind, Guid id)
     {
+        Jarvis.Orchestrator.Intelligence.ContextMemoryService.DropSource(s, kind, id);
         foreach (var task in s.AgentTasks.Values.Where(x => x.SourceRefs?.Any(r => r.Kind == kind && r.Id == id) == true).ToList())
         {
+            AgentToolLifecycle.Retire(s, task.RunId, DateTimeOffset.UtcNow, true);
             s.AgentTasks[task.Id] = task with { Output = null, Input = "", ClaimToken = null, Status = AgentTaskStatus.Cancelled, ErrorCode = "source_deleted" };
             s.AgentRuns[task.RunId] = s.AgentRuns[task.RunId] with { Status = AgentRunStatus.SourceDeleted };
             ReasoningLifecycle.Retire(s, task.Id);

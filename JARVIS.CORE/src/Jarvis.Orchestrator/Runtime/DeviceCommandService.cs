@@ -305,8 +305,8 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
 
     internal async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
     {
-        if (writes.Runtime.AgentActions.TryGetValue(command.Id, out var action) &&
-            (!AgentActionAuthority.Current(writes.Runtime, action, clock.GetUtcNow()) ||
+        if (command.Origin == InvocationOrigin.Agent &&
+            (!writes.Runtime.AgentActions.TryGetValue(command.Id, out var action) || !AgentActionAuthority.Current(writes.Runtime, action, clock.GetUtcNow()) ||
              writes.Runtime.AgentToolInvocations.GetValueOrDefault(command.Id)?.Status is not (AgentToolStatus.Succeeded or AgentToolStatus.Executing))) return null;
         if (IsHomeAssistant(command) && AutomaticOrigin(command.Origin) && writes.Runtime.AgentControls.EffectivePaidAiPaused)
             return null;

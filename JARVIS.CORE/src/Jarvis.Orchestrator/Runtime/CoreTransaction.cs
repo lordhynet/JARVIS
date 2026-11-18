@@ -1,5 +1,6 @@
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Sessions;
+using Jarvis.Orchestrator.Domains;
 
 namespace Jarvis.Orchestrator.Runtime;
 
@@ -13,6 +14,7 @@ public interface ICoreTransactionWrites
 {
     const int DeviceCommandBatchSize = 16;
     RuntimeState Runtime { get; }
+    Task<DomainResolved?> ReadActiveDomainAsync(string key) => Task.FromResult(DomainRegistryProjection.Active(Runtime.DomainRegistry, key));
     Task<SessionAudioState?> ReadAudioStateAsync(Guid sessionId);
     Task<ConversationSession?> UpdateSessionAsync(Guid sessionId, Func<ConversationSession, ConversationSession> update);
     Task<DeviceGrant> AddDeviceGrantAsync(DeviceGrant grant);

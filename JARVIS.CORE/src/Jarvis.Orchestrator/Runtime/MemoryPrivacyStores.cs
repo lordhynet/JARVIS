@@ -166,7 +166,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var removed = counts with
             {
                 DeviceGrants = boundary.DeviceGrants.Count, DeviceCommands = boundary.DeviceCommands.Count,
-                DeviceReceipts = boundary.DeviceReceipts.Values.Sum(x => x.Count)
+                DeviceReceipts = boundary.DeviceReceipts.Values.Sum(x => x.Count), ContextMemories = state.ContextMemories.Count
             };
             runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear(); deviceGrants.Clear();
             boundary.DeviceCommands.Clear();

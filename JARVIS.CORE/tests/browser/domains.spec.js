@@ -19,6 +19,13 @@ test('domain preview binds manual approval to the exact version and scopes the o
   await row.getByRole('button', { name: 'Approve and activate this version', exact: true }).click(); const request = await activated;
   expect(request.headers()['x-jarvis-owner-key']).toBeTruthy(); expect(request.postDataJSON().versionId).toBe(preview.version.id); expect(request.postDataJSON().manifestHash).toBe(preview.version.manifestHash); expect(request.postDataJSON().riskClass).toBe('Finance');
   await expect(row).toContainText('Active');
+  await row.getByRole('button', { name: 'View memory for ' + key, exact: true }).click();
+  await row.getByLabel('Memory note for ' + key).fill('Practise explanations in short sentences.');
+  await row.getByRole('button', { name: 'Save memory for ' + key, exact: true }).click();
+  await row.getByRole('button', { name: 'View memory for ' + key, exact: true }).click();
+  await expect(row).toContainText('Practise explanations in short sentences.');
+  await row.getByRole('button', { name: 'Delete memory note', exact: true }).click();
+  await expect(row).not.toContainText('Practise explanations in short sentences.');
   await expect(page.locator('[data-panel=agents]').getByLabel('Workflow', { exact: true }).locator(`option[value="domain-${key}-practice"]`)).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });

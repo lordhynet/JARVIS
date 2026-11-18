@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Jarvis.Contracts;
 
@@ -9,7 +10,10 @@ public sealed record DomainCapabilityRequirement(string Id, string VersionConstr
 public sealed record DomainManifest(int SchemaVersion, string Key, string DisplayName, string Description,
     IReadOnlyList<string> Aliases, IReadOnlyList<AgentRole> Roles, IReadOnlyList<DomainCapabilityRequirement> Capabilities,
     IReadOnlyList<string> PracticePrompts, DomainExecutionMode ExecutionMode, bool UsesPersonalContext = false,
-    IReadOnlyDictionary<string, string>? Configuration = null, string? ParentKey = null);
+    IReadOnlyDictionary<string, string>? Configuration = null, string? ParentKey = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? StudyGuidance = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<DomainKnowledgeReference>? KnowledgeSources = null);
+public sealed record DomainKnowledgeReference(string Kind, string Reference);
 public sealed record DomainDefinition(Guid Id, string Key, string WorkflowKey, string DisplayName, DomainStatus Status,
     Guid? CurrentVersionId, Guid LatestVersionId, int Revision, bool BuiltIn, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 public sealed record DomainVersion(Guid Id, Guid DomainId, int Version, int SchemaVersion, DomainManifest Manifest,
@@ -31,7 +35,8 @@ public sealed record DomainOperationReceipt(Guid RequestId, Guid DomainId, strin
 public sealed record DomainDraftProvenance(Guid GenerationId, string RequestFingerprint, string Source,
     Guid? SessionId = null, Guid? UtteranceId = null, string? Provider = null, string? Model = null);
 public sealed record SaveDomainDraftRequest(Guid RequestId, int? ExpectedRevision, JsonElement Manifest, DomainDraftProvenance? Provenance = null);
-public sealed record ProposeDomainRequest(Guid RequestId, string Description, bool AllowCloudProcessing, string? Key = null, int? ExpectedRevision = null);
+public sealed record ProposeDomainRequest(Guid RequestId, string Description, bool AllowCloudProcessing, string? Key = null, int? ExpectedRevision = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<DomainKnowledgeReference>? KnowledgeSources = null);
 public sealed record DomainProposal(DomainPreview Preview, bool ExistingDomain, DomainDraftProvenance? Provenance);
 public sealed record ActivateDomainRequest(Guid RequestId, int ExpectedRevision, Guid VersionId, string ManifestHash, string Reason = "",
     DomainRiskClass? RiskClass = null);

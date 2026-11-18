@@ -71,13 +71,15 @@ public sealed class AgentActionTests
         Assert.Null(await f.Services.GetRequiredService<DeviceCommandService>().ClaimAsync(new(Guid.NewGuid())));
     }
 
-    [Fact]
-    public async Task Reversible_preapproval_requires_both_grants_and_cancellation_blocks_later_dispatch()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reversible_preapproval_requires_both_grants_and_cancellation_blocks_later_dispatch(bool delete)
     {
         using var f = await Fixture.Create(preapproved: true);
         var proposed = await f.Propose(); Assert.Equal("AwaitingReceipt", proposed.Status);
         var repeated = await f.Propose(); Assert.Equal(proposed.Proposal.Id, repeated.Proposal.Id);
-        await f.Runtime.CancelAsync(f.Task.RunId, false, default);
+        await f.Runtime.CancelAsync(f.Task.RunId, delete, default);
         using var actor = DeviceCredentialContext.Enter((await f.Services.GetRequiredService<DeviceCredentials>().AuthenticateAsync(f.Secret, default))!);
         Assert.Null(await f.Services.GetRequiredService<DeviceCommandService>().ClaimAsync(new(Guid.NewGuid())));
         Assert.Equal(AgentTaskStatus.Cancelled, await f.Store.ReadAsync(s => s.AgentTasks[proposed.Proposal.Id].Status));
