@@ -59,7 +59,7 @@ public static class PrivacyData
         state.UsageReservations.Values.ToList(), jobs, state.Goals.Values.Where(x => x.Status != GoalStatus.Deleted).ToList(),
         state.AgentTriggers.Values.ToList(), state.UsageReconciliations.Values.ToList(), state.ImportedDocuments.Values.Where(x => x.DeletedAt is null).ToList(), state.SourceClaims.Values.ToList(), state.VoiceRecalls.Values.ToList(),
         state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList(), domains ?? state.DomainRegistry.Export(),
-        state.AgentToolGrants.Values.ToArray(), state.AgentToolInvocations.Values.ToArray(), state.AgentActions.Values.ToArray());
+        state.AgentToolGrants.Values.ToArray(), state.AgentToolInvocations.Values.ToArray(), state.AgentActions.Values.ToArray(), state.DeviceVoiceAuthorities);
     public static RuntimeState EmptyAfterErase(RuntimeState old) => new()
     {
         UsageReservations = old.UsageReservations, NextAudioFence = checked(old.NextAudioFence + 1), AgentControls = new(Paused: true, PaidAiPaused: true, AgentsPaused: true),
@@ -118,6 +118,7 @@ public static class PrivacyData
             state.ProviderResults.Remove(id);
             if (state.ProviderAttempts.TryGetValue(id, out var attempt)) state.ProviderAttempts[id] = attempt with { Fingerprint = "" };
         }
+        foreach (var id in state.DeviceVoiceAuthorities.Where(p => selection.Sessions.Contains(p.Value.SessionId) || voiceIds.Contains(p.Value.SourceId)).Select(p => p.Key).ToArray()) state.DeviceVoiceAuthorities.Remove(id);
         foreach (var id in selection.Sessions) { state.RetiredSessions.Add(id); state.AgentVoiceReviews.Remove(id); ReasoningLifecycle.Retire(state, id); }
         foreach (var recall in state.VoiceRecalls.Values.Where(x => selection.Sessions.Contains(x.SessionId) ||
             voiceIds.Contains(x.StartUtteranceId) || x.AnswerUtteranceId is Guid answer && voiceIds.Contains(answer) ||

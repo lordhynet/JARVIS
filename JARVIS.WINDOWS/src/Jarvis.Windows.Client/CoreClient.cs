@@ -16,7 +16,7 @@ public sealed class CoreRejectedException(HttpStatusCode status) : Exception(sta
     public HttpStatusCode Status { get; } = status;
 }
 
-public sealed class CoreClient : IDisposable
+public sealed class CoreClient : IDisposable, IWindowsCommandCore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
     private readonly Connection connection;
@@ -69,6 +69,17 @@ public sealed class CoreClient : IDisposable
 
     public async Task ReleaseAsync(AudioLease lease, CancellationToken ct) =>
         _ = await PostAsync<bool>(CompanionRoutes.VoiceLocalRelease, lease, ct);
+
+    public async Task<DeliveredDeviceCommand?> ClaimCommandAsync(Guid requestId, CancellationToken ct)
+    {
+        if (epoch is null) throw new InvalidOperationException("Read Core privacy state before claiming a command.");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/device-commands/claim") { Content = JsonContent.Create(new ClaimDeviceCommandRequest(requestId), options: Json) };
+        request.Headers.Add(CompanionHeaders.DataEpoch, epoch.Value.ToString(CultureInfo.InvariantCulture));
+        using var response = await http.SendAsync(request, ct);
+        return response.StatusCode == HttpStatusCode.NoContent ? null : await ReadAsync<DeliveredDeviceCommand>(response, ct);
+    }
+    public Task<DeviceReceiptView> ReceiptAsync(Guid commandId, SubmitDeviceReceiptRequest request, CancellationToken ct) =>
+        PostAsync<DeviceReceiptView>("/api/device-commands/" + commandId + "/receipts", request, ct);
 
     private async Task<T> GetAsync<T>(string route, CancellationToken ct)
     {

@@ -1,0 +1,10 @@
+{
+  "apps": {
+    "example-app": {
+      "path": "C:\\REPLACE_WITH_OWNER_ALLOWED_FOLDER\\Example.exe",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "urls": { "example-site": "https://example.org/" },
+  "folders": { "cv": "C:\\REPLACE_WITH_OWNER_ALLOWED_FOLDER\\CV" }
+}

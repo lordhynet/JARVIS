@@ -114,7 +114,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
             sessionId = lease.SessionId;
             recommendedMode = VoiceMode.Everyday;
             return RealtimeVoicePrompt.Build(RealtimeVoicePrompt.DefaultPersona, "{}", "{}", continuing: true) +
-                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information and explicitly permitted home grants. Never reveal saved private information.";
+                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information, explicitly permitted home grants, and granted laptop media or lock controls. Never reveal saved private information or app/folder aliases.";
         }
         var session = await sessions.GetAsync(lease.SessionId, ct);
         Guard.Require(session is not null, 404, "Session not found.");

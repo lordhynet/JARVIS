@@ -56,8 +56,8 @@ public sealed class DeviceGrantService(IRuntimeReader runtime, IDeviceCapability
         Guard.Require(actor.SubjectId is { Length: > 0 and <= 80 } && !string.IsNullOrWhiteSpace(actor.SubjectId) &&
             actor.Scopes.Contains(ManageScope, StringComparer.Ordinal), 403, "Owner grant authorization is required.");
         var descriptor = capabilities.Get(request.CapabilityId, request.CapabilityVersion);
-        Guard.Require(!request.AllowWhenLocked || BuiltInDeviceCapabilities.IsHomeAssistant(descriptor.Id, descriptor.Version), 400,
-            "Locked voice access can be granted only to Home Assistant capabilities.");
+        Guard.Require(!request.AllowWhenLocked || BuiltInDeviceCapabilities.IsHomeAssistant(descriptor.Id, descriptor.Version) || WindowsCommandProtocol.AllowedLocked(descriptor.Id), 400,
+            "Locked voice access is restricted to installed Home Assistant, Windows media and lock capabilities.");
         Guard.Require(!request.PreApproved || descriptor.Risk == DeviceCapabilityRisk.Reversible, 400,
             "Only reversible capabilities can be pre-approved.");
         Guard.Require(deviceId is { Length: > 0 and <= 80 } && deviceId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'),
@@ -76,6 +76,9 @@ public sealed class DeviceGrantService(IRuntimeReader runtime, IDeviceCapability
             var now = clock.GetUtcNow();
             Guard.Require(expiresAt > now && expiresAt <= now.AddDays(365), 400, "Grant expiry must be within the next 365 days.");
             Guard.Require(state.Devices.ContainsKey(deviceId), 404, "Device is not registered.");
+            Guard.Require(!WindowsDeviceCapabilities.Installed(descriptor.Id, descriptor.Version) ||
+                state.Devices[deviceId].Registration.Kind == DeviceKind.WindowsAgent && state.Devices[deviceId].Registration.Capabilities.Extra.Contains(CompanionVoiceProtocol.NativeWindows),
+                403, "Windows actions require an enrolled native Windows agent.");
             Guard.Require(state.DeviceCredentials.TryGetValue(deviceId, out var credential) && !credential.Revoked, 409,
                 "An active device credential is required before granting a capability.");
             var grant = await writes.AddDeviceGrantAsync(new(request.RequestId, deviceId, descriptor.Id, descriptor.Version,

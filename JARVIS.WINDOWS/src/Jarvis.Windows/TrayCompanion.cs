@@ -16,6 +16,7 @@ internal sealed class TrayCompanion : ApplicationContext
     private readonly Hotkeys hotkeys;
     private CompanionController? controller;
     private Connection? connection;
+    private WindowsCommandPump? commands;
     private bool busy, exiting;
 
     public TrayCompanion()
@@ -30,6 +31,7 @@ internal sealed class TrayCompanion : ApplicationContext
         Add(menu, "Request Serious voice price…", () => controller?.RequestModeAsync(VoiceMode.Serious) ?? Task.CompletedTask);
         menu.Items.Add(new ToolStripSeparator());
         Add(menu, "Connection and startup…", SetupAsync);
+        Add(menu, "Stop laptop actions", async () => { if (commands is not null) { await commands.DisposeAsync(); commands = null; } });
         Add(menu, "Forget this connection", async () => {
             if (MessageBox.Show("Remove this computer's saved connection? Revoke the device on Core if it must lose access.",
                 "JARVIS", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
@@ -75,6 +77,19 @@ internal sealed class TrayCompanion : ApplicationContext
                 await (controller?.ConfirmModeAsync(offer.Id) ?? Task.CompletedTask);
         }));
         controller.Attach();
+        if (value.EnableGovernedActions) {
+            try {
+                var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Jarvis.Windows");
+                var settings = WindowsActionSettings.Load(Path.Combine(folder, "actions.json")); var locks = new WindowsLockState();
+                Task Notify(string text, CancellationToken ct) {
+                    var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Post(() => { try { ct.ThrowIfCancellationRequested(); if (locks.IsLocked) throw new InvalidOperationException("Workstation locked.");
+                        tray.ShowBalloonTip(5000, "JARVIS", text, ToolTipIcon.Info); ready.TrySetResult(); } catch (Exception e) { ready.TrySetException(e); } });
+                    return ready.Task.WaitAsync(ct);
+                }
+                commands = new(value, settings, new WindowsActions(settings, locks, Notify), locks, Path.Combine(folder, "commands.dpapi"), text => Post(() => detail.Text = text));
+            } catch { detail.Text = "Laptop actions are off: configure the owner allow-lists and protected journal first."; }
+        }
     }
     private async Task SetupAsync()
     {
@@ -87,6 +102,7 @@ internal sealed class TrayCompanion : ApplicationContext
     }
     private async Task DisconnectAsync()
     {
+        if (commands is not null) { await commands.DisposeAsync(); commands = null; }
         if (controller is not null) { var previous = controller; controller = null; await previous.DisposeAsync(); }
         SetState(CompanionState.Off, "Off");
     }

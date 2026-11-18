@@ -23,6 +23,7 @@ internal sealed class ConnectionForm : Form
     private readonly TextBox pin = new() { Dock = DockStyle.Fill, MaxLength = 64 };
     private readonly CheckBox consent = new() { Text = "Allow live microphone audio to Core and its configured AI provider after I wake or push to talk.", AutoSize = true, MaximumSize = new Size(510, 0) };
     private readonly CheckBox startup = new() { Text = "Start with Windows and listen locally after sign-in", AutoSize = true };
+    private readonly CheckBox actions = new() { Text = "Enable Core-approved laptop actions within my local actions.json allow-lists", AutoSize = true };
     private readonly Label feedback = new() { AutoSize = true, MaximumSize = new Size(510, 0) };
     private readonly Button save = new() { Text = "Verify and save", AutoSize = true };
     public Connection? Result { get; private set; }
@@ -36,13 +37,14 @@ internal sealed class ConnectionForm : Form
         Row(new Label { Text = "Core HTTPS address", AutoSize = true }); Row(origin);
         Row(new Label { Text = "Windows device credential (jdv1_…)", AutoSize = true }); Row(credential);
         Row(new Label { Text = "Loopback certificate SHA-256 pin (leave empty for system-trusted DNS)", AutoSize = true }); Row(pin);
-        Row(consent); Row(startup); Row(feedback);
+        Row(consent); Row(startup); Row(actions); Row(feedback);
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         buttons.Controls.Add(save); var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true }; buttons.Controls.Add(cancel); Row(buttons);
         Controls.Add(layout); AcceptButton = save; CancelButton = cancel;
         origin.Text = current?.Origin.AbsoluteUri ?? "https://zero.tail8d9014.ts.net/";
         credential.Text = current?.Credential ?? ""; pin.Text = current?.CertificateSha256 ?? "";
         consent.Checked = current?.AllowCloudProcessing ?? false; startup.Checked = current?.ListenOnStartup ?? false;
+        actions.Checked = current?.EnableGovernedActions ?? false;
         save.Click += async (_, _) => {
             save.Enabled = false; cancel.Enabled = false; ControlBox = false;
             try {
@@ -52,7 +54,7 @@ internal sealed class ConnectionForm : Form
                 using var client = new CoreClient(value); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
                 var id = await client.RefreshAsync(timeout.Token);
                 await StartupPreference.SetAsync(startup.Checked);
-                Result = value with { DeviceId = id, PrivacyEpoch = client.Epoch, ListenOnStartup = startup.Checked };
+                Result = value with { DeviceId = id, PrivacyEpoch = client.Epoch, ListenOnStartup = startup.Checked, EnableGovernedActions = actions.Checked };
                 DialogResult = DialogResult.OK; Close();
             }
             catch (InvalidOperationException error) { feedback.Text = error.Message; }

@@ -5,7 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 namespace Jarvis.Windows.Client;
 
 public sealed record Connection(Uri Origin, string Credential, string? CertificateSha256 = null, string? DeviceId = null,
-    bool AllowCloudProcessing = false, long? PrivacyEpoch = null, bool ListenOnStartup = false)
+    bool AllowCloudProcessing = false, long? PrivacyEpoch = null, bool ListenOnStartup = false, bool EnableGovernedActions = false)
 {
     public override string ToString() => Origin.GetLeftPart(UriPartial.Authority);
 

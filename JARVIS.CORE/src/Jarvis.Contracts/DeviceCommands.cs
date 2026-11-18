@@ -16,7 +16,8 @@ public sealed record ProposeDeviceCommandRequest(Guid RequestId, Guid GrantId, s
 public sealed record ConfirmDeviceCommandRequest(string ArgumentHash, bool? Approve);
 public sealed record ClaimDeviceCommandRequest(Guid RequestId);
 public sealed record DeliveredDeviceCommand(Guid Id, string CapabilityId, string CapabilityVersion, string ArgumentsJson,
-    string ArgumentHash, DateTimeOffset ExpiresAt, DateTimeOffset DispatchedAt, Guid DispatchRequestId = default);
+    string ArgumentHash, DateTimeOffset ExpiresAt, DateTimeOffset DispatchedAt, Guid DispatchRequestId = default,
+    string? TargetDeviceId = null, string? CoreSignature = null);
 public sealed record DeviceCommandView(Guid Id, Guid GrantId, string DeviceId, string CapabilityId, string CapabilityVersion,
     string ArgumentsJson, string ArgumentHash, string Origin, DeviceCommandStatus Status, DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt, DateTimeOffset? ConfirmedAt, string? ConfirmedBy, DateTimeOffset? CancelledAt, string? CancelledBy,

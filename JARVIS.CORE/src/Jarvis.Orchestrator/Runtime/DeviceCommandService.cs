@@ -303,7 +303,7 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
         }, ct);
     }
 
-    private async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
+    internal async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
     {
         if (writes.Runtime.AgentActions.TryGetValue(command.Id, out var action) &&
             (!AgentActionAuthority.Current(writes.Runtime, action, clock.GetUtcNow()) ||
@@ -312,6 +312,15 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
             return null;
         var grant = await writes.ReadDeviceGrantAsync(command.GrantId);
         var now = clock.GetUtcNow();
+        if (WindowsDeviceCapabilities.Installed(command.CapabilityId, command.CapabilityVersion) && command.Origin == InvocationOrigin.Voice) {
+            var state = writes.Runtime;
+            if (!state.DeviceVoiceAuthorities.TryGetValue(command.Id, out var authority) || authority.ExpiresAt <= now ||
+                state.RetiredSessions.Contains(authority.SessionId) || state.AudioLease is not { } audio || audio.SessionId != authority.SessionId ||
+                audio.Fence != authority.AudioFence || audio.ExpiresAt <= now ||
+                audio.Locked && (grant?.AllowWhenLocked != true || !WindowsCommandProtocol.AllowedLocked(command.CapabilityId)) ||
+                !state.VoiceTurns.TryGetValue(authority.SourceId, out var turn) || turn.SessionId != authority.SessionId || turn.Role != ChatRoles.User ||
+                turn.Restricted && (!WindowsCommandProtocol.AllowedLocked(command.CapabilityId) || grant?.AllowWhenLocked != true)) return null;
+        }
         if (command.ExpiresAt <= now || !HasActiveGrant(writes.Runtime, grant, command.DeviceId, command.ExpiresAt, now) ||
             !MatchesGrantedArguments(command, grant) || PrivacyData.Hash(command.ArgumentsJson) != command.ArgumentHash)
             return null;
@@ -332,9 +341,14 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
     private static DeviceCommand Dispatch(DeviceCommand command, Guid requestId, DateTimeOffset now) =>
         command with { Status = DeviceCommandStatus.Dispatched, DispatchRequestId = requestId, DispatchedAt = Timestamp(now) };
 
-    private static DeliveredDeviceCommand Delivery(DeviceCommand command) =>
-        new(command.Id, command.CapabilityId, command.CapabilityVersion, command.ArgumentsJson, command.ArgumentHash,
+    private static DeliveredDeviceCommand Delivery(DeviceCommand command)
+    {
+        var delivery = new DeliveredDeviceCommand(command.Id, command.CapabilityId, command.CapabilityVersion, command.ArgumentsJson, command.ArgumentHash,
             command.ExpiresAt, command.DispatchedAt!.Value, command.DispatchRequestId!.Value);
+        if (!WindowsDeviceCapabilities.Installed(command.CapabilityId, command.CapabilityVersion)) return delivery;
+        delivery = delivery with { TargetDeviceId = command.DeviceId };
+        return delivery with { CoreSignature = DeviceCommandProof.Sign(delivery, command.CredentialHash) };
+    }
 
     private bool MatchesGrantedArguments(DeviceCommand command, DeviceGrant grant) =>
         grant.CredentialHash == command.CredentialHash && grant.CapabilityId == command.CapabilityId &&
