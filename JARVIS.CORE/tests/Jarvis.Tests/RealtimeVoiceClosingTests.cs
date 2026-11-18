@@ -48,7 +48,8 @@ public sealed partial class RealtimeProtocolTests
         Assert.Equal("interrupt", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
         await Task.Delay(TimeSpan.FromSeconds(4), timeout.Token);
         await Send(socket, new { type = "heartbeat", sequence = 1 }, timeout.Token);
-        Assert.Equal("lease", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
+        var lease = await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token);
+        Assert.True(lease.GetProperty("type").ValueEquals("lease"), lease.GetRawText());
         await Send(socket, new { type = "stop" }, timeout.Token);
         var ended = await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token);
         Assert.Equal("stopped", ended.GetProperty("reason").GetString());
