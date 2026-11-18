@@ -142,6 +142,7 @@ public sealed class VoiceHomeTests
 
     internal static async Task<Guid> SayAsync(IServiceProvider services, Guid session, string words)
     {
+        await VoiceToolFixture.OpenAsync(services, session);
         var id = Guid.NewGuid();
         await services.GetRequiredService<VoiceTranscriptService>().RecordAsync(session, id, ChatRoles.User, words, null, default);
         return id;

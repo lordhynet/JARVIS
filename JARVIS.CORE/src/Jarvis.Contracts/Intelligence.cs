@@ -13,5 +13,5 @@ public sealed record VoiceTicket(string Ticket, AudioLease Lease, int WindowSeco
 public sealed record WakeCandidateRequest(Guid RequestId, string DeviceId, bool AllowCloudProcessing, bool? Locked = null);
 public sealed record WakeCandidateResponse(Guid SessionId, VoiceTicket Voice);
 public sealed record VoiceTicketRecord(string Hash, AudioLease Lease, DateTimeOffset ExpiresAt, int WindowSeconds = 60);
-public sealed record VoiceTurn(Guid Id, Guid SessionId, string Role, string Text, double? SpeechSeconds, DateTimeOffset At);
+public sealed record VoiceTurn(Guid Id, Guid SessionId, string Role, string Text, double? SpeechSeconds, DateTimeOffset At, bool Restricted = false);
 public sealed record AiCapabilityStatus(bool Ready, string Model, string Detail);

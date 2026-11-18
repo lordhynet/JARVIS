@@ -28,7 +28,7 @@ public static class VoiceConversationMemory
         Excerpts(Turns(session).TakeLast(RecentTurnLimit).ToArray(), RecentByteLimit, RecentTextByteLimit);
 
     private static IEnumerable<ChatMessage> Turns(ConversationSession session) =>
-        (session.Messages ?? []).Where(turn => (turn.Role is ChatRoles.User or ChatRoles.Assistant)
+        (session.Messages ?? []).Where(turn => !turn.Restricted && (turn.Role is ChatRoles.User or ChatRoles.Assistant)
             && !string.IsNullOrWhiteSpace(turn.Text));
 
     private static VoiceMemoryTurn[] Excerpts(ChatMessage[] turns, int byteLimit, int textByteLimit)

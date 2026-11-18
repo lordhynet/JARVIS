@@ -15,7 +15,7 @@ public sealed class OpenAiProvider(ProviderGateway gateway, ManagedAi ai, IAudio
         => await ReplyAsync(session, text, Guid.NewGuid(), ct);
     public async Task<string> ReplyAsync(ConversationSession session, string text, Guid requestId, CancellationToken ct)
     {
-        var input = (session.Messages ?? []).TakeLast(20)
+        var input = (session.Messages ?? []).Where(m => !m.Restricted).TakeLast(20)
             .Select(m => new { role = m.Role, content = m.Text }).ToList();
         input.Add(new { role = ChatRoles.User, content = text });
         var instructions = "You are JARVIS, a practical personal assistant. Be concise. You have no direct tool access. " +

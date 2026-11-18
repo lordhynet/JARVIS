@@ -22,7 +22,7 @@ public sealed class VoiceCoachingService(IRuntimeStore store, ISessionReader ses
         var session = await sessions.GetAsync(sessionId, ct);
         Guard.Require(session is { Status: SessionStatus.Active }, 409, "Resume the conversation before coaching.");
         var source = session.Messages?.LastOrDefault(m => m.Role == ChatRoles.User);
-        if (action != "current") Guard.Require(source is not null && source.RequestId == utteranceId,
+        if (action != "current") Guard.Require(source is not null && !source.Restricted && source.RequestId == utteranceId,
             409, "Use the latest captured user speech, not generated or historical text.");
         return await store.UpdateAsync(s => {
             Guard.Require(!s.RetiredSessions.Contains(sessionId), 409, "This conversation was retired.");
@@ -82,7 +82,7 @@ public sealed class VoiceCoachingService(IRuntimeStore store, ISessionReader ses
         var session = await sessions.GetAsync(sessionId, ct);
         Guard.Require(session is { Status: SessionStatus.Active }, 409, "Resume the conversation before correcting an answer.");
         var source = session.Messages?.LastOrDefault(m => m.Role == ChatRoles.User);
-        Guard.Require(source is not null && source.RequestId == utteranceId, 409, "Use the latest captured user speech for correction.");
+        Guard.Require(source is not null && !source.Restricted && source.RequestId == utteranceId, 409, "Use the latest unrestricted captured user speech for correction.");
         return await store.UpdateAsync(s => {
             Guard.Require(!s.RetiredSessions.Contains(sessionId), 409, "This conversation was retired.");
             var selected = s.VoiceCoachings.Values.SingleOrDefault(x => x.SessionId == sessionId && x.AttemptId == attemptId);

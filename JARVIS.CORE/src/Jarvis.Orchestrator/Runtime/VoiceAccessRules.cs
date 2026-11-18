@@ -12,6 +12,9 @@ public static class VoiceAccessRules
     public static bool Restricted(RuntimeState state, Guid sessionId) =>
         state.AudioLease is { Locked: true } lease && lease.SessionId == sessionId;
 
+    public static bool ToolRestricted(RuntimeState state, Guid sessionId) =>
+        state.AudioLease is not { } lease || lease.SessionId != sessionId || lease.Locked;
+
     public static bool ReportedState(RuntimeState state, string deviceId, bool? locked) =>
         locked ?? RequiresLockReport(state.Devices.GetValueOrDefault(deviceId));
 }

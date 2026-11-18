@@ -39,3 +39,8 @@ VR-04 adds stable reasons `serious_daily_cap` and `gbp_budget_ceiling`. They ori
 The wire fields are optional, and the Kotlin companion contracts are regenerated. Migration `20261117225515_LockedVoiceHomeGrants` adds one non-null boolean column to `DeviceGrants`, default false, with no modification to existing migrations. Existing grants therefore gain no locked-room authority during upgrade. Existing runtime JSON can be read with the new optional lease fields.
 
 The Windows tray application, installer, real lock-screen checks, across-room wake tests and TfL alerts are outside this commit. Packaging, deployment, APK installation, private-setting changes and paid provider smoke calls require their separate existing authorization.
+## Follow-up: locked-room history and admission
+
+Locked voice messages and their runtime projections carry an optional `Restricted` marker, defaulting to false for existing data. Core derives it from the active window and rechecks the canonical lease in the atomic transcript transaction. The marker cannot be changed through a transcript retry. It remains in the dashboard audit transcript but is excluded from recent voice context, derived summaries, text-chat context and captured-speech learning/coaching/domain inputs. Home actions still use the captured utterance under the existing locked grant rules.
+
+The personal-tool gate treats a missing or mismatched lease as restricted. Native Windows devices cannot advance an incoming handoff unless they explicitly report unlocked. Existing JSON storage carries the marker, so no relational model or migration changes are needed. Real lock-to-silence acceptance remains a Windows companion check.

@@ -27,10 +27,13 @@ public sealed partial class RealtimeProtocolTests
         await Send(socket, new { type = "authenticate", ticket = ticket.Ticket, continuous = true }, ct);
         Assert.Same(first, await providers.Connected.Reader.ReadAsync(ct));
         Assert.Equal("ready", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
+        first.Transcript("LOCKED_INJECTION_MARKER", "locked-untrusted-turn");
+        first.AssistantTranscript("LOCKED_REPLY_MARKER");
+        var runtime = host.Services.GetRequiredService<IRuntimeStore>();
+        while (await runtime.ReadAsync(s => s.VoiceTurns.Count, ct) < 2) await Task.Delay(10, ct);
         var expiry = await clock.Scheduled.Reader.ReadAsync(ct); var preparation = await clock.Scheduled.Reader.ReadAsync(ct);
         await Send(socket, new { type = "heartbeat", sequence = 1, locked = false }, ct);
         Assert.Equal("lease", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
-        var runtime = host.Services.GetRequiredService<IRuntimeStore>();
         Assert.True((await runtime.ReadAsync(s => s.AudioLease))!.Locked);
         preparation.Fire(); Assert.Same(second, await providers.Connected.Reader.ReadAsync(ct)); Assert.Empty(second.Sent);
         expiry.Fire();
@@ -39,6 +42,11 @@ public sealed partial class RealtimeProtocolTests
         Assert.False((await runtime.ReadAsync(s => s.AudioLease))!.Locked);
         var prompt = Assert.Single(second.Sent).GetProperty("session").GetProperty("instructions").GetString()!;
         Assert.Contains("Private task marker", prompt); Assert.Contains("Private conversation marker", prompt);
+        Assert.DoesNotContain("LOCKED_INJECTION_MARKER", prompt); Assert.DoesNotContain("LOCKED_REPLY_MARKER", prompt);
+        Assert.All(await runtime.ReadAsync(s => s.VoiceTurns.Values.ToArray(), ct), turn => Assert.True(turn.Restricted));
+        using var dashboard = host.CreateClient(); dashboard.DefaultRequestHeaders.Add(CoreHeaders.ApiKey, JarvisApiFactory.TestKey);
+        var audit = await System.Net.Http.Json.HttpClientJsonExtensions.GetFromJsonAsync<JsonElement>(dashboard, $"/api/sessions/{ticket.Lease.SessionId}", ct);
+        Assert.Contains(audit.GetProperty("messages").EnumerateArray(), m => m.GetProperty("text").GetString() == "LOCKED_INJECTION_MARKER" && m.GetProperty("restricted").GetBoolean());
         await Send(socket, new { type = "stop" }, ct);
         Assert.Equal("ended", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
     }

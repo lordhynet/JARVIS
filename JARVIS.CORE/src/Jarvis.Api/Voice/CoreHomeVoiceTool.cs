@@ -37,7 +37,7 @@ public sealed class CoreHomeVoiceTool(IRuntimeReader runtime, DeviceGrantService
             }, token);
             var spoken = turn is null ? null : HomeVoiceRequest.Parse(turn.Text, action);
             var deviceId = await adapter.VoiceExecutorIdAsync(token);
-            var locked = await runtime.ReadAsync(s => VoiceAccessRules.Restricted(s, sessionId), token);
+            var locked = await runtime.ReadAsync(s => VoiceAccessRules.ToolRestricted(s, sessionId), token);
             var targets = await TargetsAsync(deviceId, capability, locked, token);
             if (turn is null || spoken is null)
                 return new
@@ -64,7 +64,7 @@ public sealed class CoreHomeVoiceTool(IRuntimeReader runtime, DeviceGrantService
             var expires = turn.At.AddMinutes(2);
             if (grant.ExpiresAt < expires) expires = grant.ExpiresAt;
             async Task<bool> AuthorizedAudio(CancellationToken check) => currentAudio is not null && await currentAudio(check) &&
-                await runtime.ReadAsync(s => !VoiceAccessRules.Restricted(s, sessionId) || grant.AllowWhenLocked, check);
+                await runtime.ReadAsync(s => !VoiceAccessRules.ToolRestricted(s, sessionId) || grant.AllowWhenLocked, check);
             Guard.Require(await AuthorizedAudio(token), 409, "The voice window no longer owns permitted audio.");
             var proposal = await commands.ProposeAsync(deviceId, new(id, grant.Id, arguments, expires), token);
             if (proposal.Status == DeviceCommandStatus.AwaitingConfirmation)
