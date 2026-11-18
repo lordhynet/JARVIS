@@ -145,6 +145,7 @@ public static class PrivacyData
             foreach (var notice in state.AgentOutbox.Values.Where(x => x.RunId == run.Id).ToList()) state.AgentOutbox.Remove(notice.Id);
         }
         foreach (var ticket in state.VoiceTickets.Where(x => x.Value.ExpiresAt <= at).Select(x => x.Key).ToList()) state.VoiceTickets.Remove(ticket);
+        foreach (var notice in state.AgentOutbox.Values.Where(x => x.Category == NotificationCategories.Travel && x.ExpiresAt <= at).ToArray()) state.AgentOutbox.Remove(notice.Id);
         return voiceIds;
     }
     public static WorkflowRun PurgeWorkflow(WorkflowRun run, DateTimeOffset at) => run with { Result = null, Brief = null, DeletedAt = at,

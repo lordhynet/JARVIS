@@ -75,7 +75,7 @@ public sealed partial class RealtimeProtocolTests
         Assert.DoesNotContain("Private conversation marker", prompt); Assert.DoesNotContain("Private task marker", prompt);
         Assert.DoesNotContain("Private persona marker", prompt); Assert.DoesNotContain("Private learning", prompt);
         Assert.Contains("device is locked", prompt);
-        Assert.Equal(new[] { CoreHomeVoiceTool.Name, CoreWindowsVoiceTool.Name }, setup.GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()).Order().ToArray());
+        Assert.Equal(new[] { CoreHomeVoiceTool.Name, CoreVoiceTools.TravelName, CoreWindowsVoiceTool.Name }, setup.GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()).Order().ToArray());
         await Send(socket, new { type = "stop" }, timeout.Token);
         Assert.Equal("ended", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
     }

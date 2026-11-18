@@ -111,12 +111,14 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
 
     private async Task<string> ReadInstructionsAsync(CancellationToken ct)
     {
+        var travel = await tools.TravelContextAsync(ct);
+        var travelText = travel.Length == 0 ? "" : "\n" + travel;
         if (windowLocked || await runtime.ReadAsync(s => VoiceAccessRules.Restricted(s, lease.SessionId), ct))
         {
             sessionId = lease.SessionId;
             recommendedMode = VoiceMode.Everyday;
             return RealtimeVoicePrompt.Build(RealtimeVoicePrompt.DefaultPersona, "{}", "{}", continuing: true) +
-                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information, explicitly permitted home grants, and granted laptop media or lock controls. Never reveal saved private information or app/folder aliases.";
+                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information, explicitly permitted home grants, and granted laptop media or lock controls. Never reveal saved private information or app/folder aliases." + travelText;
         }
         var session = await sessions.GetAsync(lease.SessionId, ct);
         Guard.Require(session is not null, 404, "Session not found.");
@@ -133,11 +135,11 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         var (practice, drill) = await runtime.ReadAsync(s => (
             ContextSelector.Select(s.Stories.Values, s.Learning.Values,
                 task + " " + string.Join(" ", recent.TakeLast(3).Select(x => x.Text)), clock.GetUtcNow(),
-                maxBytes: RealtimeWindowCost.PracticeContextByteLimit),
+                maxBytes: RealtimeWindowCost.PracticeContextByteLimit - Encoding.UTF8.GetByteCount(travelText)),
             s.TrainingDrills.Values.Where(item => item.SessionId == session.Id && item.Status == "Active")
                 .OrderByDescending(item => item.CreatedAt).ThenBy(item => item.Id).FirstOrDefault()?.Mode), ct);
         recommendedMode = VoiceModePolicy.Recommend(session.Activity, drill);
-        return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1 || client.LocalGreeting);
+        return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1 || client.LocalGreeting) + travelText;
     }
 
     private VoiceStreamMode? ReadMode()

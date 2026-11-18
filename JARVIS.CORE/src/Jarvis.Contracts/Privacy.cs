@@ -27,4 +27,5 @@ public sealed record CoreDataExport(int SchemaVersion, DateTimeOffset ExportedAt
     IReadOnlyList<VoiceCoaching>? VoiceCoachings = null, IReadOnlyList<ProviderAttempt>? ProviderAttempts = null, DomainRegistryExport? Domains = null,
     IReadOnlyList<AgentToolGrant>? AgentToolGrants = null, IReadOnlyList<AgentToolInvocation>? AgentToolInvocations = null,
     IReadOnlyList<AgentActionProposal>? AgentActions = null, IReadOnlyDictionary<Guid, DeviceVoiceAuthority>? DeviceVoiceAuthorities = null,
-    IReadOnlyList<ContextMemoryItem>? ContextMemories = null);
+    IReadOnlyList<ContextMemoryItem>? ContextMemories = null,
+    IReadOnlyList<TravelRoute>? TravelRoutes = null, IReadOnlyList<TravelLineState>? TravelLineStates = null);

@@ -18,7 +18,10 @@ public sealed record AgentTaskView(Guid Id, Guid RunId, AgentRole Role, AgentTas
 public sealed record AgentRunView(AgentRun Run, IReadOnlyList<AgentTaskView> Tasks);
 public sealed record StartAgentRunRequest(Guid RequestId, string Workflow, bool AllowCloudProcessing, string? Brief = null, bool HoldForSetup = false);
 public sealed record AgentNotification(Guid Id, Guid RunId, string Title, DateTimeOffset CreatedAt, DateTimeOffset DeliverAfter,
-    DateTimeOffset ExpiresAt, bool Delivered = false, bool Read = false);
+    DateTimeOffset ExpiresAt, bool Delivered = false, bool Read = false,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Category = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PublicSummary = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] TravelNoticeAuthority? TravelAuthority = null);
 public sealed record AgentControls(bool Paused = false, IReadOnlyList<string>? PausedWorkflows = null, string QuietStart = "22:00", string QuietEnd = "08:00", string TimeZone = "Europe/London", bool? PaidAiPaused = null, bool? AgentsPaused = null)
 {
     // Null retains the meaning of historical persisted Paused values and old clients.
