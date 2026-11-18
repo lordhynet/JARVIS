@@ -188,7 +188,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             Guard.Require(s.AgentTasks.TryGetValue(id, out var task) && task.Status == AgentTaskStatus.Running && task.ClaimToken == token && task.LeaseExpiresAt > clock.GetUtcNow(), 409, "Agent task claim expired or changed.");
             var run = s.AgentRuns[task.RunId];
             Guard.Require(run.DeletedAt is null && run.Status == AgentRunStatus.Running && run.Deadline > clock.GetUtcNow() && !s.AgentControls.EffectiveAgentsPaused && s.AgentControls.PausedWorkflows?.Contains(run.Workflow) != true, 409, "Agent run is cancelled, paused or expired.");
-            Guard.Require(error is not null || (task.SourceRefs ?? []).All(source => SourceCurrent(s, source)), 409, "Agent source changed during processing. Start a fresh run.");
+            Guard.Require(error is not null || (task.SourceRefs ?? []).All(source => SourceCurrent(s, source, clock.GetUtcNow())), 409, "Agent source changed during processing. Start a fresh run.");
             s.AgentTasks[id] = task with { Status = error is null ? AgentTaskStatus.Succeeded : uncertain ? AgentTaskStatus.NeedsReconciliation : AgentTaskStatus.Failed,
                 Output = error is null ? output : null, ErrorCode = error, ClaimToken = null, LeaseExpiresAt = null, CompletedAt = clock.GetUtcNow() }; return true;
         }, ct);
@@ -212,7 +212,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             (x.SourceRefs ?? []).All(source => SourceCurrent(s, source)) ? x.Output : null,
             (x.SourceRefs ?? []).All(source => SourceCurrent(s, source)) ? x.ErrorCode : "source_changed")).ToList());
     public static string LearningVersion(LearningItem item) => Hash(item.Prompt + "\n" + item.Answer);
-    public static bool SourceCurrent(RuntimeState s, AgentSourceRef source) => source.Kind switch
+    public static bool SourceCurrent(RuntimeState s, AgentSourceRef source, DateTimeOffset? at = null) => source.Kind switch
     {
         "story" => s.Stories.TryGetValue(source.Id, out var story) && story.Version.ToString(CultureInfo.InvariantCulture) == source.Version,
         "learning" => s.Learning.TryGetValue(source.Id, out var item) && LearningVersion(item) == source.Version,
@@ -220,7 +220,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
         "voice" => s.VoiceTurns.TryGetValue(source.Id, out var turn) && !turn.Restricted && turn.Role == ChatRoles.User && !s.RetiredSessions.Contains(turn.SessionId) &&
             PrivacyData.Hash(System.Text.Json.JsonSerializer.Serialize(turn)) == source.Version,
         "memory" => s.ContextMemories.TryGetValue(source.Id, out var memory) && Jarvis.Orchestrator.Intelligence.ContextMemoryService.Version(memory) == source.Version &&
-            memory.ExpiresAt > DateTimeOffset.UtcNow && Jarvis.Orchestrator.Intelligence.ContextMemoryService.Current(s, memory),
+            memory.ExpiresAt > (at ?? DateTimeOffset.UtcNow) && Jarvis.Orchestrator.Intelligence.ContextMemoryService.Current(s, memory),
         _ => false
     };
     public static void InvalidateSource(RuntimeState s, string kind, Guid id)

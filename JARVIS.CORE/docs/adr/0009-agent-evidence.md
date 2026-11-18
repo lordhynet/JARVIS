@@ -1,0 +1,9 @@
+# Claim mappings and canonical memory provenance
+
+AgentExecutor validates evidence before returning an artifact for publication. Each sentence or line in a paid specialist summary/drill must map to one evidence entry. Facts and inferences require current canonical source IDs from the selected scope. Suggestions and missing evidence are classified and labelled by Core; obvious fabricated achievement/action-completion statements cannot be relabelled as guidance. The declared sourceIds must match the mapping union. Duplicate, missing, out-of-scope, malformed and uncovered mappings are refused. Untrusted output cannot add executable actions through an evidence record.
+
+Research uses the existing provider-grounded search adapter. Every sentence/line must overlap a bounded provider citation range, and URL/title/range validation precedes publication. The artifact retains claim-to-URL mappings and retrieval time. This checks reference membership and coverage; it does not independently prove source entailment or factual truth. That limitation is visible in the dashboard. Citations never confer execution privileges.
+
+The scoped memory provenance, deletion cascade, expiry, sensitivity and deterministic relevance/freshness ranking were implemented in Item 7 within RuntimeState/ContextSelector. This slice adds downstream source retirement/cache-clearing regression coverage and uses the application clock at dispatch/publication expiry checks. Restricted/retired speech remains excluded. Deleting a source invalidates referring task outputs and cached private provider text; financial records remain.
+
+Existing authored/template artifacts remain local and unchanged. Older paid request caches cannot silently satisfy the changed instruction fingerprint, and failed/unknown calls are not replayed. A rejected provider answer may already have incurred cost; its usage remains recorded. Tests use fake provider I/O only.

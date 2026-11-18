@@ -156,7 +156,7 @@ public static class AgentActionAuthority
         if (!AgentSpecialistCatalog.AllowsDeviceAction(p.CapabilityId) || !s.AgentRuns.TryGetValue(p.RunId, out var run) || run.DeletedAt is not null || run.Status != AgentRunStatus.Running || run.Deadline <= now ||
             s.AgentControls.EffectiveAgentsPaused || s.AgentControls.PausedWorkflows?.Contains(run.Workflow) == true ||
             !s.AgentTasks.TryGetValue(p.Id, out var task) || task.Status is not (AgentTaskStatus.Running or AgentTaskStatus.AwaitingApproval or AgentTaskStatus.AwaitingReceipt) ||
-            !(task.SourceRefs ?? []).All(r => AgentRuntime.SourceCurrent(s, r)) ||
+            !(task.SourceRefs ?? []).All(r => AgentRuntime.SourceCurrent(s, r, now)) ||
             !s.AgentToolGrants.TryGetValue(p.GrantId, out var grant) || grant.RevokedAt is not null || grant.ExpiresAt <= now ||
             grant.RunId != p.RunId || grant.CapabilityId != p.CapabilityId || grant.CapabilityVersion != p.CapabilityVersion) return false;
         return grant.ScopeKind switch {

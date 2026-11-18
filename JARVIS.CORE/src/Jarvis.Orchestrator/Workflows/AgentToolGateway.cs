@@ -67,7 +67,7 @@ public sealed class AgentToolGateway(IRuntimeStore store, TimeProvider clock, IC
         Guard.Require(state.AgentTasks.TryGetValue(id, out var task) && claim != Guid.Empty && task.ClaimToken == claim &&
             task.Status is AgentTaskStatus.Running or AgentTaskStatus.AwaitingApproval && task.LeaseExpiresAt > clock.GetUtcNow(), 409, "Agent tool claim expired or changed.");
         var run = CurrentRun(state, task.RunId);
-        Guard.Require(run.TaskIds.Contains(task.Id) && (task.SourceRefs ?? []).All(s => AgentRuntime.SourceCurrent(state, s)), 409, "Agent tool source changed.");
+        Guard.Require(run.TaskIds.Contains(task.Id) && (task.SourceRefs ?? []).All(s => AgentRuntime.SourceCurrent(state, s, clock.GetUtcNow())), 409, "Agent tool source changed.");
         var specialist = specialists.Get(task.Role);
         Guard.Require(DeviceJsonSchema.Accepts(DeviceJsonSchema.ReadCapability(specialist.InputSchemaJson), JsonSerializer.SerializeToElement(new { input = task.Input })),
             400, "Agent task input does not match the specialist schema.");

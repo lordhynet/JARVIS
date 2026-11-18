@@ -56,6 +56,7 @@ public sealed class AgentActionTests
         using var root = new ProviderFactory(_ => {
             httpCalls++;
             var text = JsonSerializer.Serialize(new { schemaVersion = 1, summary = "Propose the requested kitchen light action", drills = Array.Empty<string>(), sourceIds = Array.Empty<Guid>(),
+                evidence = new[] { new { text = "Propose the requested kitchen light action", kind = "Suggestion", sources = Array.Empty<Guid>() } },
                 actions = new[] { new { grantId, deviceGrantId, arguments = JsonSerializer.Deserialize<JsonElement>(DeviceCommandTests.Arguments) } } });
             var json = JsonSerializer.Serialize(new { status = "completed", usage = new { input_tokens = 10, output_tokens = 10 }, output = new[] {
                 new { type = "message", content = new[] { new { type = "output_text", text } } }

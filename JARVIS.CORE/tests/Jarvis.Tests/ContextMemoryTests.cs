@@ -59,6 +59,26 @@ public sealed class ContextMemoryTests
     }
 
     [Fact]
+    public async Task Deleting_memory_clears_derived_task_output_and_cached_provider_text_and_expiry_fences_sources()
+    {
+        using var host = new JarvisApiFactory().WithWebHostBuilder(b => b.UseSetting("Jarvis:WorkflowsEnabled", "false"));
+        using var manual = CoreInvocationContext.Enter(InvocationOrigin.ManualClient);
+        var services = host.Services; var now = services.GetRequiredService<TimeProvider>().GetUtcNow();
+        var memory = services.GetRequiredService<ContextMemoryService>();
+        var item = await memory.SaveAsync("languages", new(Guid.NewGuid(), "note", null, "Private domain note", now.AddDays(1)));
+        var reference = new AgentSourceRef("memory", item.Id, ContextMemoryService.Version(item));
+        var runtime = services.GetRequiredService<AgentRuntime>(); var run = await runtime.StartAsync(new(Guid.NewGuid(), "daily-coaching", false), default);
+        var task = (await runtime.ClaimAsync(default))!; var store = services.GetRequiredService<IRuntimeStore>();
+        await store.UpdateAsync(s => {
+            s.AgentTasks[task.Id] = s.AgentTasks[task.Id] with { SourceRefs = [reference], Output = "Derived private text" };
+            var id = Guid.NewGuid(); s.ProviderResults[id] = new(id, task.Id, "fixture", "Derived private cached text", now);
+            Assert.True(AgentRuntime.SourceCurrent(s, reference, now)); Assert.False(AgentRuntime.SourceCurrent(s, reference, now.AddDays(2))); return true;
+        });
+        await memory.DeleteAsync("languages", item.Id);
+        await store.ReadAsync(s => { Assert.Null(s.AgentTasks[task.Id].Output); Assert.Equal("", s.AgentTasks[task.Id].Input);
+            Assert.Empty(s.ProviderResults); Assert.Equal(AgentRunStatus.SourceDeleted, s.AgentRuns[run.Run.Id].Status); return true; });
+    }
+    [Fact]
     public void Retrieval_prefers_relevance_then_freshness_and_respects_utf8_bound()
     {
         var state = new RuntimeState(); var now = DateTimeOffset.UtcNow;
