@@ -25,6 +25,7 @@ public static class AgentEndpoints
         api.MapGet("/agents/catalog", async (Jarvis.Orchestrator.Domains.IWorkflowCatalog catalog, CancellationToken ct) =>
             (await catalog.ListAsync(ct)).Select(x => new { x.Key, x.RequiresCloud, x.UsesPersonalContext, x.Deterministic, x.DomainKey, x.DomainVersion }).ToArray());
         api.MapGet("/agents/controls", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.AgentControls, ct));
+        api.MapGet("/agents/specialists", (AgentSpecialistCatalog catalog) => catalog.Installed);
         api.MapPut("/agents/controls", (AgentControls request, ICommandHandler<UpdateAgentControls, AgentControls> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));
         api.MapGet("/agents/schedules", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.AgentSchedules.Values.OrderBy(y => y.CreatedAt).ToList(), ct));
         api.MapPost("/agents/schedules", (SaveAgentScheduleRequest request, ICommandHandler<SaveAgentSchedule, AgentSchedule> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));

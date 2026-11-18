@@ -160,7 +160,8 @@ builder.Services.AddSingleton<BudgetApprovalService>();
 builder.Services.AddSingleton<BudgetManagementAuthorization>();
 builder.Services.AddSingleton<ManagedAi>();
 builder.Services.AddSingleton<RateCard>();
-builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.ITextReasoningProvider, TextReasoningService>();
+builder.Services.AddSingleton<TextReasoningService>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.ITextReasoningProvider>(s => s.GetRequiredService<TextReasoningService>());
 builder.Services.AddSingleton<ITextReasoningAdapter, OpenAiResponsesAdapter>();
 builder.Services.AddSingleton<ITextReasoningAdapter, AnthropicMessagesAdapter>();
 builder.Services.AddSingleton<AiCoach>();
@@ -189,7 +190,17 @@ builder.Services.AddSingleton<Jarvis.Orchestrator.Runtime.IDeviceCapabilityCatal
     _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All));
 builder.Services.AddSingleton<OwnerAuthorization>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IWorkflowCatalog, Jarvis.Orchestrator.Domains.WorkflowCatalog>();
-builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(_ => new Jarvis.Orchestrator.Domains.CapabilityCatalog(Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat([new("core_template_practice", "Deliver an authored domain practice template without AI or tools.", Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly)])));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(s => new Jarvis.Orchestrator.Domains.CapabilityCatalog(
+    Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat(AgentCapabilityIds.BuiltIns).Concat(
+        s.GetRequiredService<IDeviceCapabilityCatalog>().Installed.Select(d => new Jarvis.Orchestrator.Domains.CapabilityDescriptor(d.Id, d.Description,
+            Jarvis.Orchestrator.Domains.CapabilityRisk.ExternalAction, d.Version, d.ArgumentSchemaJson, [ReasoningDataClass.Personal],
+            d.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible, d.Risk == DeviceCapabilityRisk.Irreversible, ActionRisk: d.Risk)))));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityRegistry>(s => s.GetRequiredService<Jarvis.Orchestrator.Domains.ICapabilityCatalog>());
+builder.Services.AddSingleton<AgentSpecialistCatalog>(_ => new AgentSpecialistCatalog());
+builder.Services.AddSingleton<IAgentToolHandler, AgentTemplateTool>();
+builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentReasoningTool(s.GetRequiredService<TextReasoningService>(), false));
+builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentReasoningTool(s.GetRequiredService<TextReasoningService>(), true));
+builder.Services.AddSingleton<AgentToolGateway>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainFactory, Jarvis.Orchestrator.Domains.DomainFactory>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistry, Jarvis.Orchestrator.Domains.DomainRegistryService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis.Orchestrator.Domains.DomainCatalog>();

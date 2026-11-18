@@ -16,8 +16,9 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         var json = JsonSerializer.SerializeToElement(tool); var name = json.GetProperty("name").GetString()!;
         var readOnly = name is "core_context" or "core_story_search" or "core_coaching_catalog" or "core_coaching_prompt" or "core_practice_current";
         return new Jarvis.Orchestrator.Domains.CapabilityDescriptor(name, json.GetProperty("description").GetString()!,
-            readOnly ? Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly : Jarvis.Orchestrator.Domains.CapabilityRisk.CoreWrite);
-    }).Where(tool => tool.Key != CoreHomeVoiceTool.Name).ToArray();
+            name == CoreHomeVoiceTool.Name ? Jarvis.Orchestrator.Domains.CapabilityRisk.ExternalAction : readOnly ? Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly : Jarvis.Orchestrator.Domains.CapabilityRisk.CoreWrite,
+            InputSchemaJson: json.GetProperty("parameters").GetRawText(), DataClasses: [ReasoningDataClass.Personal], RequiresOwnerApproval: name == CoreHomeVoiceTool.Name);
+    }).ToArray();
     public const int MaxCalls = 4, MaxOutputBytes = 6000;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static object Schema(Dictionary<string, object> properties) => new {

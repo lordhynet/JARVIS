@@ -72,7 +72,12 @@ public sealed class PaidAiProvider(IConfiguration config, IRuntimeReader reader,
         }, ct);
         Guard.Require(sources.Count > 0, 409, "Add a real story or due learning card before requesting an AI brief.");
         var context = JsonSerializer.Serialize(sources, Json);
-        var result = await reasoning.ReasonAsync(new(reusable?.Id ?? run.ClaimToken.Value, run.Id, "LegacyInterview", TextCapability.JsonReasoning,
+        var operation = reusable?.Id ?? run.ClaimToken.Value;
+        using var legacyAdmission = LegacyReasoningAdmission.Enter(run.Id, operation, async token => {
+            var current = await workflows.GetAsync(run.Id, token);
+            return current is { Status: WorkflowStatus.Running, AllowCloudProcessing: true } && current.ClaimToken == run.ClaimToken && current.LeaseExpiresAt > clock.GetUtcNow();
+        });
+        var result = await reasoning.ReasonAsync(new(operation, run.Id, "LegacyInterview", TextCapability.JsonReasoning,
             ReasoningDataClass.Personal, run.AllowCloudProcessing, SystemPrompt,
             [new(ChatRoles.User, "Source data for a preparation draft:\n" + context)]), ct);
         var model = result.Route.Model;

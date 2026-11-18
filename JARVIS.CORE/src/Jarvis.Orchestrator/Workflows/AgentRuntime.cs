@@ -193,6 +193,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
     public Task<bool> CancelAsync(Guid id, bool delete, CancellationToken ct) => store.UpdateAsync(s =>
     {
         Guard.Require(s.AgentRuns.TryGetValue(id, out var run), 404, "Agent run not found.");
+        AgentToolLifecycle.Retire(s, id, clock.GetUtcNow(), delete);
         s.AgentRuns[id] = run with { Status = AgentRunStatus.Cancelled, DeletedAt = delete ? clock.GetUtcNow() : run.DeletedAt,
             WorkflowPolicy = delete && run.WorkflowPolicy is { } policy ? policy with { DomainContext = null, PracticeTemplate = null } : run.WorkflowPolicy };
         foreach (var taskId in run.TaskIds)
