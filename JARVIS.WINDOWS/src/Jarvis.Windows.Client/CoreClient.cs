@@ -43,6 +43,8 @@ public sealed class CoreClient : IDisposable
         if (device.Registration.Kind != DeviceKind.WindowsAgent || device.Registration.Capabilities.HasDisplay ||
             !device.Registration.Capabilities.Extra.Contains(CompanionVoiceProtocol.AudioOnly, StringComparer.Ordinal))
             throw new InvalidOperationException("Enrol an audio-only WindowsAgent device on Core.");
+        if (!device.CapabilitiesVerified || !device.Registration.Capabilities.CanListen || !device.Registration.Capabilities.CanSpeak)
+            throw new InvalidOperationException("Have the owner confirm this device's listen and speak capabilities on Core first.");
         if (connection.DeviceId is not null && device.Registration.DeviceId != connection.DeviceId)
             throw new InvalidOperationException("Core returned a different enrolled device.");
         var voice = await GetAsync<AiCapabilityStatus>(CompanionRoutes.VoiceStatus, ct);

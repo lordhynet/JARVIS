@@ -117,9 +117,26 @@ public sealed class CompanionTests
         fixture.Locks.IsLocked = true; fixture.Audio.Capture([1, 0]);
         await fixture.Controller.LockChangedAsync(); var heartbeat = await fixture.Socket.SentAsync("heartbeat");
         Assert.True(heartbeat.GetProperty("locked").GetBoolean());
+        Assert.False(fixture.Audio.Active); // Local shutdown precedes any Core response.
         Assert.DoesNotContain(fixture.Socket.Frames, x => x.GetProperty("type").GetString() == "audio");
         fixture.Socket.Incoming(new { type = "ended", reason = "device_locked" }); await fixture.StateAsync(CompanionState.Off);
         Assert.False(fixture.Audio.Active);
+    }
+
+    [Fact]
+    public async Task Lock_during_audio_setup_cannot_reopen_the_old_window_after_unlock()
+    {
+        await using var fixture = new Fixture(); fixture.Audio.StartGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await fixture.StartSocketAsync();
+        fixture.Socket.Incoming(new { type = "ready", fence = 42, sampleRate = 24000, window = 1, locked = false, mode = "Everyday" });
+        await fixture.Audio.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        fixture.Locks.IsLocked = true; await fixture.Controller.LockChangedAsync(); await fixture.Audio.StoppedAsync();
+        fixture.Locks.IsLocked = false; fixture.Audio.StartGate.SetResult(); await fixture.Audio.StoppedAsync();
+        Assert.False(fixture.Audio.Active); fixture.Audio.Capture([1, 0]);
+        Assert.DoesNotContain(fixture.Socket.Frames, x => x.GetProperty("type").GetString() == "audio");
+        fixture.Socket.Incoming(new { type = "audio", delta = "AgA=", itemId = "old-private-output" });
+        fixture.Socket.Incoming(new { type = "ended" }); await fixture.StateAsync(CompanionState.Off);
+        Assert.Equal(0, fixture.Audio.Played);
     }
 
     [Fact]
@@ -157,7 +174,7 @@ public sealed class CompanionTests
         await using var fixture = new Fixture(); fixture.Http.LeaseDuration = TimeSpan.FromSeconds(1);
         await fixture.StartReadyAsync();
         fixture.Socket.Incoming(new { type = "lease", sequence = 999, fence = 42, leaseSeconds = 15 });
-        await fixture.StateAsync(CompanionState.Off); Assert.False(fixture.Audio.Active); Assert.True(fixture.Socket.Disposed);
+        await fixture.StateAsync(CompanionState.Unavailable); Assert.False(fixture.Audio.Active); Assert.True(fixture.Socket.Disposed);
     }
 
     [Fact]
@@ -201,6 +218,16 @@ public sealed class CompanionTests
     }
 
     [Fact]
+    public async Task Connection_timeout_after_greeting_is_reported_as_failure_and_releases_audio()
+    {
+        await using var fixture = new Fixture(); fixture.Socket.ConnectCancelled = true;
+        fixture.Controller.PushToTalk(); await fixture.StateAsync(CompanionState.Unavailable);
+        Assert.Contains("Sorry, I can't reach Core right now.", fixture.Audio.SpokenTexts);
+        Assert.False(fixture.Audio.Active); Assert.True(fixture.Socket.Disposed);
+        Assert.Single(fixture.Http.Requests, x => x.Path == CompanionRoutes.VoiceLocalRelease);
+    }
+
+    [Fact]
     public async Task Changed_privacy_epoch_and_wrong_enrolment_fail_before_admission()
     {
         using var handler = new FakeHttp(); using var core = new CoreClient(Connection() with { PrivacyEpoch = 6 }, handler);
@@ -210,6 +237,15 @@ public sealed class CompanionTests
         using var another = new CoreClient(Connection(), anotherHandler);
         await Assert.ThrowsAsync<InvalidOperationException>(() => another.ClaimAsync(false, CancellationToken.None));
         Assert.DoesNotContain(anotherHandler.Requests, x => x.Path == CompanionRoutes.VoiceWakeCandidates);
+    }
+
+    [Fact]
+    public async Task Owner_capability_confirmation_is_required_before_saving_or_claiming_a_device()
+    {
+        using var handler = new FakeHttp { Verified = false }; using var core = new CoreClient(Connection(), handler);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => core.RefreshAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => core.ClaimAsync(false, CancellationToken.None));
+        Assert.DoesNotContain(handler.Requests, x => x.Path == CompanionRoutes.VoiceWakeCandidates);
     }
 
     [Fact]
@@ -276,12 +312,13 @@ public sealed class CompanionTests
         public HttpStatusCode ClaimStatus { get; set; } = HttpStatusCode.OK; public DeviceKind Kind { get; set; } = DeviceKind.WindowsAgent;
         public TimeSpan LeaseDuration { get; set; } = TimeSpan.FromSeconds(15);
         public string OwnerName { get; set; } = "";
+        public bool Verified { get; set; } = true;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             var path = request.RequestUri!.AbsolutePath;
             Requests.Enqueue(new(path, request.Headers.TryGetValues(CompanionHeaders.ApiKey, out var keys) ? keys.Single() : null,
                 request.Headers.TryGetValues(CompanionHeaders.DataEpoch, out var epochs) ? epochs.Single() : null,
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken)));
-            var registered = new RegisteredDevice(new("windows-test", "Test laptop", Kind, new(true, true, false, false, [CompanionVoiceProtocol.AudioOnly]), DateTimeOffset.UtcNow), DateTimeOffset.UtcNow, true);
+            var registered = new RegisteredDevice(new("windows-test", "Test laptop", Kind, new(true, true, false, false, [CompanionVoiceProtocol.AudioOnly]), DateTimeOffset.UtcNow), DateTimeOffset.UtcNow, Verified);
             object result = path switch {
                 CompanionRoutes.PrivacyStatus => new PrivacyStatus(7, 1, false, null, null),
                 CompanionRoutes.Devices => new[] { new DeviceView(registered, true, OwnerName) },
@@ -306,21 +343,27 @@ public sealed class CompanionTests
         public event Action<byte[]>? Captured; public event Action? Failed;
         public int Starts { get; private set; } public bool Active { get; private set; } public int Spoken { get; private set; }
         public TaskCompletionSource? SpeechGate { get; set; }
+        public TaskCompletionSource? StartGate { get; set; }
+        private readonly Channel<bool> stopped = Channel.CreateUnbounded<bool>();
+        public async Task StoppedAsync() => await stopped.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        public int Played { get; private set; }
         public ConcurrentQueue<string> SpokenTexts { get; } = new();
         private readonly Channel<string> speech = Channel.CreateUnbounded<string>();
         public async Task SpokenAsync(string prefix) { while (!(await speech.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).StartsWith(prefix, StringComparison.Ordinal)) { } }
         public TaskCompletionSource SpeechStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Capture(byte[] pcm) => Captured?.Invoke(pcm); public void Fail() => Failed?.Invoke();
-        public Task StartAsync(CancellationToken ct) { Active = true; Starts++; Started.TrySetResult(); return Task.CompletedTask; }
-        public void Play(string item, ReadOnlySpan<byte> pcm) { } public PlaybackPosition? Interrupt() => new("item", 25);
-        public void Stop() => Active = false; public async Task SpeakAsync(string text, CancellationToken ct) { Spoken++; SpokenTexts.Enqueue(text); speech.Writer.TryWrite(text); SpeechStarted.TrySetResult(); if (SpeechGate is not null) await SpeechGate.Task.WaitAsync(ct); }
+        public async Task StartAsync(CancellationToken ct) { Starts++; Started.TrySetResult(); if (StartGate is not null) await StartGate.Task.WaitAsync(ct); ct.ThrowIfCancellationRequested(); Active = true; }
+        public void Play(string item, ReadOnlySpan<byte> pcm) => Played++; public PlaybackPosition? Interrupt() => new("item", 25);
+        public void Stop() { Active = false; stopped.Writer.TryWrite(true); }
+        public async Task SpeakAsync(string text, CancellationToken ct) { Spoken++; SpokenTexts.Enqueue(text); speech.Writer.TryWrite(text); SpeechStarted.TrySetResult(); if (SpeechGate is not null) await SpeechGate.Task.WaitAsync(ct); }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     private sealed class FakeSocket : IVoiceSocket {
         private readonly Channel<JsonElement> incoming = Channel.CreateUnbounded<JsonElement>(), sent = Channel.CreateUnbounded<JsonElement>();
         public ConcurrentQueue<JsonElement> Frames { get; } = new(); public int Connections { get; private set; } public bool Disposed { get; private set; }
-        public Task ConnectAsync(Connection connection, CancellationToken ct) { Connections++; return Task.CompletedTask; }
+        public bool ConnectCancelled { get; set; }
+        public Task ConnectAsync(Connection connection, CancellationToken ct) { Connections++; if (ConnectCancelled) throw new OperationCanceledException("Connection deadline elapsed."); return Task.CompletedTask; }
         public void Incoming(object frame) => incoming.Writer.TryWrite(JsonSerializer.SerializeToElement(frame));
         public Task SendAsync(object frame, CancellationToken ct) { ct.ThrowIfCancellationRequested(); var json = JsonSerializer.SerializeToElement(frame); Frames.Enqueue(json); sent.Writer.TryWrite(json); return Task.CompletedTask; }
         public async Task<JsonElement> SentAsync(string type) { JsonElement frame; do { frame = await sent.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)); } while (frame.GetProperty("type").GetString() != type); return frame; }

@@ -85,7 +85,7 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
             live.Quote += offer => Quote?.Invoke(offer);
             await live.RunAsync();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (CoreRejectedException error) when (error.Status == HttpStatusCode.Conflict) {
             Changed?.Invoke(CompanionState.Connecting, "Another device owns audio. This companion stays silent.");
         }
@@ -139,6 +139,7 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
         private int window;
         private int ready;
         private int lockedWindow = 1;
+        private int lockInterrupted;
         private string? fallbackCapture;
         private string? offeredFallback;
         private Guid? quote;
@@ -149,7 +150,9 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
         private bool Current => Stopwatch.GetTimestamp() < Interlocked.Read(ref deadline);
         public void Capture(byte[] pcm)
         {
-            if (locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) { Volatile.Write(ref ready, 0); return; }
+            if (Volatile.Read(ref lockInterrupted) != 0 || locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) {
+                Volatile.Write(ref lockInterrupted, 1); Volatile.Write(ref ready, 0); return;
+            }
             if (Volatile.Read(ref ready) == 0 || !Current || pcm.Length is <= 0 or > 24000 || pcm.Length % 2 != 0) return;
             if (!capture.Writer.TryWrite(new(pcm, Volatile.Read(ref window), Volatile.Read(ref fallbackCapture)))) Cancel();
         }
@@ -198,7 +201,10 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
         public async Task LockChangedAsync()
         {
             try {
-                if (locks.IsLocked) { audio.Interrupt(); if (Volatile.Read(ref lockedWindow) == 0) Volatile.Write(ref ready, 0); }
+                if (Volatile.Read(ref lockInterrupted) != 0 || locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) {
+                    Volatile.Write(ref lockInterrupted, 1); Volatile.Write(ref ready, 0); audio.Stop();
+                }
+                else if (locks.IsLocked) audio.Interrupt();
                 await PingAsync();
             } catch { Cancel(); }
         }
@@ -206,7 +212,9 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
         {
             try {
                 await foreach (var frame in capture.Reader.ReadAllAsync(lifetime.Token)) {
-                    if (locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) { Volatile.Write(ref ready, 0); continue; }
+                    if (Volatile.Read(ref lockInterrupted) != 0 || locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) {
+                        Volatile.Write(ref lockInterrupted, 1); Volatile.Write(ref ready, 0); continue;
+                    }
                     if (Volatile.Read(ref ready) == 0 || !Current) continue;
                     var fallback = Volatile.Read(ref fallbackCapture);
                     if (frame.Window != Volatile.Read(ref window) || frame.Fallback != fallback) continue;
@@ -241,9 +249,15 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
                         throw new IOException("Invalid or expired audio fence.");
                     var next = message.GetProperty("window").GetInt32(); if (next <= window) throw new IOException("Invalid voice window.");
                     window = next; Volatile.Write(ref lockedWindow, message.GetProperty("locked").GetBoolean() ? 1 : 0);
-                    if (locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) { await LockChangedAsync(); break; }
+                    if (Volatile.Read(ref lockInterrupted) != 0 || locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) {
+                        Volatile.Write(ref lockInterrupted, 1); await LockChangedAsync(); break;
+                    }
                     await greeting.WaitAsync(lifetime.Token);
-                    fallbackCapture = offeredFallback = null; quote = null; await audio.StartAsync(lifetime.Token); Volatile.Write(ref ready, 1);
+                    fallbackCapture = offeredFallback = null; quote = null; await audio.StartAsync(lifetime.Token);
+                    if (Volatile.Read(ref lockInterrupted) != 0 || locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) {
+                        Volatile.Write(ref lockInterrupted, 1); await LockChangedAsync(); break;
+                    }
+                    Volatile.Write(ref ready, 1);
                     Changed?.Invoke(message.GetProperty("mode").GetString() + " voice connected to Core"); break;
                 case "window_renewing":
                     Volatile.Write(ref ready, 0); audio.Stop(); quote = null;
@@ -256,6 +270,9 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
                         Interlocked.Exchange(ref deadline, sent + seconds * Stopwatch.Frequency); break;
                 case "audio":
                     if (Volatile.Read(ref ready) == 1 && Current) {
+                        if (Volatile.Read(ref lockInterrupted) != 0 || locks.IsLocked && Volatile.Read(ref lockedWindow) == 0) {
+                            Volatile.Write(ref lockInterrupted, 1); await LockChangedAsync(); break;
+                        }
                         var encoded = message.GetProperty("delta").GetString()!;
                         if (encoded.Length > 1_280_000) throw new IOException("Audio exceeded its bound.");
                         var pcm = Convert.FromBase64String(encoded); if (pcm.Length % 2 != 0) throw new IOException("Invalid PCM audio.");

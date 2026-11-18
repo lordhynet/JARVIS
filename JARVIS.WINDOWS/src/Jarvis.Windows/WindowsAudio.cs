@@ -56,6 +56,7 @@ internal sealed class WindowsAudio : ICompanionAudio
                 if (output.Status != AudioDeviceNodeCreationStatus.Success) throw new InvalidOperationException("Windows audio output is unavailable.");
                 speaker = output.DeviceOutputNode; rendered = graph.CreateFrameInputNode(format); rendered.AddOutgoingConnection(speaker);
                 graph.QuantumStarted += CaptureQuantum;
+                graph.UnrecoverableErrorOccurred += GraphFailed;
                 rendered.QuantumStarted += RenderQuantum;
             }
             opening.Token.ThrowIfCancellationRequested(); started = true; graph.Start();
@@ -66,6 +67,10 @@ internal sealed class WindowsAudio : ICompanionAudio
     {
         try { CaptureFrame(); }
         catch { started = false; faulted = true; Failed?.Invoke(); }
+    }
+    private void GraphFailed(AudioGraph sender, AudioGraphUnrecoverableErrorOccurredEventArgs args)
+    {
+        started = false; faulted = true; Failed?.Invoke();
     }
     private unsafe void CaptureFrame()
     {
@@ -127,7 +132,7 @@ internal sealed class WindowsAudio : ICompanionAudio
             return position;
         }
     }
-    public void Stop() { started = false; try { graph?.Stop(); } catch { } Interrupt(); }
+    public void Stop() { started = false; try { graph?.Stop(); graph?.ResetAllNodes(); } catch { } Interrupt(); }
     public async Task SpeakAsync(string text, CancellationToken ct)
     {
         using var speaking = CancellationTokenSource.CreateLinkedTokenSource(ct); speaking.CancelAfter(TimeSpan.FromSeconds(10));
@@ -141,7 +146,7 @@ internal sealed class WindowsAudio : ICompanionAudio
     private void DisposeGraph()
     {
         Stop();
-        if (graph is not null) graph.QuantumStarted -= CaptureQuantum;
+        if (graph is not null) { graph.QuantumStarted -= CaptureQuantum; graph.UnrecoverableErrorOccurred -= GraphFailed; }
         if (rendered is not null) rendered.QuantumStarted -= RenderQuantum;
         microphone?.Dispose(); captured?.Dispose(); rendered?.Dispose(); speaker?.Dispose(); graph?.Dispose();
         microphone = null; captured = null; rendered = null; speaker = null; graph = null;
