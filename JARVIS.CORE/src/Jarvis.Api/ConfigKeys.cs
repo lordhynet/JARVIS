@@ -6,6 +6,7 @@ public static class ConfigKeys
     public const string OwnerKey = "BudgetManagement:OwnerKey";
     public const string OwnerSubjectId = "BudgetManagement:SubjectId";
     public const string OwnerDisplayName = "Owner:DisplayName";
+    public const string IntelligenceEvaluationsEnabled = "Intelligence:EvaluationsEnabled";
     public const string Budget = "Budget";
     public const string BudgetFx = "Fx";
     public const string BudgetFxAuto = "FxAuto";

@@ -19,6 +19,7 @@ async function api(path, body, method) {
   const multipart = body instanceof FormData;
   const verb = method || (body === undefined ? 'GET' : 'POST');
   const ownerCall = verb === 'GET' && path === '/privacy/export' ||
+    verb === 'POST' && path === '/intelligence/evaluations' ||
     verb === 'POST' && ['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply'].includes(path) ||
     ['POST', 'DELETE'].includes(verb) && /^\/devices\/[^/]+\/(verify|credential)$/.test(path) ||
     verb === 'POST' && /^\/devices\/[^/]+\/grants$/.test(path) ||

@@ -2,6 +2,7 @@ namespace Jarvis.Api;
 
 public static class CoreRoutes
 {
+    public const string IntelligenceEvaluations = "/api/intelligence/evaluations";
     public const string Devices = Jarvis.Contracts.CompanionRoutes.Devices;
     public const string DeviceHeartbeatSuffix = Jarvis.Contracts.CompanionRoutes.DeviceHeartbeatSuffix;
     public const string DeviceHeartbeat = Devices + DeviceHeartbeatSuffix;

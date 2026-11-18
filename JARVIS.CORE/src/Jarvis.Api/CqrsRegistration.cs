@@ -41,6 +41,8 @@ public static class CqrsRegistration
         services.AddSingleton<IWorkflowReader>(s => s.GetRequiredService<IWorkflowStore>());
         services.AddSingleton<WorkflowCommandHandlers>();
         services.AddSingleton<AgentCommandHandlers>();
+        services.AddSingleton<IntelligenceEvaluationCommands>();
+        Command<RunIntelligenceEvaluation, Jarvis.Orchestrator.Intelligence.IntelligenceEvaluationReport, IntelligenceEvaluationCommands>(services);
         services.AddSingleton<ImportService>();
         services.AddSingleton<ImportCommandHandlers>();
         services.AddSingleton<ImportQueryHandlers>();
