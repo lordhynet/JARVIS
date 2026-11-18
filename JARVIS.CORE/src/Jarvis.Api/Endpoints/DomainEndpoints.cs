@@ -13,6 +13,10 @@ public static class DomainEndpoints
         var api = app.MapGroup("/api").RequireAuthorization(CorePolicies.Owner);
         api.MapPost("/domains/proposals", (ProposeDomainRequest request, ICommandHandler<ProposeDomain, DomainProposal> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));
         api.MapGet("/domains", (IQueryHandler<ListDomains, IReadOnlyList<DomainPreview>> handler, CancellationToken ct) => handler.HandleAsync(new(), ct));
+        api.MapGet("/domains/aliases", () => new {
+            activities = Enum.GetValues<ActivityType>().ToDictionary(a => a.ToString(), DomainAliases.ActivityKey),
+            learning = Enum.GetValues<LearningDomain>().ToDictionary(d => d.ToString(), DomainAliases.LearningKey)
+        });
         api.MapGet("/domains/{key}/preview", (string key, Guid? versionId, IQueryHandler<PreviewDomain, DomainPreview> handler, CancellationToken ct) => handler.HandleAsync(new(key, versionId), ct));
         api.MapPost("/domains/drafts", (SaveDomainDraftRequest request, ICommandHandler<SaveDomainDraft, DomainPreview> handler, CancellationToken ct) => handler.HandleAsync(new(request with { Provenance = null }, "manual-client"), ct));
         foreach (var action in new[] { "activate", "rollback" })

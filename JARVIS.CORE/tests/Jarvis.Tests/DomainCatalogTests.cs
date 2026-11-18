@@ -4,11 +4,54 @@ using Jarvis.Contracts;
 using Jarvis.Orchestrator.Domains;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Workflows;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Hosting;
+using System.Text.Json;
 
 namespace Jarvis.Tests;
 
 public sealed class DomainCatalogTests
 {
+    [Fact]
+    public async Task Every_existing_learning_and_activity_enum_resolves_to_a_seeded_registry_domain()
+    {
+        using var root = new JarvisApiFactory(); using var host = root.WithWebHostBuilder(b => b.UseSetting("Jarvis:WorkflowsEnabled", "false"));
+        var catalog = host.Services.GetRequiredService<IDomainCatalog>(); var registry = host.Services.GetRequiredService<IDomainRegistry>();
+        Assert.Equal("languages", catalog.ForLearning(LearningDomain.French).Key);
+        Assert.Equal("payments-fintech", catalog.ForLearning(LearningDomain.PaymentsFintech).Key);
+        Assert.Equal("interview-coaching", catalog.ForLearning(LearningDomain.InterviewStory).Key);
+        foreach (var domain in Enum.GetValues<LearningDomain>()) Assert.Equal(catalog.ForLearning(domain).Key, (await registry.ResolveLearningAsync(domain, default))!.Definition.Key);
+        foreach (var activity in Enum.GetValues<ActivityType>()) Assert.Equal(catalog.ForActivity(activity).Key, (await registry.ResolveActivityAsync(activity, default))!.Definition.Key);
+        Assert.Throws<DomainException>(() => catalog.ForLearning((LearningDomain)999));
+    }
+
+    [Fact]
+    public async Task Adding_missing_installed_seeds_preserves_existing_versions_disabled_state_and_preferences()
+    {
+        using var root = new JarvisApiFactory(); using var host = root.WithWebHostBuilder(b => b.UseSetting("Jarvis:WorkflowsEnabled", "false"));
+        var services = host.Services; var registry = services.GetRequiredService<IDomainRegistry>(); await registry.ListAsync(default);
+        var runtime = services.GetRequiredService<IRuntimeStore>();
+        var original = await runtime.UpdateAsync(s => {
+            var state = s.DomainRegistry;
+            var legacyKeys = new[] { "general", "algorithms", "system-design", "interview-coaching", "languages", "social-intelligence", "daily-planning", "reflection" };
+            var extra = state.Definitions.Values.Where(d => !legacyKeys.Contains(d.Key)).Select(d => d.Id).ToHashSet();
+            var versions = state.Versions.Values.Where(v => extra.Contains(v.DomainId)).Select(v => v.Id).ToHashSet();
+            foreach (var id in extra) state.Definitions.Remove(id);
+            foreach (var id in versions) state.Versions.Remove(id);
+            state.Bindings.RemoveAll(b => versions.Contains(b.DomainVersionId));
+            foreach (var id in state.AuditEvents.Values.Where(a => extra.Contains(a.DomainId)).Select(a => a.Id).ToArray()) state.AuditEvents.Remove(id);
+            var language = state.Definitions.Values.Single(d => d.Key == "languages");
+            state.Definitions[language.Id] = language = language with { Status = DomainStatus.Disabled, Revision = 9 };
+            state.UserStates[DomainPolicy.OwnerSubject + ":" + language.Id] = new(DomainPolicy.OwnerSubject, language.Id, false, new("fr-FR", 25), null, 4, DateTimeOffset.UtcNow);
+            return (language, state.Versions[language.LatestVersionId], state.UserStates[DomainPolicy.OwnerSubject + ":" + language.Id]);
+        });
+        IDomainRegistry restarted = new DomainRegistryService(services.GetRequiredService<IDomainRegistryStore>(), services.GetRequiredService<ICapabilityCatalog>(), services.GetRequiredService<TimeProvider>());
+        var all = await restarted.ListAsync(default); Assert.Equal(14, all.Count);
+        Assert.Equal(original.language, all.Single(d => d.Definition.Key == "languages").Definition);
+        Assert.Equal(JsonSerializer.Serialize(original.Item2, DomainPolicy.Json), JsonSerializer.Serialize(all.Single(d => d.Definition.Key == "languages").Version, DomainPolicy.Json));
+        Assert.Equal(original.Item3, await runtime.ReadAsync(s => s.DomainRegistry.UserStates[DomainPolicy.OwnerSubject + ":" + original.language.Id]));
+        Assert.Null(await restarted.ResolveLearningAsync(LearningDomain.French, default));
+    }
     [Fact]
     public void Installed_domains_preserve_legacy_activity_prompts_and_enums()
     {
