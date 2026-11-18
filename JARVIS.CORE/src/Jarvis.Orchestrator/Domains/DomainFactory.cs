@@ -30,7 +30,7 @@ public sealed class DomainFactory(IDomainRegistry registry, ICapabilityCatalog c
         System.Text.RegularExpressions.Regex.IsMatch(text, @"\b(add|create|build|make|extend|configure|set\s+up|start)\b.{0,180}\b(domain|module|programme|program|course|subject)\b",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     private Task<string> Captured(Guid sessionId, Guid utteranceId, CancellationToken ct) => runtime.ReadAsync(s => {
-        Guard.Require(s.VoiceTurns.TryGetValue(utteranceId, out var turn) && turn.SessionId == sessionId && turn.Role == ChatRoles.User &&
+        Guard.Require(s.VoiceTurns.TryGetValue(utteranceId, out var turn) && !turn.Restricted && turn.SessionId == sessionId && turn.Role == ChatRoles.User &&
             !s.RetiredSessions.Contains(sessionId), 409, "Use the captured user request from the current session.");
         return turn.Text;
     }, ct);

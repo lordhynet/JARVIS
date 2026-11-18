@@ -127,7 +127,7 @@ function renderSession(keepLive = false) {
   $('owner').textContent = s.activeDeviceId ? `Active device: ${s.activeDeviceId === deviceId ? 'this browser' : s.activeDeviceId}` : 'No device owns audio. Choose “Use this device” to start voice.';
   const messages = s.messages || []; $('messages').replaceChildren();
   if (!messages.length) $('messages').append(node('p', s.status === 'Ended' ? 'Session ended. Your checkpoints are saved below.' : s.status === 'Paused' ? 'Session paused. Resume when you are ready.' : 'Your session is ready. Send a message, or save a checkpoint below.', 'muted'));
-  for (const m of messages) { const div = node('div', '', `message ${m.role}`); div.append(node('small', m.role === 'assistant' ? 'JARVIS' : 'You'), document.createTextNode(m.text)); $('messages').append(div); }
+  for (const m of messages) { const div = node('div', '', `message ${m.role}`); div.append(node('small', `${m.role === 'assistant' ? 'JARVIS' : 'You'}${m.restricted ? ' · Locked device — audit only' : ''}`), document.createTextNode(m.text)); $('messages').append(div); }
   $('messages').scrollTop = $('messages').scrollHeight;
   $('checkpoints').replaceChildren(...s.checkpoints.slice().reverse().map(c => node('p', `${c.sequence}. ${c.summary}`, 'list-item')));
   const h = s.handoff; $('handoff-state').textContent = h ? `Transfer: ${h.state} · ${h.fromDeviceId} → ${h.toDeviceId}` : '';

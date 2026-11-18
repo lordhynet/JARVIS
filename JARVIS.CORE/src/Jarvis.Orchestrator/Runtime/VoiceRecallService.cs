@@ -18,7 +18,7 @@ public sealed class VoiceRecallService(IRuntimeStore store, ISessionReader sessi
         var session = await sessions.GetAsync(sessionId, ct);
         Guard.Require(session is { Status: SessionStatus.Active }, 409, "Resume the conversation before reviewing cards.");
         var source = session.Messages?.LastOrDefault(m => m.Role == ChatRoles.User);
-        if (action != "current") Guard.Require(source is not null && source.RequestId == sourceId, 409, "Use the latest captured user speech for that review action.");
+        if (action != "current") Guard.Require(source is not null && !source.Restricted && source.RequestId == sourceId, 409, "Use the latest unrestricted captured user speech for that review action.");
         return await store.UpdateAsync(s =>
         {
             Guard.Require(!s.RetiredSessions.Contains(sessionId), 409, "This conversation was retired.");

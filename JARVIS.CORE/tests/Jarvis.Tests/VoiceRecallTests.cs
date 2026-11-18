@@ -14,6 +14,7 @@ public sealed class VoiceRecallTests
     {
         var session = Guid.NewGuid(); var now = DateTimeOffset.UtcNow;
         await services.GetRequiredService<ISessionStore>().AddAsync(new(session, ActivityType.General, "Recall fixture", SessionStatus.Active, null, null, now, now, []));
+        await VoiceToolFixture.OpenAsync(services, session);
         var card = await services.GetRequiredService<LearningService>().CreateAsync(new(LearningDomain.French, "Say hello in French", "Bonjour"), default);
         return (session, card.Id);
     }

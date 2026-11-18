@@ -93,6 +93,7 @@ public sealed class VoiceCoachingTests
     {
         var id = Guid.NewGuid(); var now = DateTimeOffset.UtcNow;
         await services.GetRequiredService<ISessionStore>().AddAsync(new(id, ActivityType.General, "Coaching fixture", SessionStatus.Active, null, null, now, now, []));
+        await VoiceToolFixture.OpenAsync(services, id);
         return id;
     }
     private static async Task<Guid> Say(IServiceProvider services, Guid session, string text, string role = "user")

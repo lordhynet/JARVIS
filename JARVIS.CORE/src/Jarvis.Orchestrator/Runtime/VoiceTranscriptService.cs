@@ -12,35 +12,36 @@ public static class VoiceTranscriptRules
     {
         Validate(turn); Guard.Require(!state.RetiredSessions.Contains(turn.SessionId), 409, "Session was retired.");
         if (state.VoiceTurns.TryGetValue(turn.Id, out var previous)) {
-            Guard.Require(previous.SessionId == turn.SessionId && previous.Role == turn.Role && previous.Text == turn.Text && previous.SpeechSeconds == turn.SpeechSeconds,
+            Guard.Require(previous.SessionId == turn.SessionId && previous.Role == turn.Role && previous.Text == turn.Text && previous.SpeechSeconds == turn.SpeechSeconds && previous.Restricted == turn.Restricted,
                 409, "Voice transcript ID was reused."); return;
         }
         state.VoiceTurns.Add(turn.Id, turn);
     }
-    public static VoiceTurn Turn(Guid sessionId, ChatMessage message) => new(message.RequestId, sessionId, message.Role, message.Text, message.SpeechSeconds, message.At);
+    public static VoiceTurn Turn(Guid sessionId, ChatMessage message) => new(message.RequestId, sessionId, message.Role, message.Text, message.SpeechSeconds, message.At, message.Restricted);
 }
 
 public sealed class VoiceTranscriptService(ICoreTransaction transaction, TimeProvider clock)
 {
-    public Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, CancellationToken ct) =>
-        RecordAsync(sessionId, id, role, text, speechSeconds, clock.GetUtcNow(), null, ct);
+    public Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, CancellationToken ct, bool restricted = false) =>
+        RecordAsync(sessionId, id, role, text, speechSeconds, clock.GetUtcNow(), null, restricted, ct);
 
     public Task RecordFallbackAsync(AudioLease lease, Guid captureId, DateTimeOffset promptedAt, DateTimeOffset capturedAt,
         string text, CancellationToken ct)
     {
         Guard.Require(capturedAt > promptedAt && capturedAt <= clock.GetUtcNow() && VoiceModePolicy.ConfirmsEveryday(text),
             409, "A fresh spoken yes is required to continue in Everyday voice.");
-        return RecordAsync(lease.SessionId, captureId, ChatRoles.User, text, null, capturedAt, lease, ct);
+        return RecordAsync(lease.SessionId, captureId, ChatRoles.User, text, null, capturedAt, lease, lease.Locked, ct);
     }
 
     private async Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, DateTimeOffset at,
-        AudioLease? fallbackLease, CancellationToken ct)
+        AudioLease? fallbackLease, bool sourceRestricted, CancellationToken ct)
     {
         at = new(at.UtcTicks - at.UtcTicks % 10, TimeSpan.Zero);
         var turn = new VoiceTurn(id, sessionId, role, text, speechSeconds, at);
         VoiceTranscriptRules.Validate(turn);
         await transaction.ExecuteAsync(async writes =>
         {
+            var restricted = sourceRestricted || VoiceAccessRules.Restricted(writes.Runtime, sessionId);
             if (fallbackLease is not null)
             {
                 var state = writes.Runtime;
@@ -57,18 +58,18 @@ public sealed class VoiceTranscriptService(ICoreTransaction transaction, TimePro
                 if (previous is not null)
                 {
                     Guard.Require(fallbackLease is null, 409, "This spoken confirmation was already used.");
-                    Guard.Require(previous.Role == role && previous.Text == text && (!previous.IsVoice || previous.SpeechSeconds == speechSeconds),
+                    Guard.Require(previous.Role == role && previous.Text == text && (!previous.IsVoice || previous.SpeechSeconds == speechSeconds && previous.Restricted == restricted),
                         409, "Transcript ID was reused.");
                     return previous.IsVoice ? current : VoiceConversationMemory.RefreshSummary(current with
                     {
-                        Messages = current.Messages!.Select(m => m.RequestId == id ? m with { IsVoice = true, SpeechSeconds = speechSeconds } : m).ToArray()
+                        Messages = current.Messages!.Select(m => m.RequestId == id ? m with { IsVoice = true, SpeechSeconds = speechSeconds, Restricted = restricted } : m).ToArray()
                     });
                 }
                 Guard.Require((current.Messages?.Count ?? 0) < 2000, 409, "Session transcript is full.");
                 return VoiceConversationMemory.RefreshSummary(current with
                 {
                     UpdatedAt = current.UpdatedAt > at ? current.UpdatedAt : at,
-                    Messages = [.. current.Messages ?? [], new(id, role, text, at, true, speechSeconds)]
+                    Messages = [.. current.Messages ?? [], new(id, role, text, at, true, speechSeconds, restricted)]
                 });
             });
             Guard.Require(session is not null, 404, "Session not found.");

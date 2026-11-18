@@ -502,7 +502,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         {
             var id = ManagedAi.Operation(role + ":" + item, sessionId, reservation.Id); var bounded = text.Length <= 8000 ? text : text[..8000];
             var duration = role == ChatRoles.User && speechDurations.TryGetValue(item, out var seconds) ? (double?)seconds : null;
-            await transcripts.RecordAsync(sessionId, id, role, bounded, duration, timeout.Token);
+            await transcripts.RecordAsync(sessionId, id, role, bounded, duration, timeout.Token, restricted: windowLocked);
             if (role == ChatRoles.User && utterances.Count < window.MaxTurns * 4 && utterances.Add(id))
             {
                 latestUtterance = id;
