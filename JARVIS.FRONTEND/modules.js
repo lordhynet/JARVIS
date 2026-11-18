@@ -28,6 +28,20 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
   const saveAnswer = el('button', 'Save & review text', answerForm, 'primary');
   const feedback = el('div', '', coaching, 'list'); const history = el('div', '', coaching, 'list');
   const reportBox = el('div', '', coaching, 'list');
+  const deliveryBox = el('div', '', coaching, 'card');
+  async function loadDelivery() {
+    const sessions = await api('/coaching/delivery'); deliveryBox.replaceChildren(); el('h3', 'Speech delivery', deliveryBox);
+    el('p', 'Unrestricted user speech only. Pace uses captured duration. Fillers and the point-first opening score (0–2) are English text heuristics. Pause ratio uses quiet intervals within captured speech, not time between speakers.', deliveryBox, 'muted');
+    if (!sessions.length) el('p', 'No eligible voice turns yet. Timing is never inferred for typed answers.', deliveryBox);
+    for (const session of sessions) {
+      const entry = el('details', '', deliveryBox, 'list-item');
+      el('summary', 'Session ' + session.sessionId.slice(0, 8) + ' · ' + session.turns + ' turns · ' + session.words + ' words', entry);
+      el('p', 'Pace: ' + (session.wordsPerMinute == null ? 'unavailable' : session.wordsPerMinute + ' words/min') + ' · Filler candidates: ' + session.fillers + ' · I: ' + session.firstPersonSingular + ' · We: ' + session.firstPersonPlural, entry);
+      el('p', 'Pause ratio: ' + (session.pauseRatio == null ? 'unavailable' : Math.round(session.pauseRatio * 100) + '% (quiet-audio heuristic)') + ' · Opening score: ' + session.openingScore + '/2', entry);
+      const trend = el('ol', '', entry);
+      for (const turn of session.trend) el('li', new Date(turn.at).toLocaleTimeString() + ' · ' + turn.words + ' words · ' + (turn.wordsPerMinute == null ? 'pace unavailable' : turn.wordsPerMinute + ' words/min') + ' · fillers ' + turn.fillers + ' · opening ' + turn.openingScore + '/2', trend);
+    }
+  }
   action(coaching, 'Review current session', async () => {
     const session = selectedSession(); if (!session) throw Error('Open a conversation or coaching prompt first.');
     report = await api(`/sessions/${session.id}/review`); reportBox.replaceChildren();
@@ -365,11 +379,11 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
       history.replaceChildren(); reportBox.replaceChildren(); report = null;
     },
     async load(tab) {
-      if (tab === 'coaching') { [exercises, stories] = await Promise.all([api('/coaching/exercises'), api('/stories')]); const old = exerciseInput.value; exerciseInput.replaceChildren(); exercises.forEach(x => option(exerciseInput, `${x.area} · ${x.title}`, x.id)); if (exercises.some(x => x.id === old)) exerciseInput.value = old; sourceSelection(); await loadHistory(); }
+      if (tab === 'coaching') { [exercises, stories] = await Promise.all([api('/coaching/exercises'), api('/stories')]); const old = exerciseInput.value; exerciseInput.replaceChildren(); exercises.forEach(x => option(exerciseInput, `${x.area} · ${x.title}`, x.id)); if (exercises.some(x => x.id === old)) exerciseInput.value = old; sourceSelection(); await loadHistory(); await loadDelivery(); }
       if (tab === 'stories') await loadStories();
       if (tab === 'training') { questions = await api('/training/questions'); const old = questionInput.value; questionInput.replaceChildren(); questions.forEach(x => option(questionInput, `${x.domain} · ${x.title}`, x.id)); if (questions.some(x => x.id === old)) questionInput.value = old; questionBox.textContent = questions.find(x => x.id === questionInput.value)?.prompt || ''; modeCatalog = await api('/training/modes'); const selectedMode = guideMode.value; guideMode.replaceChildren(); modeCatalog.forEach(x => option(guideMode, x.title, x.mode)); if (modeCatalog.some(x => x.mode === selectedMode)) guideMode.value = selectedMode; guideDescription.textContent = modeCatalog.find(x => x.mode === guideMode.value)?.description || ''; await loadGuidedHistory(); }
       if (tab === 'programme') await loadProgramme(); if (tab === 'workflows') await loadWorkflows(); if (tab === 'modules') await loadModules();
     },
-    clear() { guideEpoch++; guided = null; guideDrafts.clear(); guideBody.replaceChildren(); guideHistory.replaceChildren(); guideMode.replaceChildren(); modeCatalog = []; guideDescription.textContent = ""; pending.clear(); drafts.clear(); contextId = null; exercises = []; stories = []; questions = []; prompt = coach = drill = report = programme = editStory = null; coachingForm.reset(); answerForm.reset(); storyForm.reset(); drillForm.reset(); [exerciseInput, storyInput, claimInput, questionInput, promptBox, feedback, history, reportBox, storyList, questionBox, drillResult, programmeBody, workBody, moduleList].forEach(x => x.replaceChildren()); promptBox.hidden = answerForm.hidden = true; }
+    clear() { guideEpoch++; guided = null; guideDrafts.clear(); guideBody.replaceChildren(); guideHistory.replaceChildren(); guideMode.replaceChildren(); modeCatalog = []; guideDescription.textContent = ""; pending.clear(); drafts.clear(); contextId = null; exercises = []; stories = []; questions = []; prompt = coach = drill = report = programme = editStory = null; coachingForm.reset(); answerForm.reset(); storyForm.reset(); drillForm.reset(); [exerciseInput, storyInput, claimInput, questionInput, promptBox, feedback, history, reportBox, deliveryBox, storyList, questionBox, drillResult, programmeBody, workBody, moduleList].forEach(x => x.replaceChildren()); promptBox.hidden = answerForm.hidden = true; }
   };
 }

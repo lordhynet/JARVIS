@@ -13,5 +13,6 @@ public sealed record VoiceTicket(string Ticket, AudioLease Lease, int WindowSeco
 public sealed record WakeCandidateRequest(Guid RequestId, string DeviceId, bool AllowCloudProcessing, bool? Locked = null);
 public sealed record WakeCandidateResponse(Guid SessionId, VoiceTicket Voice);
 public sealed record VoiceTicketRecord(string Hash, AudioLease Lease, DateTimeOffset ExpiresAt, int WindowSeconds = 60);
-public sealed record VoiceTurn(Guid Id, Guid SessionId, string Role, string Text, double? SpeechSeconds, DateTimeOffset At, bool Restricted = false);
+public sealed record VoiceTurn(Guid Id, Guid SessionId, string Role, string Text, double? SpeechSeconds, DateTimeOffset At, bool Restricted = false,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] SpeechTiming? Timing = null);
 public sealed record AiCapabilityStatus(bool Ready, string Model, string Detail, int VoiceProtocolVersion = 0);
