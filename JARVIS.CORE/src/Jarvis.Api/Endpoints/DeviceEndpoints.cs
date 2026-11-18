@@ -15,7 +15,7 @@ public static class DeviceEndpoints
             var devices = await handler.HandleAsync(new ListDevices(), ct);
             var displayName = OwnerDisplayName.Read(config, logs.CreateLogger("Jarvis.OwnerDisplayName"));
             devices = devices.Select(d => d with { OwnerDisplayName = displayName }).ToArray();
-            return context.Items[ApiKeyMiddleware.ActorItem] is CoreActor { DeviceId: { } id }
+            return context.Items[ApiKeyMiddleware.ActorItem] is CoreActor { DeviceId: { } id, IsOwnerBrowser: false }
                 ? devices.Where(d => d.Device.Registration.DeviceId == id).ToArray() : devices;
         });
         group.MapPost(CoreRoutes.DeviceCredentialSuffix, (string id, ICommandHandler<IssueDeviceCredential, IssuedDeviceCredential> handler, CancellationToken ct) => handler.HandleAsync(new IssueDeviceCredential(id), ct)).RequireAuthorization(CorePolicies.DeviceManage);

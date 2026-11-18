@@ -23,9 +23,9 @@ public static class PrivacyEndpoints
         group.MapGet("/jobs", (IQueryHandler<ListPrivacyJobs, IReadOnlyList<PrivacyJob>> h, CancellationToken ct) => h.HandleAsync(new(), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
         group.MapPost("/retention/apply", (ApplyRetentionRequest request, RetentionSettings settings, TimeProvider clock, ICommandHandler<ApplyRetention, PrivacyJob> h, CancellationToken ct) =>
             h.HandleAsync(new(request, settings.Read(), clock.GetUtcNow()), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.PrivacyManage);
-        group.MapPost("/erase", (EraseCoreRequest request, HttpContext context, TimeProvider clock, ICommandHandler<EraseCore, PrivacyStatus> h, CancellationToken ct) =>
-            h.HandleAsync(new(request, (string)context.Items[ApiKeyMiddleware.FingerprintItem]!, clock.GetUtcNow()), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.PrivacyManage);
-        group.MapPost("/reopen", (ReopenCoreRequest request, HttpContext context, ICommandHandler<ReopenCore, PrivacyStatus> h, CancellationToken ct) =>
-            h.HandleAsync(new(request, (string)context.Items[ApiKeyMiddleware.FingerprintItem]!), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.PrivacyManage);
+        group.MapPost("/erase", (EraseCoreRequest request, IConfiguration config, TimeProvider clock, ICommandHandler<EraseCore, PrivacyStatus> h, CancellationToken ct) =>
+            h.HandleAsync(new(request, Jarvis.Orchestrator.Runtime.PrivacyData.Hash(config[ConfigKeys.CoreApiKey]!), clock.GetUtcNow()), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.PrivacyManage);
+        group.MapPost("/reopen", (ReopenCoreRequest request, IConfiguration config, ICommandHandler<ReopenCore, PrivacyStatus> h, CancellationToken ct) =>
+            h.HandleAsync(new(request, Jarvis.Orchestrator.Runtime.PrivacyData.Hash(config[ConfigKeys.CoreApiKey]!)), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.PrivacyManage);
     }
 }

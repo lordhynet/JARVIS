@@ -99,7 +99,8 @@ public sealed record AiCoachAssessmentClaim(Guid RequestId, Guid AttemptId, Guid
     int ExpectedRevision, int TextRevision, DateTimeOffset ExpiresAt);
 
 public sealed record TrainingOperation(string Kind, Guid AttemptId, string Fingerprint);
-public sealed record HubAccessTicket(string KeyFingerprint, long Epoch, DateTimeOffset ExpiresAt);
+public sealed record HubAccessTicket(string KeyFingerprint, long Epoch, DateTimeOffset ExpiresAt,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] CoreActor? Actor = null);
 
 // Callbacks are synchronous, pure state changes; no network I/O while holding a lock.
 public interface IRuntimeReader

@@ -1,4 +1,5 @@
-export function initLiveVoice({ api, selectedSession, ensureSession, claimSession, deviceId, notice, beforeStart }) {
+export function initLiveVoice({ api, selectedSession, ensureSession, claimSession, deviceId, getDeviceId, notice, beforeStart }) {
+  const boundDeviceId = () => getDeviceId ? getDeviceId() : deviceId;
   const panel = document.createElement('section'); panel.className = 'card live-voice';
   const title = document.createElement('h2'); title.textContent = 'Live voice coaching'; panel.append(title);
   const description = document.createElement('p'); description.textContent = 'Speak naturally, interrupt replies, and keep the same Core session. Audio is streamed to OpenAI only after you start.'; panel.append(description);
@@ -82,7 +83,7 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
   async function beginWindow(preparedTicket = null, preparedAt = null) {
     if (!active) return;
     const session = selectedSession(); const sentAt = preparedAt ?? performance.now();
-    const ticket = preparedTicket ?? await api('/voice/tickets', { sessionId: session.id, deviceId, allowCloudProcessing: true });
+    const ticket = preparedTicket ?? await api('/voice/tickets', { sessionId: session.id, deviceId: boundDeviceId(), allowCloudProcessing: true });
     if (!active) return;
     leaseDeadline = sentAt + 15000; sequence = 0; pings.clear();
     const url = new URL('/voice-stream', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -184,7 +185,7 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
   }
   async function prepareWindow(operation) {
     const session = selectedSession(), sentAt = performance.now();
-    const ticket = await api('/voice/tickets', { sessionId: session.id, deviceId, allowCloudProcessing: true });
+    const ticket = await api('/voice/tickets', { sessionId: session.id, deviceId: boundDeviceId(), allowCloudProcessing: true });
     try {
       if (generation !== operation || performance.now() - sentAt >= 12000) throw Error('Voice start was cancelled or expired.');
       const captured = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -217,7 +218,7 @@ export function initLiveVoice({ api, selectedSession, ensureSession, claimSessio
       heartbeat = setInterval(async () => {
         if (!active) return;
         if (socket?.readyState === WebSocket.OPEN) { const id = ++sequence; pings.set(id, performance.now()); socket.send(JSON.stringify({ type: 'heartbeat', sequence: id })); if (pings.size > 8) halt('Voice acknowledgements stopped.'); }
-        try { await api(`/devices/${deviceId}/heartbeat`, {}); } catch { halt('Core is unreachable. Live audio stopped.'); }
+        try { await api(`/devices/${boundDeviceId()}/heartbeat`, {}); } catch { halt('Core is unreachable. Live audio stopped.'); }
       }, 4000);
       watchdog = setInterval(() => { if (active && performance.now() >= leaseDeadline) halt('Audio ownership expired. Reconnect to resume safely.'); }, 250);
     } catch (error) { if (generation === operation) { halt(error.message); notice(error.message, true); } }

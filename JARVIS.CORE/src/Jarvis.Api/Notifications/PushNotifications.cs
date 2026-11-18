@@ -12,11 +12,13 @@ public interface IPushSender { Task SendAsync(BrowserPushSubscription subscripti
 public static class PushEligibility
 {
     public static bool HasDispatchWork(RuntimeState s, DateTimeOffset now, string fingerprint)
+        => HasDispatchWork(s, now, new HashSet<string> { fingerprint });
+    public static bool HasDispatchWork(RuntimeState s, DateTimeOffset now, IReadOnlySet<string> fingerprints)
     {
         if (s.PushDeliveries.Values.Any(d => !s.AgentOutbox.ContainsKey(d.NotificationId) || !s.PushSubscriptions.ContainsKey(d.SubscriptionId))) return true;
         return !s.AgentControls.EffectiveAgentsPaused && !AgentRuntime.IsQuiet(s.AgentControls, now) &&
             s.AgentOutbox.Values.Any(n => n.Delivered && !n.Read && n.ExpiresAt > now &&
-                s.PushSubscriptions.Values.Any(subscription => subscription.KeyFingerprint == fingerprint &&
+                s.PushSubscriptions.Values.Any(subscription => fingerprints.Contains(subscription.KeyFingerprint) &&
                     (!s.PushDeliveries.TryGetValue(AgentRuntime.StableId($"push-v1:{n.Id}:{subscription.Id}"), out var delivery) || IsReady(delivery, now))));
     }
 
@@ -60,6 +62,7 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
         var id = AgentRuntime.StableId(request.Endpoint);
         return store.UpdateAsync(s =>
         {
+            Guard.Require(BrowserOwnerAccess.ActiveFingerprints(s, config).Contains(fingerprint), 401, "The browser credential changed before subscription.");
             Guard.Require(s.PushSubscriptions.ContainsKey(id) || s.PushSubscriptions.Count < 50, 409, "Browser notification device limit reached.");
             s.PushSubscriptions[id] = new(id, request.Endpoint, request.P256dh, request.Auth, fingerprint, clock.GetUtcNow()); return id;
         }, ct);
@@ -69,14 +72,14 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
     public async Task<bool> DispatchOneAsync(CancellationToken ct)
     {
         if (!Ready) return false;
-        var fingerprint = PrivacyData.Hash(config[ConfigKeys.CoreApiKey] ?? "");
         var nowCheck = clock.GetUtcNow();
-        if (!await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, nowCheck, fingerprint), ct)) return false;
+        if (!await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, nowCheck, BrowserOwnerAccess.ActiveFingerprints(s, config)), ct)) return false;
         var claim = await store.UpdateAsync(s =>
         {
             var now = clock.GetUtcNow();
+            var fingerprints = BrowserOwnerAccess.ActiveFingerprints(s, config);
             foreach (var obsolete in s.PushDeliveries.Values.Where(x => !s.AgentOutbox.ContainsKey(x.NotificationId) || !s.PushSubscriptions.ContainsKey(x.SubscriptionId)).ToList()) s.PushDeliveries.Remove(obsolete.Id);
-            if (!PushEligibility.HasDispatchWork(s, now, fingerprint)) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
+            if (!PushEligibility.HasDispatchWork(s, now, fingerprints)) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
             if (s.AgentControls.EffectiveAgentsPaused) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
             var local = TimeOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, Jarvis.Orchestrator.Training.TrainingProjection.Zone(s.AgentControls.TimeZone)).DateTime);
             var start = AgentRuntime.LocalTime(s.AgentControls.QuietStart); var end = AgentRuntime.LocalTime(s.AgentControls.QuietEnd);
@@ -84,7 +87,7 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
             if (quiet) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
             // The durable inbox owns freshness and quiet-hour release.
             foreach (var notice in s.AgentOutbox.Values.Where(x => x.Delivered && !x.Read && x.ExpiresAt > now))
-                foreach (var subscription in s.PushSubscriptions.Values.Where(x => x.KeyFingerprint == fingerprint))
+                foreach (var subscription in s.PushSubscriptions.Values.Where(x => fingerprints.Contains(x.KeyFingerprint)))
                 {
                     var id = AgentRuntime.StableId($"push-v1:{notice.Id}:{subscription.Id}");
                     s.PushDeliveries.TryAdd(id, new(id, notice.Id, subscription.Id, 0, "Pending", now));
@@ -92,7 +95,7 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
             var next = s.PushDeliveries.Values.OrderBy(x => x.AvailableAt).FirstOrDefault(x =>
                 PushEligibility.IsReady(x, now) &&
                 s.AgentOutbox.TryGetValue(x.NotificationId, out var note) && !note.Read && note.ExpiresAt > now &&
-                s.PushSubscriptions.TryGetValue(x.SubscriptionId, out var subscription) && subscription.KeyFingerprint == fingerprint);
+                s.PushSubscriptions.TryGetValue(x.SubscriptionId, out var subscription) && fingerprints.Contains(subscription.KeyFingerprint));
             if (next is null) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
             var owned = next with { Status = "Sending", Attempt = next.Attempt + 1, ClaimToken = Guid.NewGuid(), LeaseExpiresAt = now.AddSeconds(30) };
             s.PushDeliveries[owned.Id] = owned; return (Delivery: (PushDelivery?)owned, Subscription: (BrowserPushSubscription?)s.PushSubscriptions[owned.SubscriptionId]);
