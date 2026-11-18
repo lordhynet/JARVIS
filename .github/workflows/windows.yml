@@ -1,0 +1,40 @@
+name: Verify Windows companion
+on:
+  push:
+    branches: [master]
+    paths: ['JARVIS.WINDOWS/**', 'JARVIS.CORE/src/Jarvis.Contracts/**', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['JARVIS.WINDOWS/**', 'JARVIS.CORE/src/Jarvis.Contracts/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: JARVIS.WINDOWS/global.json
+      - name: Build and test without microphone access
+        working-directory: JARVIS.WINDOWS
+        run: |
+          dotnet build Jarvis.Windows.sln -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test tests/Jarvis.Windows.Tests/Jarvis.Windows.Tests.csproj --no-build -c Release --logger 'trx;LogFileName=windows-ci.trx'
+      - name: Build unsigned MSIX review artifact
+        working-directory: JARVIS.WINDOWS
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-review
+          path: |
+            JARVIS.WINDOWS/tests/Jarvis.Windows.Tests/TestResults/*.trx
+            JARVIS.WINDOWS/artifacts/*_unsigned.msix
+          retention-days: 7

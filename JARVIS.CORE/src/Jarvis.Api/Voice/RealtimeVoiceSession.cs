@@ -135,7 +135,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
             s.TrainingDrills.Values.Where(item => item.SessionId == session.Id && item.Status == "Active")
                 .OrderByDescending(item => item.CreatedAt).ThenBy(item => item.Id).FirstOrDefault()?.Mode), ct);
         recommendedMode = VoiceModePolicy.Recommend(session.Activity, drill);
-        return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1);
+        return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1 || client.LocalGreeting);
     }
 
     private VoiceStreamMode? ReadMode()
@@ -399,8 +399,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         MarkReady();
         await SendClientAsync(new { type = "ready", fence = lease.Fence, leaseSeconds = 15, windowSeconds = window.Seconds,
             window = number, sampleRate = VoiceWindowLimits.SampleRate, voiceName = voiceOutput.Name, speed = voiceOutput.Speed,
-            mode = SelectedMode(preparedMode).ToString(), model, recommendedMode = recommendedMode.ToString() });
-        if (number == 1 && requested == 0) { requested++; await SendProviderAsync(new { type = "response.create" }, requireAudio: true); }
+            mode = SelectedMode(preparedMode).ToString(), model, recommendedMode = recommendedMode.ToString(), locked = windowLocked });
+        if (number == 1 && requested == 0 && !client.LocalGreeting) { requested++; await SendProviderAsync(new { type = "response.create" }, requireAudio: true); }
     }
 
     private async Task HandleResponseCreatedAsync(JsonElement message)

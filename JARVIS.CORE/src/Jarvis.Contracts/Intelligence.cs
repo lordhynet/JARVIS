@@ -14,4 +14,4 @@ public sealed record WakeCandidateRequest(Guid RequestId, string DeviceId, bool 
 public sealed record WakeCandidateResponse(Guid SessionId, VoiceTicket Voice);
 public sealed record VoiceTicketRecord(string Hash, AudioLease Lease, DateTimeOffset ExpiresAt, int WindowSeconds = 60);
 public sealed record VoiceTurn(Guid Id, Guid SessionId, string Role, string Text, double? SpeechSeconds, DateTimeOffset At);
-public sealed record AiCapabilityStatus(bool Ready, string Model, string Detail);
+public sealed record AiCapabilityStatus(bool Ready, string Model, string Detail, int VoiceProtocolVersion = 0);

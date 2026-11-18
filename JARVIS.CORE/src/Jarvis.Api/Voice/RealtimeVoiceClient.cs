@@ -15,6 +15,7 @@ internal sealed class RealtimeVoiceClient(WebSocket socket, CancellationToken di
     private VoiceStreamMode? modeSelection;
 
     public WebSocketState State => socket.State;
+    public bool LocalGreeting { get; set; }
     public bool StopRequested => Volatile.Read(ref stopRequested) != 0;
     public void RecordStop() => Volatile.Write(ref stopRequested, 1);
     public bool LockInterrupted => Volatile.Read(ref lockInterrupted) != 0;

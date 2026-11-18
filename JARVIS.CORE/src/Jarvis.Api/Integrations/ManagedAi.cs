@@ -81,9 +81,11 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
         try
         {
             RequireReady(profile);
-            return new(true, profile == "Voice" ? RealtimeRates().Model : Model(profile), "Configured; explicit cloud-processing consent is required.");
+            return new(true, profile == "Voice" ? RealtimeRates().Model : Model(profile), "Configured; explicit cloud-processing consent is required.",
+                profile == "Voice" ? CompanionVoiceProtocol.Version : 0);
         }
-        catch (DomainException e) { return new(false, config[ConfigKeys.AiProfilePrefix(profile) + ConfigKeys.Model] ?? "", e.Message); }
+        catch (DomainException e) { return new(false, config[ConfigKeys.AiProfilePrefix(profile) + ConfigKeys.Model] ?? "", e.Message,
+            profile == "Voice" ? CompanionVoiceProtocol.Version : 0); }
     }
     public static Guid Operation(string kind, Guid scope, Guid request) => new(SHA256.HashData(Encoding.UTF8.GetBytes($"{kind}:{scope}:{request}"))[..16]);
     public async Task<JsonElement> TextAsync(Guid id, Guid scope, string profile, object payload, UsageLane lane, CancellationToken ct, ReviewedTextRates? reviewed = null, bool preReserved = false)
