@@ -29,5 +29,22 @@ public static class DeviceEndpoints
         });
         group.MapPost("/{id}/verify", (string id, ICommandHandler<VerifyDevice, RegisteredDevice> handler, CancellationToken ct) =>
             handler.HandleAsync(new VerifyDevice(id), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.DeviceVerify);
+        group.MapPost(PairingCodesSuffix, (CreatePairingCodeRequest request, ICommandHandler<CreatePairingCode, IssuedPairingCode> handler, CancellationToken ct) =>
+            handler.HandleAsync(new CreatePairingCode(request), ct)).RequireAuthorization(CorePolicies.DeviceManage);
+
+        // The phone has no credential yet, so this route sits outside /api. Only a single-use owner code is accepted.
+        app.MapPost(PairingExchangeRoute, async (PairingExchangeRequest request, CoreRequestLimits limits, IPrivacyReader privacy,
+            ICommandHandler<ExchangePairingCode, IssuedDeviceCredential> handler, CancellationToken ct) =>
+        {
+            Guard.Require(limits.AdmitAnonymous(), 429, "Too many pairing attempts. Wait a minute.");
+            var status = await privacy.StatusAsync(ct);
+            PrivacyContext.RequireWrite(status);
+            using var scope = PrivacyContext.Enter(status.Epoch);
+            var issued = await handler.HandleAsync(new ExchangePairingCode(request), ct);
+            return new { deviceId = issued.DeviceId, credential = issued.Secret };
+        }).WithTags("Devices").AllowAnonymous();
     }
+
+    public const string PairingCodesSuffix = "/pairing-codes";
+    public const string PairingExchangeRoute = "/pair/exchange";
 }

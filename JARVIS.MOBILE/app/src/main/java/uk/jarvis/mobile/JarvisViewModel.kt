@@ -49,7 +49,32 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 notice = "Pairing details were invalid. Send them again from your trusted Core computer.") }
         }
     }
-    fun acceptPairing() { offer?.let { connect(it.url, it.token, it.certificateSha256) } }
+    private var qrOffer: QrPairingOffer? = null
+    fun offerQrPairing(link: String) {
+        runCatching { QrPairing.parse(link) }.onSuccess { parsed ->
+            qrOffer = parsed; offer = null
+            mutable.update { it.copy(pairingOffered = true, pairingHost = parsed.host, certificateTrust = CertificatePin.trustLabel(null, connected = false), notice = "") }
+        }.onFailure { error ->
+            qrOffer = null
+            mutable.update { it.copy(pairingOffered = offer != null, notice = error.message ?: "This is not a JARVIS pairing code.") }
+        }
+    }
+    fun acceptPairing() {
+        val scanned = qrOffer
+        if (scanned == null) { offer?.let { connect(it.url, it.token, it.certificateSha256) }; return }
+        if (mutable.value.busy) return
+        viewModelScope.launch {
+            mutable.update { it.copy(busy = true, notice = "") }
+            try {
+                val (saved, assigned) = QrPairing.exchange(scanned, deviceId, "Android ${Build.MODEL}")
+                qrOffer = null; deviceId = assigned; prefs.edit().putString("id", assigned).apply()
+                connect(saved.url, saved.token, null)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                mutable.update { it.copy(busy = false, notice = error.message ?: "Pairing failed. Try a new code.") }
+            }
+        }
+    }
     fun connect(url: String, token: String, pin: String? = null) {
         if (vault.read() != SavedConnection(url.trim().trimEnd('/'), token.trim(), pin)) stopAudio()
         api?.invalidate(); viewModelScope.coroutineContext.cancelChildren(); api = null; connection = null; preparationId = null
