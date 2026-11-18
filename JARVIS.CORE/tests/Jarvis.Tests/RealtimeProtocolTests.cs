@@ -128,6 +128,7 @@ public sealed partial class RealtimeProtocolTests
         private void Queue(object value, bool completesUsage = false) =>
             incoming.Writer.TryWrite((JsonSerializer.SerializeToUtf8Bytes(value), completesUsage));
         public void EmitAudioFrame() => Queue(new { type = "response.output_audio.delta", delta = "AAA=", item_id = "audio-test" });
+        public void SpeechStarted(string item) => Queue(new { type = "input_audio_buffer.speech_started", item_id = item, audio_start_ms = 0 });
         public void Transcript(string text, string item = "handoff-user") => Queue(new { type = "conversation.item.input_audio_transcription.completed",
             item_id = item, transcript = text });
         public void AssistantTranscript(string text) => Queue(new { type = "response.output_audio_transcript.done",
