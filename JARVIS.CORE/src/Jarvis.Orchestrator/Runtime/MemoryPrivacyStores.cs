@@ -12,6 +12,7 @@ public sealed class MemoryPrivacyBoundary
     public string? ErasureKeyFingerprint { get; set; }
     public Dictionary<Guid, PrivacyJob> Jobs { get; } = [];
     public Dictionary<Guid, DeviceGrant> DeviceGrants { get; internal set; } = [];
+    public Jarvis.Orchestrator.Travel.TravelState Travel { get; internal set; } = new();
     internal Dictionary<Guid, DeviceCommand> DeviceCommands { get; } = [];
     internal Dictionary<Guid, List<DeviceReceiptView>> DeviceReceipts { get; } = [];
     public Task<T> Run<T>(Func<Task<T>> operation)
@@ -126,7 +127,8 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
         lock(boundary.Sync)
         {
             RequireEpoch(); var snapshot = workflows.PrivacySnapshot();
-            return Task.FromResult(PrivacyData.Export(boundary.Status, State(), Sessions(), snapshot.Runs, snapshot.Events, boundary.Jobs.Values.ToList(), now));
+            return Task.FromResult(PrivacyData.Export(boundary.Status, State(), Sessions(), snapshot.Runs, snapshot.Events, boundary.Jobs.Values.ToList(), now) with {
+                TravelRoutes = boundary.Travel.Routes.Values.ToArray(), TravelLineStates = boundary.Travel.Lines.Values.ToArray() });
         }
     }
     public Task<IReadOnlyList<PrivacyJob>> JobsAsync(CancellationToken ct = default)
@@ -171,6 +173,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear(); deviceGrants.Clear();
             boundary.DeviceCommands.Clear();
             boundary.DeviceReceipts.Clear();
+            boundary.Travel = new();
             boundary.Status = new(boundary.Status.Epoch + 1, boundary.Status.Revision + 1, true, now, request.RequestId); boundary.ErasureKeyFingerprint = fingerprint;
             boundary.Jobs[request.RequestId] = new(request.RequestId, "erasure", PrivacyData.Hash("erasure:" + boundary.Status.Epoch), now, removed);
             return Task.FromResult(boundary.Status);

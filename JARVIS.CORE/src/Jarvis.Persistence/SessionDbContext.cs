@@ -15,6 +15,9 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<RuntimeAudioRow> RuntimeAudioState => Set<RuntimeAudioRow>();
     public DbSet<RuntimeVoiceTicketRow> RuntimeVoiceTickets => Set<RuntimeVoiceTicketRow>();
     public DbSet<RuntimeVoiceTurnRow> RuntimeVoiceTurns => Set<RuntimeVoiceTurnRow>();
+    public DbSet<TravelRouteRow> TravelRoutes => Set<TravelRouteRow>();
+    public DbSet<TravelLineStateRow> TravelLineStates => Set<TravelLineStateRow>();
+    public DbSet<TravelMonitorRow> TravelMonitorState => Set<TravelMonitorRow>();
     public DbSet<WorkflowRunRow> WorkflowRuns => Set<WorkflowRunRow>();
     public DbSet<WorkflowEventRow> WorkflowEvents => Set<WorkflowEventRow>();
     public DbSet<DomainDefinitionRow> DomainDefinitions => Set<DomainDefinitionRow>();
@@ -31,6 +34,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     {
         DomainModel.Configure(model);
         RuntimeHotModel.Configure(model);
+        TravelModel.Configure(model);
         model.Entity<PrivacyControlRow>(b => { b.HasKey(x => x.Id); b.HasData(new PrivacyControlRow()); });
         model.Entity<PrivacyJobRow>(b => { b.HasKey(x => x.Id); b.Property(x => x.CountsJson).HasColumnType("jsonb"); b.HasIndex(x => x.CompletedAt); });
         model.Entity<WorkflowRunRow>(b =>

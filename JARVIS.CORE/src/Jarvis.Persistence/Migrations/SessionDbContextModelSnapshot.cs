@@ -724,6 +724,64 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("Sessions", (string)null);
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.TravelLineStateRow", b =>
+                {
+                    b.Property<string>("LineId")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("LineId");
+
+                    b.ToTable("TravelLineStates", (string)null);
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.TravelMonitorRow", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("TravelMonitorState", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Json = "{}"
+                        });
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.TravelRouteRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NameKey")
+                        .IsUnique();
+
+                    b.ToTable("TravelRoutes", (string)null);
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.UserDomainStateRow", b =>
                 {
                     b.Property<string>("SubjectId")

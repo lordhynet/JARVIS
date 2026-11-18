@@ -138,7 +138,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             var local = TimeZoneInfo.ConvertTime(now, TrainingProjection.Zone(s.AgentControls.TimeZone)); var time = TimeOnly.FromDateTime(local.DateTime);
             var start = LocalTime(s.AgentControls.QuietStart); var end = LocalTime(s.AgentControls.QuietEnd);
             var quiet = start == end ? false : start < end ? time >= start && time < end : time >= start || time < end;
-            if (!quiet) foreach (var message in s.AgentOutbox.Values.Where(x => !x.Delivered && x.DeliverAfter <= now && x.ExpiresAt > now).ToList())
+            if (!quiet) foreach (var message in s.AgentOutbox.Values.Where(x => x.Category != NotificationCategories.Travel && !x.Delivered && x.DeliverAfter <= now && x.ExpiresAt > now).ToList())
                 s.AgentOutbox[message.Id] = message with { Delivered = true };
         }
         return count;

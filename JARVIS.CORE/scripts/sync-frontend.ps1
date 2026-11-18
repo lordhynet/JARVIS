@@ -1,7 +1,7 @@
 param([switch]$Check)
 $ErrorActionPreference = 'Stop'
 $coreRoot = Split-Path $PSScriptRoot -Parent
-foreach ($file in @('modules.js', 'live.js', 'voice-capture.js', 'intelligence.js', 'privacy.js', 'planning.js', 'imports.js', 'notifications.js', 'sw.js')) {
+foreach ($file in @('modules.js', 'live.js', 'voice-capture.js', 'intelligence.js', 'privacy.js', 'planning.js', 'imports.js', 'notifications.js', 'travel.js', 'sw.js')) {
 $source = Join-Path (Split-Path $coreRoot -Parent) ('JARVIS.FRONTEND/' + $file)
 $target = Join-Path $coreRoot ('src/Jarvis.Api/wwwroot/' + $file)
 if ($Check) {

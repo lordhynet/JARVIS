@@ -38,6 +38,11 @@ public static class CqrsRegistration
         Command<ReopenCore, PrivacyStatus, PrivacyCommands>(services);
         Command<ApplyRetention, PrivacyJob, PrivacyCommands>(services);
         services.AddSingleton<IRuntimeReader>(s => s.GetRequiredService<IRuntimeStore>());
+        services.AddSingleton<TravelQueries>(); services.AddSingleton<TravelCommands>();
+        Query<ListTravelRoutes, IReadOnlyList<TravelRoute>, TravelQueries>(services);
+        Query<GetTravelCatalogue, IReadOnlyList<TravelLine>, TravelQueries>(services);
+        Command<SaveTravelRoute, TravelRoute, TravelCommands>(services);
+        Command<DeleteTravelRoute, bool, TravelCommands>(services);
         services.AddSingleton<IWorkflowReader>(s => s.GetRequiredService<IWorkflowStore>());
         services.AddSingleton<WorkflowCommandHandlers>();
         services.AddSingleton<AgentCommandHandlers>();

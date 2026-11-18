@@ -22,7 +22,7 @@ public static class AgentEligibility
              s.AgentControls.PausedWorkflows?.Contains(t.Workflow) != true))) return true;
         if (!s.AgentControls.EffectiveAgentsPaused)
         {
-            if (!AgentRuntime.IsQuiet(s.AgentControls, now) && s.AgentOutbox.Values.Any(n => !n.Delivered && n.DeliverAfter <= now && n.ExpiresAt > now)) return true;
+            if (!AgentRuntime.IsQuiet(s.AgentControls, now) && s.AgentOutbox.Values.Any(n => n.Category != NotificationCategories.Travel && !n.Delivered && n.DeliverAfter <= now && n.ExpiresAt > now)) return true;
             foreach (var schedule in s.AgentSchedules.Values)
             {
                 if (!schedule.Enabled || !available.ContainsKey(schedule.Workflow) || s.AgentControls.PausedWorkflows?.Contains(schedule.Workflow) == true) continue;
