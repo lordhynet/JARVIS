@@ -210,5 +210,6 @@ public sealed partial class PostgresSessionTests
         var migratedGrant = (await host.Services.GetRequiredService<IDeviceGrantStore>().GetAsync(grantId))!;
         Assert.NotNull(migratedGrant.RevokedAt);
         Assert.False(migratedGrant.PreApproved);
+        Assert.False(migratedGrant.AllowWhenLocked);
     }
 }

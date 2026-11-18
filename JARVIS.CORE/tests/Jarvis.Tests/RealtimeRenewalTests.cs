@@ -18,7 +18,7 @@ namespace Jarvis.Tests;
 
 public sealed partial class RealtimeProtocolTests
 {
-    public enum RenewalAction { Stop, Continue, MoreContext, BudgetDenied, LeaseExpired }
+    public enum RenewalAction { Stop, Continue, MoreContext, BudgetDenied, LeaseExpired, GbpBudgetDenied }
 
     [Theory]
     [InlineData(30, 4)]
@@ -48,6 +48,7 @@ public sealed partial class RealtimeProtocolTests
     [InlineData(300, RenewalAction.Continue)]
     [InlineData(30, RenewalAction.MoreContext)]
     [InlineData(30, RenewalAction.BudgetDenied)]
+    [InlineData(30, RenewalAction.GbpBudgetDenied)]
     [InlineData(30, RenewalAction.LeaseExpired)]
     public async Task Voice_prepares_successor_in_background_and_dispatches_only_after_handoff(int windowSeconds, RenewalAction action)
     {
@@ -136,13 +137,18 @@ public sealed partial class RealtimeProtocolTests
         }
         if (action != RenewalAction.Stop)
         {
-            if (action is RenewalAction.MoreContext or RenewalAction.BudgetDenied)
+            if (action is RenewalAction.MoreContext or RenewalAction.BudgetDenied or RenewalAction.GbpBudgetDenied)
             {
                 var extra = Enumerable.Range(1, 28).Select(i => new ChatMessage(Guid.NewGuid(), ChatRoles.User,
                     $"Extra item {i:00}. " + new string('a', 500), now));
                 await sessions.UpdateAsync(id, current => current with { Messages = [.. current.Messages!, .. extra] }, ct);
                 if (action == RenewalAction.BudgetDenied)
                     host.Services.GetRequiredService<IConfiguration>()[ConfigKeys.DailyLimitUsd] = "0.001";
+                if (action == RenewalAction.GbpBudgetDenied) await runtime.UpdateAsync(s => {
+                    var id = Guid.NewGuid();
+                    s.GbpCommitments[id] = s.GbpCommitments.Values.First() with { ReservationId = id, ReservedGbp = 10m, AccountedGbp = 10m };
+                    return true;
+                }, ct);
             }
             const string latest = "This turn arrived after the next connection was prepared.";
             first.Transcript(latest);
@@ -150,10 +156,14 @@ public sealed partial class RealtimeProtocolTests
             expiry.Fire();
             Assert.Equal("window_renewing", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
             var nextReady = await RealtimeGateway.ReadAsync(socket, 4096, ct);
-            if (action == RenewalAction.BudgetDenied)
+            if (action is RenewalAction.BudgetDenied or RenewalAction.GbpBudgetDenied)
             {
                 Assert.Equal("error", nextReady.GetProperty("type").GetString());
                 Assert.Contains("budget exhausted", nextReady.GetProperty("detail").GetString()!);
+                if (action == RenewalAction.GbpBudgetDenied) {
+                    Assert.Equal(VoiceEndReasons.GbpBudgetCeiling, nextReady.GetProperty("code").GetString());
+                    Assert.Equal(VoiceEndReasons.GbpBudgetCeiling, (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("reason").GetString());
+                }
                 await AssertStoppedWithoutDispatchAsync();
                 return;
             }

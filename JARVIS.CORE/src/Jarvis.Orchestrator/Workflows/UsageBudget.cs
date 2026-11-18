@@ -52,10 +52,10 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
                 .Select(entry => s.GbpCommitments.GetValueOrDefault(entry.Id))
                 .Where(entry => entry is not null && entry.ScopeId == policy.ScopeId && entry.Environment == policy.Environment)
                 .Sum(entry => entry!.AccountedGbp ?? entry.ReservedGbp);
-            Guard.Require(seriousGbp + gbp <= limits.VoiceSeriousDailyGbp, 429, "Serious voice daily GBP cap reached.");
+            Guard.Require(seriousGbp + gbp <= limits.VoiceSeriousDailyGbp, 429, "Serious voice daily GBP cap reached.", VoiceEndReasons.SeriousDailyCap);
         }
         Guard.Require(GbpBudgetRules.Committed(s, policy, now) + gbp <= GbpBudgetRules.Ceiling(s, policy, now),
-            429, "GBP AI budget exhausted. A valid production approval is required above £100; £200 is the hard maximum.");
+            429, "GBP AI budget exhausted. A valid production approval is required above £100; £200 is the hard maximum.", VoiceEndReasons.GbpBudgetCeiling);
         decimal Cost(UsageReservation r) => r.ActualUsd ?? r.ReservedUsd;
         var month = s.UsageReservations.Values.Where(r => r.At.Year == now.Year && r.At.Month == now.Month).Sum(Cost);
         var day = s.UsageReservations.Values.Where(r => r.At.UtcDateTime.Date == now.UtcDateTime.Date).Sum(Cost);

@@ -14,8 +14,10 @@ public sealed class SensitiveVoiceHomeTests
 {
     private const string Executor = "sensitive-home-fixture";
 
-    [Fact]
-    public async Task Sensitive_voice_lock_stays_a_proposal_until_owner_confirms_its_exact_hash()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Sensitive_voice_lock_stays_a_proposal_until_owner_confirms_its_exact_hash(bool locked)
     {
         var posts = 0;
         using var host = new ProviderFactory(request =>
@@ -29,9 +31,12 @@ public sealed class SensitiveVoiceHomeTests
             return Task.FromResult(Reply(State("lock.front", posts == 0 ? "locked" : "unlocked",
                 """{"friendly_name":"Front door"}""")));
         });
-        var (_, secret) = await ConfigureAsync(host.Services, BuiltInDeviceCapabilities.HomeAssistantLockSet, "lock.front", "unlock");
+        var (_, secret) = await ConfigureAsync(host.Services, BuiltInDeviceCapabilities.HomeAssistantLockSet, "lock.front", "unlock", locked);
         using var owner = host.Client();
         var session = await LifeScenarioTests.Session(owner);
+        if (locked) await host.Services.GetRequiredService<IRuntimeStore>().UpdateAsync(s => {
+            s.AudioLease = new(session.Id, "locked-room", 1, DateTimeOffset.UtcNow.AddMinutes(1), Locked: true); return true;
+        });
         var source = await VoiceHomeTests.SayAsync(host.Services, session.Id, "unlock the front door");
         Guid id;
         using (CoreInvocationContext.Enter(InvocationOrigin.Voice))
@@ -138,7 +143,7 @@ public sealed class SensitiveVoiceHomeTests
             receipt => Assert.DoesNotContain(fixtureCode, receipt.PayloadJson));
     }
 
-    private static async Task<(Guid Id, string Secret)> ConfigureAsync(IServiceProvider services, string capability, string entity, string action)
+    private static async Task<(Guid Id, string Secret)> ConfigureAsync(IServiceProvider services, string capability, string entity, string action, bool locked = false)
     {
         var (_, secret) = await DeviceCommandTests.SetupAsync(services, Executor);
         var config = services.GetRequiredService<IConfiguration>();
@@ -149,6 +154,7 @@ public sealed class SensitiveVoiceHomeTests
         var grant = DeviceGrantTests.GrantRequest() with
         {
             CapabilityId = capability,
+            AllowWhenLocked = locked,
             ConstraintsJson = JsonSerializer.Serialize(new { allowedEntityIds = new[] { entity }, allowedActions = new[] { action } })
         };
         var actor = new BudgetActor("fixture-owner", [DeviceGrantService.ManageScope]);

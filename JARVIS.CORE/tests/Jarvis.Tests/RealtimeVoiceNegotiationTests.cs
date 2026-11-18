@@ -213,7 +213,8 @@ public sealed partial class RealtimeProtocolTests
         }
         else
         {
-            Assert.Equal("voice_mode_declined", (await ReadFrameAsync(socket, "ended", ct)).GetProperty("reason").GetString());
+            Assert.Equal(seriousDisabled ? "voice_mode_declined" : VoiceEndReasons.SeriousDailyCap,
+                (await ReadFrameAsync(socket, "ended", ct)).GetProperty("reason").GetString());
             Assert.Empty(providers.Models);
             Assert.False(await runtime.ReadAsync(state => state.VoiceTurns.ContainsKey(captureId), ct));
         }

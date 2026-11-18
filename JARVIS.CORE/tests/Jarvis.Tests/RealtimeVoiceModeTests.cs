@@ -98,8 +98,9 @@ public sealed partial class RealtimeProtocolTests
         if (capReached)
         {
             var error = await Read("error");
-            Assert.Equal("serious_voice_unavailable", error.GetProperty("code").GetString());
+            Assert.Equal(VoiceEndReasons.SeriousDailyCap, error.GetProperty("code").GetString());
             Assert.Contains("daily GBP cap reached", error.GetProperty("detail").GetString()!);
+            Assert.Equal(VoiceEndReasons.SeriousDailyCap, (await Read("ended")).GetProperty("reason").GetString());
             Assert.Equal(WebSocketMessageType.Close, (await socket.ReceiveAsync(new ArraySegment<byte>(new byte[128]), ct)).MessageType);
             Assert.Equal(2, providers.Models.Count);
             Assert.Null(await runtime.ReadAudioLeaseAsync(ct));

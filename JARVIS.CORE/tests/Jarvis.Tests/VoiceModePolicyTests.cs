@@ -97,6 +97,7 @@ public sealed class VoiceModePolicyTests
             ledger.ReserveAsync(Guid.NewGuid(), session, route, VoiceMode.Serious, .01m, limits, default));
         Assert.Equal(429, error.StatusCode);
         Assert.Contains("Serious voice daily GBP cap reached", error.Message);
+        Assert.Equal(VoiceEndReasons.SeriousDailyCap, error.Code);
         var everyday = await ledger.ReserveAsync(Guid.NewGuid(), session,
             route with { Model = ConfigKeys.EverydayRealtimeModel, Profile = "Voice:Everyday" }, VoiceMode.Everyday, .30m, limits, default);
         Assert.Equal(VoiceMode.Everyday, everyday.VoiceMode);

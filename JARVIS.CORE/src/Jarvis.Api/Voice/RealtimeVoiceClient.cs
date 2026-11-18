@@ -11,11 +11,14 @@ internal sealed class RealtimeVoiceClient(WebSocket socket, CancellationToken di
 {
     private Task<JsonElement>? pending;
     private int stopRequested;
+    private int lockInterrupted;
     private VoiceStreamMode? modeSelection;
 
     public WebSocketState State => socket.State;
     public bool StopRequested => Volatile.Read(ref stopRequested) != 0;
     public void RecordStop() => Volatile.Write(ref stopRequested, 1);
+    public bool LockInterrupted => Volatile.Read(ref lockInterrupted) != 0;
+    public void RecordLockInterrupt() => Volatile.Write(ref lockInterrupted, 1);
     public VoiceStreamMode? ModeSelection
     {
         get => Volatile.Read(ref modeSelection);

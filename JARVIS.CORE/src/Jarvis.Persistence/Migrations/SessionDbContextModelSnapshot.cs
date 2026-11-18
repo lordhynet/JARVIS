@@ -147,6 +147,9 @@ namespace Jarvis.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("AllowWhenLocked")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("CapabilityId")
                         .IsRequired()
                         .HasMaxLength(100)

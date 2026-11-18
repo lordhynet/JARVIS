@@ -31,7 +31,9 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
             await RequireClaimAsync(writes, request.SessionId, request.DeviceId);
             var now = clock.GetUtcNow();
             var s = writes.Runtime;
-            var lease = StartLease(s, request.SessionId, request.DeviceId, now);
+            var lease = StartLease(s, request.SessionId, request.DeviceId, now) with {
+                Locked = VoiceAccessRules.ReportedState(s, request.DeviceId, request.Locked), ReportedLocked = request.Locked };
+            s.AudioLease = lease;
             var ticket = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             var hash = Hash(ticket);
             foreach (var key in s.VoiceTickets.Where(x => x.Value.ExpiresAt <= now).Select(x => x.Key).ToList()) s.VoiceTickets.Remove(key);
@@ -69,7 +71,7 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
             Require(s, entry.Lease); return entry;
         }, ct);
     }
-    public Task<AudioLease> RenewAsync(AudioLease lease, CancellationToken ct) =>
+    public Task<AudioLease> RenewAsync(AudioLease lease, CancellationToken ct, bool? locked = null) =>
         transaction.ExecuteAsync(async writes =>
         {
             if (lease.SessionId != Guid.Empty)
@@ -79,8 +81,20 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
                     409, "Session audio ownership changed.");
             }
             var s = writes.Runtime;
-            Require(s, lease); var updated = lease with { ExpiresAt = clock.GetUtcNow().AddSeconds(15) }; s.AudioLease = updated; return updated;
+            Require(s, lease);
+            var current = s.AudioLease!;
+            var updated = current with { ExpiresAt = clock.GetUtcNow().AddSeconds(15),
+                Locked = current.Locked || VoiceAccessRules.ReportedState(s, lease.DeviceId, locked), ReportedLocked = locked };
+            s.AudioLease = updated; return updated;
         }, ct);
+
+    // Only Core activates a window. An unlock report cannot relax the active window.
+    public Task<AudioLease> ActivateVoiceWindowAsync(AudioLease lease, CancellationToken ct) => store.UpdateAsync(s => {
+        Require(s, lease);
+        var current = s.AudioLease!;
+        var active = current with { Locked = VoiceAccessRules.ReportedState(s, current.DeviceId, current.ReportedLocked) };
+        s.AudioLease = active; return active;
+    }, ct);
     public async Task<bool> CurrentAsync(AudioLease lease, CancellationToken ct) =>
         await ReadCurrentAsync(lease, ct) is not null;
 
