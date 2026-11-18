@@ -68,16 +68,22 @@ public sealed class DeviceCapabilityCatalog : IDeviceCapabilityCatalog
         ? descriptor.Descriptor : throw new DomainException(404, "Device capability version is not installed.");
 
     public bool HasValidConstraints(string id, string version, string? constraintsJson) =>
-        TryReadAllowlist(id, version, constraintsJson, out _, out _, out _);
+        WindowsDeviceCapabilities.Installed(id, version)
+            ? entries.TryGetValue((id, version), out var windows) && DeviceJsonSchema.TryReadObject(constraintsJson, 8000, out var scope) &&
+                DeviceJsonSchema.Accepts(windows.Constraints, scope) && WindowsDeviceCapabilities.Constraints(id, version, constraintsJson)
+            : TryReadAllowlist(id, version, constraintsJson, out _, out _, out _);
 
     public bool AcceptsReceipt(string id, string version, DeviceReceiptKind kind, string? payloadJson) =>
         entries.TryGetValue((id, version), out var entry) &&
         DeviceJsonSchema.TryReadObject(payloadJson, 8_000, out var payload) && DeviceJsonSchema.Accepts(entry.Receipt, payload) &&
-        (!BuiltInDeviceCapabilities.IsHomeAssistant(id, version) ||
+        (!(BuiltInDeviceCapabilities.IsHomeAssistant(id, version) || WindowsDeviceCapabilities.Installed(id, version)) ||
             payload.TryGetProperty("accepted", out var accepted) &&
             accepted.ValueKind == (kind == DeviceReceiptKind.Failed ? JsonValueKind.False : JsonValueKind.True));
 
     public bool Permits(string id, string version, string? constraintsJson, string? argumentsJson) =>
+        WindowsDeviceCapabilities.Installed(id, version) ? entries.TryGetValue((id, version), out var windows) &&
+            DeviceJsonSchema.TryReadObject(argumentsJson, 8000, out var parameters) && DeviceJsonSchema.Accepts(windows.Arguments, parameters) &&
+            HasValidConstraints(id, version, constraintsJson) && WindowsDeviceCapabilities.Permits(id, version, constraintsJson, argumentsJson) :
         TryReadAllowlist(id, version, constraintsJson, out var entry, out var allowed, out var constraints) &&
         DeviceJsonSchema.TryReadObject(argumentsJson, 8_000, out var arguments) &&
         DeviceJsonSchema.Accepts(entry!.Arguments, arguments) &&

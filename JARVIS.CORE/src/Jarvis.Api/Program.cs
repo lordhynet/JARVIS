@@ -187,7 +187,7 @@ builder.Services.AddSingleton<DeviceGrantService>();
 builder.Services.AddSingleton<DeviceCommandService>();
 builder.Services.AddSingleton<DeviceReceiptService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Runtime.IDeviceCapabilityCatalog>(
-    _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All));
+    _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCapabilities.All)));
 builder.Services.AddSingleton<OwnerAuthorization>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IWorkflowCatalog, Jarvis.Orchestrator.Domains.WorkflowCatalog>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(s => new Jarvis.Orchestrator.Domains.CapabilityCatalog(
@@ -202,7 +202,7 @@ builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentReasoningTool(s.G
 builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentReasoningTool(s.GetRequiredService<TextReasoningService>(), true));
 builder.Services.AddSingleton<AgentToolGateway>();
 builder.Services.AddSingleton<AgentActionService>();
-foreach (var capability in BuiltInDeviceCapabilities.All) {
+foreach (var capability in BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCapabilities.All)) {
     var id = capability.Id;
     builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentDeviceTool(id, s.GetRequiredService<IRuntimeStore>(),
         s.GetRequiredService<IDeviceGrantStore>(), s.GetRequiredService<IDeviceCapabilityCatalog>(), s.GetRequiredService<DeviceCommandService>(), s.GetRequiredService<TimeProvider>()));
@@ -213,6 +213,7 @@ builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis
 builder.Services.AddSingleton<HubTickets>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Coaching.VoiceCoachingService>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreVoiceTools>();
+builder.Services.AddSingleton<Jarvis.Api.Voice.CoreWindowsVoiceTool>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreHomeVoiceTool>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.IRealtimeConnectionFactory, Jarvis.Api.Voice.RealtimeConnectionFactory>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.RealtimeGateway>();

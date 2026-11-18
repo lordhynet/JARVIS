@@ -44,6 +44,7 @@ public sealed class RuntimeState
     public Dictionary<Guid, AgentToolInvocation> AgentToolInvocations { get; set; } = [];
     public Dictionary<Guid, AgentActionProposal> AgentActions { get; set; } = [];
     public Dictionary<Guid, AgentVoiceReview> AgentVoiceReviews { get; set; } = [];
+    public Dictionary<Guid, DeviceVoiceAuthority> DeviceVoiceAuthorities { get; set; } = [];
     public Dictionary<Guid, AgentNotification> AgentOutbox { get; set; } = [];
     public Dictionary<Guid, AiCoachAssessment> AiCoachAssessments { get; set; } = [];
     public Dictionary<Guid, AiCoachAssessmentClaim> AiCoachAssessmentClaims { get; set; } = [];

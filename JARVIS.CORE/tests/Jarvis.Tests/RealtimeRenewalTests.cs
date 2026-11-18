@@ -60,6 +60,9 @@ public sealed partial class RealtimeProtocolTests
         using var host = root.WithWebHostBuilder(builder =>
         {
             builder.UseSetting(ConfigKeys.VoiceWindowSeconds, windowSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            // This positive-flow fixture needs room for overlapping five-minute reservations,
+            // including the growing installed tool schemas. Budget-denial cases override it below.
+            builder.UseSetting(ConfigKeys.DailyLimitUsd, "3");
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<TimeProvider>(clock);

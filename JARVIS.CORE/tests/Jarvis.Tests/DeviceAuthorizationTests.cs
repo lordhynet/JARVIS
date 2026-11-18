@@ -86,7 +86,8 @@ public sealed class DeviceAuthorizationTests
     {
         using var host = new JarvisApiFactory(); var issued = await Enrol(host); using var phone = Companion(host, issued);
         var descriptors = await phone.GetFromJsonAsync<DeviceCapabilityDescriptor[]>("/api/device-capabilities", LifeScenarioTests.Json);
-        Assert.Equal(7, descriptors!.Length);
+        Assert.Equal(14, descriptors!.Length);
+        Assert.All(WindowsDeviceCapabilities.All, installed => Assert.Contains(descriptors, descriptor => descriptor.Id == installed.Id && descriptor.Version == installed.Version));
         var descriptor = Assert.Single(descriptors, x => x.Id == BuiltInDeviceCapabilities.HomeAssistantTurn);
         Assert.Equal("homeassistant.turn", descriptor.Id);
         Assert.Equal("1.0.0", descriptor.Version);

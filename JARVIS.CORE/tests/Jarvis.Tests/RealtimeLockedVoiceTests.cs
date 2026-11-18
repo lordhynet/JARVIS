@@ -26,7 +26,8 @@ public sealed partial class RealtimeProtocolTests
         using var socket = await host.Server.CreateWebSocketClient().ConnectAsync(new("ws://localhost/voice-stream"), ct);
         await Send(socket, new { type = "authenticate", ticket = ticket.Ticket, continuous = true }, ct);
         Assert.Same(first, await providers.Connected.Reader.ReadAsync(ct));
-        Assert.Equal("ready", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
+        var initial = await RealtimeGateway.ReadAsync(socket, 4096, ct);
+        Assert.Equal("ready", initial.GetProperty("type").GetString()); Assert.True(initial.GetProperty("locked").GetBoolean());
         first.Transcript("LOCKED_INJECTION_MARKER", "locked-untrusted-turn");
         first.AssistantTranscript("LOCKED_REPLY_MARKER");
         var runtime = host.Services.GetRequiredService<IRuntimeStore>();
@@ -39,6 +40,7 @@ public sealed partial class RealtimeProtocolTests
         expiry.Fire();
         Assert.Equal("window_renewing", (await RealtimeGateway.ReadAsync(socket, 4096, ct)).GetProperty("type").GetString());
         var ready = await RealtimeGateway.ReadAsync(socket, 4096, ct); Assert.Equal(2, ready.GetProperty("window").GetInt32());
+        Assert.False(ready.GetProperty("locked").GetBoolean());
         Assert.False((await runtime.ReadAsync(s => s.AudioLease))!.Locked);
         var prompt = Assert.Single(second.Sent).GetProperty("session").GetProperty("instructions").GetString()!;
         Assert.Contains("Private task marker", prompt); Assert.Contains("Private conversation marker", prompt);
@@ -73,7 +75,7 @@ public sealed partial class RealtimeProtocolTests
         Assert.DoesNotContain("Private conversation marker", prompt); Assert.DoesNotContain("Private task marker", prompt);
         Assert.DoesNotContain("Private persona marker", prompt); Assert.DoesNotContain("Private learning", prompt);
         Assert.Contains("device is locked", prompt);
-        Assert.Equal(CoreHomeVoiceTool.Name, Assert.Single(setup.GetProperty("tools").EnumerateArray()).GetProperty("name").GetString());
+        Assert.Equal(new[] { CoreHomeVoiceTool.Name, CoreWindowsVoiceTool.Name }, setup.GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()).Order().ToArray());
         await Send(socket, new { type = "stop" }, timeout.Token);
         Assert.Equal("ended", (await RealtimeGateway.ReadAsync(socket, 4096, timeout.Token)).GetProperty("type").GetString());
     }

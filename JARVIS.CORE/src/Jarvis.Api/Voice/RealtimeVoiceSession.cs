@@ -114,7 +114,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
             sessionId = lease.SessionId;
             recommendedMode = VoiceMode.Everyday;
             return RealtimeVoicePrompt.Build(RealtimeVoicePrompt.DefaultPersona, "{}", "{}", continuing: true) +
-                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information and explicitly permitted home grants. Never reveal saved private information.";
+                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information, explicitly permitted home grants, and granted laptop media or lock controls. Never reveal saved private information or app/folder aliases.";
         }
         var session = await sessions.GetAsync(lease.SessionId, ct);
         Guard.Require(session is not null, 404, "Session not found.");
@@ -135,7 +135,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
             s.TrainingDrills.Values.Where(item => item.SessionId == session.Id && item.Status == "Active")
                 .OrderByDescending(item => item.CreatedAt).ThenBy(item => item.Id).FirstOrDefault()?.Mode), ct);
         recommendedMode = VoiceModePolicy.Recommend(session.Activity, drill);
-        return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1);
+        return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1 || client.LocalGreeting);
     }
 
     private VoiceStreamMode? ReadMode()
@@ -399,8 +399,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         MarkReady();
         await SendClientAsync(new { type = "ready", fence = lease.Fence, leaseSeconds = 15, windowSeconds = window.Seconds,
             window = number, sampleRate = VoiceWindowLimits.SampleRate, voiceName = voiceOutput.Name, speed = voiceOutput.Speed,
-            mode = SelectedMode(preparedMode).ToString(), model, recommendedMode = recommendedMode.ToString() });
-        if (number == 1 && requested == 0) { requested++; await SendProviderAsync(new { type = "response.create" }, requireAudio: true); }
+            mode = SelectedMode(preparedMode).ToString(), model, recommendedMode = recommendedMode.ToString(), locked = windowLocked });
+        if (number == 1 && requested == 0 && !client.LocalGreeting) { requested++; await SendProviderAsync(new { type = "response.create" }, requireAudio: true); }
     }
 
     private async Task HandleResponseCreatedAsync(JsonElement message)

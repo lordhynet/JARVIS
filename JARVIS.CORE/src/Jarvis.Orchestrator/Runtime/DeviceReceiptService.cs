@@ -44,7 +44,7 @@ public interface IDeviceReceiptReader
     Task<IReadOnlyList<DeviceReceiptView>> ListAsync(Guid commandId, CancellationToken ct = default);
 }
 
-public sealed class DeviceReceiptService(IDeviceCapabilityCatalog capabilities, ICoreTransaction transaction, TimeProvider clock)
+public sealed class DeviceReceiptService(IDeviceCapabilityCatalog capabilities, ICoreTransaction transaction, TimeProvider clock, DeviceCommandService? commandPolicy = null)
 {
     public Task<DeviceReceiptView> RecordAsync(VerifiedDeviceReceipt receipt, CancellationToken ct = default)
     {
@@ -59,6 +59,9 @@ public sealed class DeviceReceiptService(IDeviceCapabilityCatalog capabilities, 
                 404, "Device command was not found.");
             Guard.Require(command.DispatchedAt is not null && command.DispatchRequestId == request.DispatchRequestId,
                 409, "Receipt does not match a dispatch for this command.");
+            if (WindowsDeviceCapabilities.Installed(command.CapabilityId, command.CapabilityVersion) && request.Kind == DeviceReceiptKind.Acknowledged)
+                Guard.Require(commandPolicy is not null && await commandPolicy.ReadDeliveryCapabilityAsync(writes, command) is not null,
+                    403, "Windows execution acknowledgement requires a current command and grant.");
 
             var previous = await writes.ReadDeviceReceiptsAsync(command.Id);
             var replay = previous.SingleOrDefault(x => x.Id == request.RequestId);

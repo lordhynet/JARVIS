@@ -27,6 +27,7 @@ data class AiCapabilityStatus(
     val ready: Boolean = false,
     val model: String = "",
     val detail: String = "",
+    val voiceProtocolVersion: Int = 0,
 )
 
 data class AudioLease(
@@ -70,6 +71,7 @@ data class DeviceRegistration(
 data class DeviceView(
     val device: RegisteredDevice = RegisteredDevice(),
     val online: Boolean = false,
+    val ownerDisplayName: String = "",
 )
 
 data class PrivacyStatus(

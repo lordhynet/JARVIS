@@ -11,8 +11,10 @@ public static class DeviceEndpoints
     public static void MapDeviceEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup(CoreRoutes.Devices).WithTags("Devices").RequireAuthorization(CorePolicies.OwnerOrCompanion);
-        group.MapGet("/", async (HttpContext context, IQueryHandler<ListDevices, IReadOnlyList<DeviceView>> handler, CancellationToken ct) => {
+        group.MapGet("/", async (HttpContext context, IConfiguration config, IQueryHandler<ListDevices, IReadOnlyList<DeviceView>> handler, CancellationToken ct) => {
             var devices = await handler.HandleAsync(new ListDevices(), ct);
+            var displayName = OwnerDisplayName.Read(config);
+            devices = devices.Select(d => d with { OwnerDisplayName = displayName }).ToArray();
             return context.Items[ApiKeyMiddleware.ActorItem] is CoreActor { DeviceId: { } id }
                 ? devices.Where(d => d.Device.Registration.DeviceId == id).ToArray() : devices;
         });

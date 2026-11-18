@@ -30,7 +30,7 @@ public sealed class AgentSpecialistCatalog
     {
         entries = (installed ?? Enum.GetValues<AgentRole>().Select(role => new AgentSpecialistDescriptor(role,
             [AgentCapabilityIds.Template, role == AgentRole.Research ? AgentCapabilityIds.Research : AgentCapabilityIds.Reasoning,
-                ..(role is AgentRole.PersonalPlanner or AgentRole.CareerPlanner ? BuiltInDeviceCapabilities.All.Select(c => c.Id) : [])],
+                ..(role is AgentRole.PersonalPlanner or AgentRole.CareerPlanner ? BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCapabilities.All).Select(c => c.Id) : [])],
             role == AgentRole.Research ? AgentCapabilityIds.ResearchProfile : AgentCapabilityIds.AgentProfile,
             [ReasoningDataClass.Public, ReasoningDataClass.Personal], AgentCapabilityIds.SpecialistInputSchema, AgentCapabilityIds.TemplateSchema)))
             .Select(Freeze).ToDictionary(x => x.Role);

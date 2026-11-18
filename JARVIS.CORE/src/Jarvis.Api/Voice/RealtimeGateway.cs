@@ -42,10 +42,11 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         {
             using var authentication = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
             authentication.CancelAfter(TimeSpan.FromSeconds(8));
-            var (ticket, continuous, startEveryday, negotiateMode) = await AuthenticateAsync(socket, ownership, authentication.Token);
+            var (ticket, continuous, startEveryday, negotiateMode, localGreeting) = await AuthenticateAsync(socket, ownership, authentication.Token);
             lease = ticket.Lease;
             Guard.Require(limits.AdmitVoiceStream(lease.DeviceId), 429, "Too many voice connections for this device.");
             if (startEveryday) client.ModeSelection = new(VoiceMode.Everyday);
+            client.LocalGreeting = localGreeting;
             var window = new VoiceWindowLimits(ticket.WindowSeconds);
             var negotiation = new RealtimeVoiceNegotiation(client, lease, ownership, runtime, transcription, transcripts, clock);
             RealtimeVoiceSession CreateWindow(int number) => new(client, ticket.Lease, window, number, continuous, negotiateMode,
@@ -128,7 +129,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         }
     }
 
-    private static async Task<(VoiceTicketRecord Ticket, bool Continuous, bool StartEveryday, bool NegotiateMode)> AuthenticateAsync(
+    private static async Task<(VoiceTicketRecord Ticket, bool Continuous, bool StartEveryday, bool NegotiateMode, bool LocalGreeting)> AuthenticateAsync(
         WebSocket client, AudioOwnership ownership, CancellationToken ct)
     {
         var first = await ReadAsync(client, 2048, ct);
@@ -140,7 +141,8 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
         var continuous = first.TryGetProperty("continuous", out var renewal) && renewal.ValueKind == JsonValueKind.True;
         return (ticket, continuous,
             first.TryGetProperty("startEveryday", out var everyday) && everyday.ValueKind == JsonValueKind.True,
-            continuous && first.TryGetProperty("voiceModeNegotiation", out var negotiation) && negotiation.ValueKind == JsonValueKind.True);
+            continuous && first.TryGetProperty("voiceModeNegotiation", out var negotiation) && negotiation.ValueKind == JsonValueKind.True,
+            first.TryGetProperty("localGreeting", out var greeting) && greeting.ValueKind == JsonValueKind.True);
     }
 
     public static async Task<JsonElement> ReadAsync(WebSocket socket, int maximum, CancellationToken ct)
