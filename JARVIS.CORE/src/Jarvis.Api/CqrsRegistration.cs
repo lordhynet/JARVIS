@@ -80,6 +80,9 @@ public static class CqrsRegistration
         Query<GetProgramme, ProgrammeView, CoachingQueryHandlers>(services);
         Query<GetSessionReview, SessionReview, CoachingQueryHandlers>(services);
         Query<GetSpeechDelivery, IReadOnlyList<SpeechDeliverySession>, CoachingQueryHandlers>(services);
+        services.AddSingleton<ScenarioQueries>();
+        Query<ListCoachingScenarios, IReadOnlyList<ScenarioAvailability>, ScenarioQueries>(services);
+        Query<GetScenarioDebriefs, IReadOnlyList<CoachingScenarioDebrief>, ScenarioQueries>(services);
         services.AddSingleton<TrainingCommandHandlers>();
         services.AddSingleton<TrainingQueryHandlers>();
         Command<SubmitTraining, TrainingAttempt, TrainingCommandHandlers>(services);

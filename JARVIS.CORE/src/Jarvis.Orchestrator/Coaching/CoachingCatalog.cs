@@ -34,12 +34,12 @@ public static class CoachingCatalog
         I("payments", "Payments/fintech", "A provider request times out after dispatch. Explain safe handling of an unknown outcome, retries, reconciliation and customer-visible state.", 90),
         I("phone-screen", "Mock phone screen", "Introduce your role, explain one concrete service you owned and answer a follow-up without relying on diagrams.", 90, true),
         I("interview-debrief", "Interview debrief", "Record the questions you remember, what you said, where you hesitated and which facts or topics need verification.", 180)
-    });
+    }.Concat(CoachingScenarios.Exercises.Where(e => CoachingScenarios.Contains(e.Id))).ToArray());
     private static CoachingExercise C(string id, string title, string prompt, int seconds) => new(id, 1, CoachingArea.Communication,
         title, prompt, ["Pause", "Point", "One supporting detail", "Stop"], ["Can you put the point in your first sentence?", "What can you remove without losing meaning?"], seconds);
     private static CoachingExercise I(string id, string title, string prompt, int seconds, bool story = false, bool claim = false) =>
         new(id, 1, CoachingArea.Interview, title, prompt, StoryFrame, ["What did you personally own?", "Which alternative did you reject and why?", "What evidence supports the outcome?"], seconds, story, claim);
-    public static CoachingExercise Get(string id) => Exercises.FirstOrDefault(x => x.Id == id) ?? throw new DomainException(404, "Coaching exercise not found.");
+    public static CoachingExercise Get(string id) => Exercises.FirstOrDefault(x => x.Id == id) ?? CoachingScenarios.Exercises.FirstOrDefault(x => x.Id == id) ?? throw new DomainException(404, "Coaching exercise not found.");
 
     public static IReadOnlyList<ProgrammeWeek> Weeks { get; } = Enumerable.Range(1, 12).Select(n => new ProgrammeWeek(n,
         n <= 2 ? "Structure, pace and pauses" : n <= 4 ? "Real stories and personal ownership" : n <= 6 ? "CV defence and technical depth" : n <= 8 ? "Architecture and trade-offs" : n <= 10 ? "Full mock interview practice" : "Pressure, ambiguity and recovery",

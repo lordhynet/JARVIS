@@ -461,7 +461,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
             else
             {
                 toolCalls++;
-                result = await tools.ExecuteAsync(name, args, sessionId, utterances, timeout.Token, latestUtterance, CurrentAudioAsync);
+                result = await tools.ExecuteAsync(name, args, sessionId, utterances, timeout.Token, latestUtterance, CurrentAudioAsync, SelectedMode(preparedMode));
                 toolResults[callId] = (fingerprint, result);
             }
             await SendProviderAsync(new { type = "conversation.item.create", item = new { type = "function_call_output", call_id = callId, output = result } });

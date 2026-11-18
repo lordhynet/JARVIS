@@ -116,7 +116,8 @@ public static class PrivacyData
             x.AttemptId is Guid attempt && selection.Coaching.Contains(attempt) ||
             x.CreatedAt < at.AddDays(-p.VoiceDays) || voiceIds.Contains(x.StartUtteranceId) ||
             x.AnswerUtteranceId is Guid utterance && voiceIds.Contains(utterance) ||
-            x.CorrectionStartUtteranceId is Guid correction && voiceIds.Contains(correction)).ToList()) state.VoiceCoachings.Remove(coaching.Id);
+            x.CorrectionStartUtteranceId is Guid correction && voiceIds.Contains(correction) ||
+            (x.ScenarioAnswers ?? []).Any(voiceIds.Contains) || (x.ScenarioAttempts ?? []).Any(selection.Coaching.Contains)).ToList()) state.VoiceCoachings.Remove(coaching.Id);
         foreach (var id in selection.Memories) { AgentRuntime.InvalidateSource(state, "memory", id); state.ContextMemories.Remove(id); }
         foreach (var id in voiceIds) { AgentRuntime.InvalidateSource(state, "voice", id); state.VoiceTurns.Remove(id); }
         foreach (var id in selection.Providers) {

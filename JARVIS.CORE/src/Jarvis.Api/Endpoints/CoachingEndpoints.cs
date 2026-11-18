@@ -13,6 +13,8 @@ public static class CoachingEndpoints
         var group = app.MapGroup("/api/coaching").WithTags("Coaching").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
         group.MapGet("/exercises", () => CoachingCatalog.Exercises);
         group.MapGet("/delivery", (Guid? sessionId, IQueryHandler<GetSpeechDelivery, IReadOnlyList<SpeechDeliverySession>> handler, CancellationToken ct) => handler.HandleAsync(new(sessionId), ct));
+        group.MapGet("/scenarios", (IQueryHandler<ListCoachingScenarios, IReadOnlyList<ScenarioAvailability>> handler, CancellationToken ct) => handler.HandleAsync(new(), ct));
+        group.MapGet("/sessions/{id:guid}/scenario-debriefs", (Guid id, IQueryHandler<GetScenarioDebriefs, IReadOnlyList<CoachingScenarioDebrief>> handler, CancellationToken ct) => handler.HandleAsync(new(id), ct));
         group.MapGet("/ai-status", (Jarvis.Api.Integrations.ManagedAi ai) => ai.Status("Coach"));
         group.MapPost("/attempts/{id:guid}/ai-assessments", (Guid id, AiAssessmentRequest request, ICommandHandler<RequestCoachingAiAssessment, CoachingAttemptView> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct)).RequireRateLimiting("cloud");
         app.MapPost("/api/training/attempts/{id:guid}/ai-assessments", (Guid id, AiAssessmentRequest request, ICommandHandler<RequestTechnicalAiAssessment, TrainingAttempt> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct)).RequireRateLimiting("cloud").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
