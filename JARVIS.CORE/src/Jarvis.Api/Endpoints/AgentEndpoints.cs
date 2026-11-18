@@ -11,6 +11,10 @@ public static class AgentEndpoints
     public static void MapAgentEndpoints(this WebApplication app)
     {
         var api = app.MapGroup("/api").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
+        app.MapPost(CoreRoutes.IntelligenceEvaluations, (Jarvis.Orchestrator.Intelligence.RunIntelligenceEvaluationRequest request, HttpContext context,
+            Jarvis.Api.Security.OwnerAuthorization owner, ICommandHandler<RunIntelligenceEvaluation, Jarvis.Orchestrator.Intelligence.IntelligenceEvaluationReport> handler, CancellationToken ct) =>
+            handler.HandleAsync(new(request, owner.Require(context, Jarvis.Orchestrator.Intelligence.IntelligenceEvaluation.ManageScope)), ct))
+            .RequireAuthorization(Jarvis.Api.Security.CorePolicies.IntelligenceEvaluate);
         api.MapPost("/agents/calendar/sync", (CalendarTriggerSync sync, CancellationToken ct) => sync.SyncAsync(ct));
         api.MapGet("/goals", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.Goals.Values.Where(g => g.Status != GoalStatus.Deleted).OrderBy(g => g.NextReviewAt).ToList(), ct));
         api.MapPost("/goals", (SaveGoalRequest request, ICommandHandler<SaveAgentGoal, PersonalGoal> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));

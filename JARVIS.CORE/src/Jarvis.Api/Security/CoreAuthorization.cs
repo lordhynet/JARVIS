@@ -21,6 +21,7 @@ public static class CorePolicies
     public const string DeviceCommandConfirm = "CoreOwnerStepUp:" + DeviceCommandService.ConfirmScope;
     public const string ToolConfirm = "CoreOwnerStepUp:" + ToolService.ConfirmScope;
     public const string DomainManage = "CoreOwnerStepUp:domain.manage";
+    public const string IntelligenceEvaluate = "CoreOwnerStepUp:" + Jarvis.Orchestrator.Intelligence.IntelligenceEvaluation.ManageScope;
     public const string BudgetManage = "CoreOwnerStepUp:budget.manage";
 }
 

@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Jarvis.Contracts\Jarvis.Contracts.csproj" />
+    <EmbeddedResource Include="../../evals/offline-v1.json" LogicalName="Jarvis.Intelligence.offline-v1.json" />
   </ItemGroup>
 
 </Project>

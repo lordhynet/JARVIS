@@ -161,6 +161,7 @@ builder.Services.AddSingleton<BudgetManagementAuthorization>();
 builder.Services.AddSingleton<ManagedAi>();
 builder.Services.AddSingleton<RateCard>();
 builder.Services.AddSingleton<TextReasoningService>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.IIntelligenceEvaluator, IntelligenceEvaluator>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.ITextReasoningProvider>(s => s.GetRequiredService<TextReasoningService>());
 builder.Services.AddSingleton<ITextReasoningAdapter, OpenAiResponsesAdapter>();
 builder.Services.AddSingleton<ITextReasoningAdapter, AnthropicMessagesAdapter>();

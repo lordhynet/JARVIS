@@ -75,6 +75,7 @@ public sealed class CqrsArchitectureTests
         var rules = new[]
         {
             "path === '/privacy/export'", "['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply']",
+            "path === '/intelligence/evaluations'",
             "/^\\/devices\\/[^/]+\\/(verify|credential)$/", "/^\\/devices\\/[^/]+\\/grants$/",
             "/^\\/device-grants(?:\\/[^/]+)?$/", "/^\\/domains\\/[^/]+\\/(activate|disable|rollback)$/",
             "/^\\/device-commands\\/[^/]+\\/confirm$/",
