@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Jarvis.Persistence;
 
-public sealed class PostgresDomainRegistryStore(IDbContextFactory<SessionDbContext> factory) : IDomainRegistryStore
+public sealed class PostgresDomainRegistryStore(IDbContextFactory<SessionDbContext> factory, TimeProvider? clock = null) : IDomainRegistryStore
 {
     public async Task<long> EpochAsync(CancellationToken ct)
     {
@@ -40,7 +40,7 @@ public sealed class PostgresDomainRegistryStore(IDbContextFactory<SessionDbConte
         enabled.ExceptWith(DomainExecutionLifecycle.Enabled(state));
         if (enabled.Count > 0) {
             var started = System.Diagnostics.Stopwatch.GetTimestamp();
-            await PostgresRuntimeStore.UpdateInTransactionAsync(db, s => { DomainExecutionLifecycle.DisableRuns(s, enabled); return Task.FromResult(true); }, started, started, ct);
+            await PostgresRuntimeStore.UpdateInTransactionAsync(db, s => { DomainExecutionLifecycle.DisableRuns(s, enabled, (clock ?? TimeProvider.System).GetUtcNow()); return Task.FromResult(true); }, started, started, ct);
         }
         var existingDefinitions = db.DomainDefinitions.Local.ToDictionary(x => x.Id);
         foreach (var definition in state.Definitions.Values.Where(d => !existingDefinitions.ContainsKey(d.Id))) {
