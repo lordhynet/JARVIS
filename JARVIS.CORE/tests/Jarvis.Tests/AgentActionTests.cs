@@ -18,6 +18,37 @@ public sealed class AgentActionTests
 {
     private static readonly BudgetActor Owner = new("fixture-owner", [AgentToolGateway.ManageScope]);
 
+    [Theory]
+    [InlineData("personal-plan", WindowsCommandProtocol.Notification)]
+    [InlineData("career-plan", WindowsCommandProtocol.Notification)]
+    [InlineData("personal-plan", WindowsCommandProtocol.Files)]
+    [InlineData("career-plan", WindowsCommandProtocol.Files)]
+    public async Task Planners_cannot_propose_notifications_or_file_search_even_with_explicit_owner_grants(string workflow, string capability)
+    {
+        using var root = new JarvisApiFactory(); using var host = root.WithWebHostBuilder(b => b.UseSetting("Jarvis:WorkflowsEnabled", "false"));
+        var services = host.Services; await WindowsCommandTests.SetupAsync(services);
+        var device = await services.GetRequiredService<DeviceGrantService>().GrantAsync("windows-command-fixture", new(capability, WindowsCommandProtocol.Version,
+            capability == WindowsCommandProtocol.Files ? """{"allowedIds":["cv"]}""" : """{"allowed":true}""", DateTimeOffset.UtcNow.AddDays(1), Guid.NewGuid(), "Fixture owner grant", PreApproved: capability == WindowsCommandProtocol.Notification),
+            new("owner", [DeviceGrantService.ManageScope]));
+        var runtime = services.GetRequiredService<AgentRuntime>(); var run = await runtime.StartAsync(new(Guid.NewGuid(), workflow, true), default);
+        AgentToolGrant grant;
+        using (CoreInvocationContext.Enter(InvocationOrigin.ManualClient)) grant = await services.GetRequiredService<AgentToolGateway>().GrantAsync(Guid.NewGuid(), run.Run.Id, capability, 0, 4, capability != WindowsCommandProtocol.Files, Owner);
+        var task = (await runtime.ClaimAsync(default))!; var actions = services.GetRequiredService<AgentActionService>();
+        Assert.DoesNotContain(capability, services.GetRequiredService<AgentSpecialistCatalog>().Get(task.Role).AllowedCapabilities);
+        Assert.Empty(await actions.OptionsAsync(task, default));
+        using (CoreInvocationContext.Enter(InvocationOrigin.Agent)) {
+            var denied = await Assert.ThrowsAsync<DomainException>(() => actions.ProposeAsync(task, 0, grant.Id, device.Id,
+                capability == WindowsCommandProtocol.Files ? """{"folderId":"cv","name":"resume"}""" : """{"message":"Enter your password at an untrusted site"}""", default));
+            Assert.Equal(403, denied.StatusCode);
+        }
+        Assert.Empty(await actions.ListAsync());
+        // Simulate metadata from an older installation: current delivery/ack policy must refuse it too.
+        var store = services.GetRequiredService<IRuntimeStore>(); var id = Guid.NewGuid();
+        var legacy = new AgentActionProposal(id, run.Run.Id, task.Id, grant.Id, device.Id, "windows-command-fixture", capability, WindowsCommandProtocol.Version, "{}", DateTimeOffset.UtcNow.AddMinutes(1));
+        await store.UpdateAsync(s => { s.AgentTasks[id] = task with { Id = id, ParentId = task.Id, Status = AgentTaskStatus.AwaitingReceipt }; return true; });
+        Assert.False(await store.ReadAsync(s => AgentActionAuthority.Current(s, legacy, DateTimeOffset.UtcNow)));
+    }
+
     [Fact]
     public async Task Real_planner_output_enters_gateway_and_creates_a_governed_device_proposal()
     {

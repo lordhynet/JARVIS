@@ -25,12 +25,14 @@ public sealed record AgentSpecialistDescriptor(AgentRole Role, IReadOnlyList<str
 
 public sealed class AgentSpecialistCatalog
 {
+    // This first slice reserves free-text notifications and private filename access for captured voice/manual use.
+    public static bool AllowsDeviceAction(string id) => id is not (WindowsCommandProtocol.Notification or WindowsCommandProtocol.Files);
     private readonly IReadOnlyDictionary<AgentRole, AgentSpecialistDescriptor> entries;
     public AgentSpecialistCatalog(IEnumerable<AgentSpecialistDescriptor>? installed = null)
     {
         entries = (installed ?? Enum.GetValues<AgentRole>().Select(role => new AgentSpecialistDescriptor(role,
             [AgentCapabilityIds.Template, role == AgentRole.Research ? AgentCapabilityIds.Research : AgentCapabilityIds.Reasoning,
-                ..(role is AgentRole.PersonalPlanner or AgentRole.CareerPlanner ? BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCapabilities.All).Select(c => c.Id) : [])],
+                ..(role is AgentRole.PersonalPlanner or AgentRole.CareerPlanner ? BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCapabilities.All).Select(c => c.Id).Where(AllowsDeviceAction) : [])],
             role == AgentRole.Research ? AgentCapabilityIds.ResearchProfile : AgentCapabilityIds.AgentProfile,
             [ReasoningDataClass.Public, ReasoningDataClass.Personal], AgentCapabilityIds.SpecialistInputSchema, AgentCapabilityIds.TemplateSchema)))
             .Select(Freeze).ToDictionary(x => x.Role);
