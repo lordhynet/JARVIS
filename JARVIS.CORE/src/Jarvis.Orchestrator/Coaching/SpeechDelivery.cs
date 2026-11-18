@@ -31,6 +31,7 @@ public static class SpeechDelivery
     }
     public static IReadOnlyList<SpeechDeliverySession> Sessions(RuntimeState state, Guid? sessionId = null) => state.VoiceTurns.Values
         .Where(t => t.Role == ChatRoles.User && !t.Restricted && !state.RetiredSessions.Contains(t.SessionId) && (sessionId is null || t.SessionId == sessionId))
+        .Select(ForRead)
         .GroupBy(t => t.SessionId).OrderByDescending(g => g.Max(t => t.At)).Take(30).Select(group => {
             var turns = group.OrderBy(t => t.At).ThenBy(t => t.Id).Select(Measure).ToArray();
             var timed = turns.Where(t => t.Seconds is > 0).ToArray();
@@ -41,4 +42,9 @@ public static class SpeechDelivery
                 pauses.Length > 0 ? Math.Round(pauses.Sum(t => t.QuietSeconds) / pauses.Sum(t => t.AudioSeconds), 3) : null,
                 Math.Round(turns.Average(t => t.OpeningScore), 2), turns.TakeLast(100).ToArray());
         }).ToArray();
+    private static VoiceTurn ForRead(VoiceTurn turn)
+    {
+        try { ValidateTiming(turn.Timing, turn.SpeechSeconds); return turn; }
+        catch (DomainException) { return turn with { Timing = null }; }
+    }
 }

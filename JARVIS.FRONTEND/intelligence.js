@@ -125,7 +125,7 @@ export function initIntelligence({ api, node, button, notice }) {
       const row = node('div', '', 'list-item'); row.append(node('h3', `${view.run.workflow} · ${view.run.status}`));
       for (const task of view.tasks) { const details = document.createElement('details'); details.append(node('summary', `${task.role} · ${task.status}`)); if (task.output) renderArtifact(details, task.output); if (task.errorCode) details.append(node('p', task.errorCode)); row.append(details); }
       for (const grant of grants.filter(g => g.runId === view.run.id && g.grantedBy !== 'installed-artifact-policy')) {
-        row.append(node('p', `${grant.capabilityId} · ${grant.revokedAt ? 'Revoked' : grant.preApproved ? 'Pre-approved reversible actions' : 'Exact approval required'} · up to ${grant.maximumCalls} calls · ${grant.maximumUsd} USD per call (${grant.maximumUsd * grant.maximumCalls} USD maximum across those calls, also subject to the global GBP budget)`));
+        row.append(node('p', `${grant.capabilityId} · ${grant.revokedAt ? 'Revoked' : grant.preApproved ? 'Pre-approved reversible actions' : 'Exact approval required'} · up to ${grant.maximumCalls} calls · ${Number(grant.maximumUsd).toFixed(2)} USD per call (${(grant.maximumUsd * grant.maximumCalls).toFixed(2)} USD maximum across those calls, also subject to the global GBP budget)`));
         if (!grant.revokedAt) row.append(button('Revoke ' + grant.capabilityId, async () => { await api('/agents/tool-grants/' + grant.id, undefined, 'DELETE'); await load(); }));
       }
       if (view.run.status === 'AwaitingSetup') {
