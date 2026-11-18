@@ -18,12 +18,28 @@ public sealed class DomainScopedExecutionTests
             new { type = "message", content = new[] { new { type = "output_text", text } } }
         }
     }), Encoding.UTF8, "application/json") };
-    private static string Artifact => JsonSerializer.Serialize(new { schemaVersion = 1, summary = "Suggested practice", drills = Array.Empty<string>(), sourceIds = Array.Empty<Guid>() });
+    private static string Artifact => JsonSerializer.Serialize(new { schemaVersion = 1, summary = "Suggested practice", drills = Array.Empty<string>(), sourceIds = Array.Empty<Guid>(),
+        evidence = new[] { new { text = "Suggested practice", kind = "Suggestion", sources = Array.Empty<Guid>() } } });
     private static void Configure(IWebHostBuilder b)
     {
         b.UseSetting("Jarvis:WorkflowsEnabled", "false"); b.UseSetting("AI:Agent:Provider", "openai"); b.UseSetting("AI:Agent:Model", "fixture-agent");
         b.UseSetting("AI:Agent:RateCardModel", "fixture-agent"); b.UseSetting("AI:Agent:InputUsdPerMillion", ".4"); b.UseSetting("AI:Agent:OutputUsdPerMillion", "1.6");
         b.UseSetting("AI:Agent:AllowedDataClasses:0", "Personal");
+    }
+    [Fact]
+    public async Task Unsupported_claims_are_refused_after_fake_provider_io_and_never_become_task_artifacts()
+    {
+        using var root = new ProviderFactory(_ => Task.FromResult(Reply(JsonSerializer.Serialize(new {
+            schemaVersion = 1, summary = "You reduced failures by 70%.", drills = Array.Empty<string>(), sourceIds = Array.Empty<Guid>(),
+            evidence = new[] { new { text = "You reduced failures by 70%.", kind = "Fact", sources = Array.Empty<Guid>() } }
+        }))));
+        using var host = root.WithWebHostBuilder(Configure); var services = host.Services;
+        var runtime = services.GetRequiredService<AgentRuntime>(); await runtime.StartAsync(new(Guid.NewGuid(), "daily-coaching", true, "Give grounded feedback"), default);
+        var task = (await runtime.ClaimAsync(default))!;
+        var rejected = await Assert.ThrowsAsync<DomainException>(() => services.GetRequiredService<IAgentExecutor>().ExecuteAsync(task, default));
+        Assert.Equal(502, rejected.StatusCode);
+        var store = services.GetRequiredService<IRuntimeStore>(); Assert.Null(await store.ReadAsync(s => s.AgentTasks[task.Id].Output));
+        Assert.NotNull(Assert.Single(await store.ReadAsync(s => s.UsageReservations.Values.ToArray())).ActualUsd);
     }
     [Fact]
     public async Task Factory_uses_the_existing_budget_adapter_and_never_dispatches_without_a_reservation()

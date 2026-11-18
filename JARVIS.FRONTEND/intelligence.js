@@ -79,6 +79,20 @@ export function initIntelligence({ api, node, button, notice }) {
       domainList.append(row);
     }
   }
+  function renderArtifact(container, output) {
+    try {
+      const artifact = JSON.parse(output);
+      if (typeof artifact.summary === 'string' && Array.isArray(artifact.claims)) {
+        container.append(node('p', artifact.summary));
+        for (const drill of (artifact.drills || []).slice(0, 3)) container.append(node('p', drill));
+        for (const claim of artifact.claims.slice(0, 100)) {
+          const evidence = node('p', claim.kind + ': ' + claim.text + ' · Sources: ' + (claim.sources || []).slice(0, 12).join(', ')); evidence.style.overflowWrap = 'anywhere'; container.append(evidence);
+        }
+        if (artifact.evidenceLimit) container.append(node('small', artifact.evidenceLimit)); return;
+      }
+    } catch { /* Older plain-text or authored artifacts retain their existing view. */ }
+    container.append(node('p', output));
+  }
   async function load() {
     const [settings, saved, jobs, messages, catalog, domains, proposals, grants, specialists] = await Promise.all([api('/agents/controls'), api('/agents/schedules'), api('/agents/runs'), api('/agents/notifications'), api('/agents/catalog'), api('/domains'), api('/agents/actions'), api('/agents/tool-grants'), api('/agents/specialists')]);
     renderDomains(domains);
@@ -109,7 +123,7 @@ export function initIntelligence({ api, node, button, notice }) {
     runs.replaceChildren(node('h3', 'Runs and specialist tasks'));
     for (const view of jobs) {
       const row = node('div', '', 'list-item'); row.append(node('h3', `${view.run.workflow} · ${view.run.status}`));
-      for (const task of view.tasks) { const details = document.createElement('details'); details.append(node('summary', `${task.role} · ${task.status}`)); if (task.output) details.append(node('p', task.output)); if (task.errorCode) details.append(node('p', task.errorCode)); row.append(details); }
+      for (const task of view.tasks) { const details = document.createElement('details'); details.append(node('summary', `${task.role} · ${task.status}`)); if (task.output) renderArtifact(details, task.output); if (task.errorCode) details.append(node('p', task.errorCode)); row.append(details); }
       for (const grant of grants.filter(g => g.runId === view.run.id && g.grantedBy !== 'installed-artifact-policy')) {
         row.append(node('p', `${grant.capabilityId} · ${grant.revokedAt ? 'Revoked' : grant.preApproved ? 'Pre-approved reversible actions' : 'Exact approval required'} · up to ${grant.maximumCalls} calls · ${grant.maximumUsd} USD per call (${grant.maximumUsd * grant.maximumCalls} USD maximum across those calls, also subject to the global GBP budget)`));
         if (!grant.revokedAt) row.append(button('Revoke ' + grant.capabilityId, async () => { await api('/agents/tool-grants/' + grant.id, undefined, 'DELETE'); await load(); }));

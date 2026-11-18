@@ -5,7 +5,8 @@ test('held agent setup scopes owner authorization and reviews exact proposed par
   const runId = randomUUID(), actionId = randomUUID(), actionHash = 'a'.repeat(64), grantId = randomUUID();
   const args = '{"entityId":"light.kitchen","action":"turn_on","note":"<img src=x onerror=alert(1)>"}';
   let held = true, approved = false, hasGrant = false;
-  await page.route('**/api/agents/runs', route => route.fulfill({ json: [{ run: { id: runId, workflow: 'personal-plan', status: held ? 'AwaitingSetup' : 'Running' }, tasks: [{ role: 'PersonalPlanner', status: held ? 'Queued' : 'AwaitingApproval' }] }] }));
+  const evidenceOutput = JSON.stringify({ summary: 'Suggestion: Practise a safe example.', drills: [], claims: [{ kind: 'Suggestion', text: '<script>alert(1)</script>', sources: ['source-fixture'] }], evidenceLimit: 'Reference membership checked; truth not independently verified.' });
+  await page.route('**/api/agents/runs', route => route.fulfill({ json: [{ run: { id: runId, workflow: 'personal-plan', status: held ? 'AwaitingSetup' : 'Running' }, tasks: [{ role: 'PersonalPlanner', status: held ? 'Queued' : 'AwaitingApproval', output: held ? null : evidenceOutput }] }] }));
   await page.route('**/api/agents/actions', route => route.fulfill({ json: held ? [] : [{ proposal: { id: actionId, runId, capabilityId: 'homeassistant.turn', argumentsJson: args, expiresAt: new Date(Date.now() + 120000).toISOString() }, status: approved ? 'AwaitingReceipt' : 'AwaitingApproval', argumentsHash: actionHash, risk: 'Reversible' }] }));
   await page.route('**/api/agents/tool-grants', route => route.fulfill({ json: hasGrant ? [{ id: grantId, runId, capabilityId: 'homeassistant.turn', maximumCalls: 4, maximumUsd: 0.5, grantedBy: 'owner', preApproved: false }] : [] }));
   await page.route(`**/api/agents/runs/${runId}/tool-grants`, async route => {
@@ -30,6 +31,7 @@ test('held agent setup scopes owner authorization and reviews exact proposed par
   await expect(panel.getByLabel('Agent action capability').locator('option[value="windows.files.find"]')).toHaveCount(0);
   await panel.getByRole('button', { name: 'Start configured run', exact: true }).click();
   await expect(panel).toContainText(args); await expect(panel.locator('img')).toHaveCount(0); await expect(panel).toContainText(actionHash);
+  await expect(panel).toContainText('Sources: source-fixture'); await expect(panel.locator('script')).toHaveCount(0);
   page.once('dialog', d => d.accept()); await panel.getByRole('button', { name: 'Approve exact agent action', exact: true }).click();
   await expect(panel).toContainText('Waiting for a verified device receipt. Completion has not been confirmed.');
   expect(reads.length).toBeGreaterThan(0); expect(reads.every(value => !value)).toBeTruthy();

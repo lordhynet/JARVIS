@@ -133,12 +133,12 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
         var raw = result.GetRawText(); Guard.Require(Encoding.UTF8.GetByteCount(raw) <= 500000, 502, "AI response exceeded the storage bound.");
         await store.UpdateAsync(s =>
         {
-            RequireSourceCurrent(s, scope);
+            RequireSourceCurrent(s, scope, clock.GetUtcNow());
             s.ProviderResults[id] = new(id, scope, fingerprint, raw, clock.GetUtcNow()); return true;
         }, ct);
         return result;
     }
-    internal static void RequireSourceCurrent(RuntimeState s, Guid scope)
+    internal static void RequireSourceCurrent(RuntimeState s, Guid scope, DateTimeOffset? at = null)
     {
         Guard.Require(!s.RetiredReasoningScopes.Contains(scope), 409, "The reasoning source was deleted.");
             Guard.Require(!s.ImportedDocuments.TryGetValue(scope, out var document) || document.DeletedAt is null, 409, "Imported source was deleted during AI processing.");
@@ -147,7 +147,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
             Guard.Require(!s.CoachingAttempts.TryGetValue(scope, out var coaching) || coaching.DeletedAt is null, 409, "The source answer was deleted during AI processing.");
             if (s.AgentTasks.TryGetValue(scope, out var task))
                 Guard.Require(task.Status == AgentTaskStatus.Running && s.AgentRuns[task.RunId].DeletedAt is null &&
-                    (task.SourceRefs ?? []).All(source => AgentRuntime.SourceCurrent(s, source)), 409, "Agent work or its source was revoked during AI processing.");
+                    (task.SourceRefs ?? []).All(source => AgentRuntime.SourceCurrent(s, source, at)), 409, "Agent work or its source was revoked during AI processing.");
 
     }
     internal static Task<UsageReservation> RequireReservedAsync(IRuntimeReader store, Guid id, Guid scope, ReviewedTextRates rates, decimal minimum, CancellationToken ct) =>

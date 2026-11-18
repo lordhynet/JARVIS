@@ -183,7 +183,8 @@ public sealed class AgentToolGatewayTests
             var invocation = Assert.Single(await store.ReadAsync(s => s.AgentToolInvocations.Values.ToArray()));
             Assert.Equal(AgentToolStatus.Executing, invocation.Status); Assert.Equal(charge.Id, invocation.ReservationId);
             Assert.Null(charge.ActualUsd);
-            var text = research ? "Public fixture source" : JsonSerializer.Serialize(new { schemaVersion = 1, summary = "Scoped fixture artifact", drills = new[] { "One", "Two", "Three" }, sourceIds = Array.Empty<Guid>() });
+            var text = research ? "Public fixture source" : JsonSerializer.Serialize(new { schemaVersion = 1, summary = "Scoped fixture artifact", drills = new[] { "One", "Two", "Three" }, sourceIds = Array.Empty<Guid>(),
+                evidence = new[] { "Scoped fixture artifact", "One", "Two", "Three" }.Select(value => new { text = value, kind = "Suggestion", sources = Array.Empty<Guid>() }) });
             var json = JsonSerializer.Serialize(new { status = "completed", usage = new { input_tokens = 10, output_tokens = 10 }, output = new[] {
                 new { type = "message", content = new[] { new { type = "output_text", text, annotations = research
                     ? new[] { new { type = "url_citation", url = "https://example.org/fixture", title = "Fixture", start_index = 0, end_index = 6 } }

@@ -46,7 +46,7 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
         budget.RequireConfigured();
         var fingerprint = PrivacyData.Hash(JsonSerializer.Serialize(new { task, rates.Route }));
         var cached = await store.UpdateAsync(s => {
-            ManagedAi.RequireSourceCurrent(s, task.ScopeId);
+            ManagedAi.RequireSourceCurrent(s, task.ScopeId, clock.GetUtcNow());
             if (s.ProviderAttempts.TryGetValue(task.OperationId, out var previous)) {
                 Guard.Require(previous.ScopeId == task.ScopeId && previous.Fingerprint == fingerprint, 409, "Reasoning request ID was reused for another task or route.");
                 Guard.Require(previous.Outcome is ProviderAttemptOutcome.Completed or ProviderAttemptOutcome.Cached && s.ProviderResults.ContainsKey(task.OperationId), 409,
@@ -73,7 +73,7 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
             Guard.Require(CoreInvocationContext.Origin != InvocationOrigin.Agent || AgentToolExecutionScope.Contains(task.OperationId, task.ScopeId) || await LegacyReasoningAdmission.PermitsAsync(task, token),
                 403, "Agent reasoning must enter through its tool-policy gateway.");
             await store.ReadAsync(s => {
-                ManagedAi.RequireSourceCurrent(s, task.ScopeId);
+                ManagedAi.RequireSourceCurrent(s, task.ScopeId, clock.GetUtcNow());
                 Guard.Require(s.UsageReservations.TryGetValue(task.OperationId, out var reservation) && reservation.RunId == task.ScopeId &&
                     reservation.Model == rates.Route.Model && reservation.Provider == rates.Route.Provider && !reservation.ReconciliationRequired &&
                     (cached ? reservation.ActualUsd is not null : reservation.ActualUsd is null && !s.AgentControls.EffectivePaidAiPaused),
@@ -82,7 +82,7 @@ public sealed class TextReasoningService(RateCard cards, IEnumerable<ITextReason
             try {
             var result = await adapter.ExecuteAsync(task, rates, token);
             await store.UpdateAsync(s => {
-                ManagedAi.RequireSourceCurrent(s, task.ScopeId);
+                ManagedAi.RequireSourceCurrent(s, task.ScopeId, clock.GetUtcNow());
                 var attempt = s.ProviderAttempts[task.OperationId];
                 s.ProviderAttempts[task.OperationId] = attempt with { Outcome = cached ? ProviderAttemptOutcome.Cached : ProviderAttemptOutcome.Completed, CompletedAt = clock.GetUtcNow() }; return true;
             }, token);
