@@ -524,6 +524,67 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("PrivacyJobs");
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.RuntimeAudioRow", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ControlsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<string>("CredentialsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<string>("DevicesJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<string>("DrainLeaseJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("DrainUntil")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LeaseJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<long>("NextFence")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("WakeAttemptsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("RuntimeAudioState", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            ControlsJson = "{}",
+                            CredentialsJson = "{}",
+                            DevicesJson = "{}",
+                            DrainLeaseJson = "null",
+                            LeaseJson = "null",
+                            NextFence = 1L,
+                            WakeAttemptsJson = "{}"
+                        });
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.RuntimeDocument", b =>
                 {
                     b.Property<int>("Id")
@@ -531,6 +592,13 @@ namespace Jarvis.Persistence.Migrations
                         .HasColumnType("integer");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasDefaultValue("");
 
                     b.Property<string>("Json")
                         .IsRequired()
@@ -544,8 +612,66 @@ namespace Jarvis.Persistence.Migrations
                         new
                         {
                             Id = 1,
+                            Fingerprint = "",
                             Json = "{}"
                         });
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.RuntimeVoiceTicketRow", b =>
+                {
+                    b.Property<string>("Hash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Hash");
+
+                    b.ToTable("RuntimeVoiceTickets", (string)null);
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.RuntimeVoiceTurnRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AtText")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Restricted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double?>("SpeechSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)");
+
+                    b.Property<string>("TimingJson")
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId", "At");
+
+                    b.ToTable("RuntimeVoiceTurns", (string)null);
                 });
 
             modelBuilder.Entity("Jarvis.Persistence.SessionRow", b =>

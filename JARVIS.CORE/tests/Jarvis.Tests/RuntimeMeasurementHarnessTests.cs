@@ -136,12 +136,10 @@ public sealed class RuntimeMeasurementHarnessTests
             state.AgentRuns.Add(id, new(id, null, $"synthetic-{index}", "practice-reminder", 1, false,
                 now.AddDays(-1), now.AddDays(2), "Succeeded", []));
         }
-        await using (var db = await services.GetRequiredService<IDbContextFactory<SessionDbContext>>().CreateDbContextAsync())
-        {
-            var row = await db.RuntimeDocuments.SingleAsync(x => x.Id == 1);
-            row.Json = JsonSerializer.Serialize(state);
-            await db.SaveChangesAsync();
-        }
+        await runtime.UpdateAsync(current => {
+            current.Devices = state.Devices; current.Learning = state.Learning;
+            current.AgentRuns = state.AgentRuns; current.VoiceTurns = state.VoiceTurns; return true;
+        });
 
         var documentBytes = await ReadRuntimeDocumentBytesAsync(services.GetRequiredService<IDbContextFactory<SessionDbContext>>());
         if (voiceProfile)
@@ -240,7 +238,13 @@ public sealed class RuntimeMeasurementHarnessTests
         }, requireNoQueries: true);
         await audio.ReleaseAsync(lease, default);
         var prepare = await ProfileAsync(statsConnection, () => companion.PrepareAsync(new(Guid.NewGuid(), deviceId, true), default));
-        var update = await ProfileAsync(statsConnection, UpdateAsync);
+        var update = await ProfileAsync(statsConnection, UpdateAsync, requireNoColdDocument: true);
+        var arbiter = services.GetRequiredService<WakeCandidateArbiter>();
+        var device = services.GetRequiredService<DeviceService>();
+        var wakeClock = (ProfileClock)clock;
+        var wake = await MeasureAsync(40, () => arbiter.ClaimAsync(new(Guid.NewGuid(), deviceId, true), default),
+            before: async () => { wakeClock.Advance(TimeSpan.FromMinutes(11)); await device.HeartbeatAsync(deviceId); },
+            after: async result => { await audio.ConsumeTicketAsync(result.Voice.Ticket, default); await audio.ReleaseAsync(result.Voice.Lease, default); });
 
         await WriteReportAsync(outputPath, new
         {
@@ -249,14 +253,18 @@ public sealed class RuntimeMeasurementHarnessTests
             dataset = new { sessions = SessionCount, messagesPerSession = MessagesPerSession,
                 learningCards = LearningCount, agentRuns = AgentRunCount, voiceTurns = RuntimeTranscriptCount },
             runtimeDocumentBytes = documentBytes,
-            currentAsync = current,
-            cachedFrameChecks = new { checksPerSample = FrameChecksPerSample, profile = frameChecks },
-            companionPrepare = prepare,
-            runtimeUpdate = update
+            currentAsync = current.Report,
+            cachedFrameChecks = new { checksPerSample = FrameChecksPerSample, profile = frameChecks.Report },
+            companionPrepare = prepare.Report,
+            runtimeUpdate = update.Report,
+            coreWakeToTicketMs = Summary(wake),
+            wakeBoundary = "Core WakeCandidateArbiter through ticket creation; excludes local recognition, HTTP/network, provider socket and hardware. Heartbeat, clock advancement, ticket consumption and release are outside the timed interval.",
+            runtimeUpdateGate = new { maximumP95Ms = 50, passed = update.P95 < 50 }
         });
+        Assert.True(update.P95 < 50, $"Runtime update p95 was {update.P95} ms; required < 50 ms. See the measurement report.");
     }
 
-    private static async Task<object> ProfileAsync<T>(NpgsqlConnection connection, Func<Task<T>> operation, bool requireNoQueries = false)
+    private static async Task<(object Report, double P95)> ProfileAsync<T>(NpgsqlConnection connection, Func<Task<T>> operation, bool requireNoQueries = false, bool requireNoColdDocument = false)
     {
         await MeasureAsync(5, operation);
         var before = await QueryStatsAsync(connection);
@@ -285,7 +293,8 @@ public sealed class RuntimeMeasurementHarnessTests
             .Select(stat => new { stat.Query, stat.calls, stat.totalExecMs, meanExecMs = Math.Round(stat.totalExecMs / stat.calls, 3) })
             .ToArray();
         if (requireNoQueries) Assert.Empty(queries);
-        return new { totalMs = Summary(total), phasesMs = timings.ToDictionary(x => x.Key, x => Summary(x.Value.ToArray())), queries };
+        if (requireNoColdDocument) Assert.DoesNotContain(queries, q => q.Query.Contains("\"RuntimeDocuments\"", StringComparison.Ordinal) && q.Query.Contains("\"Json\"", StringComparison.Ordinal));
+        return (new { totalMs = Summary(total), phasesMs = timings.ToDictionary(x => x.Key, x => Summary(x.Value.ToArray())), queries }, Percentile(total, .95));
     }
 
     private sealed record QueryStat(long QueryId, string Query, long Calls, double ExecMs);
@@ -324,14 +333,16 @@ public sealed class RuntimeMeasurementHarnessTests
         return await db.Database.SqlQueryRaw<long>("SELECT octet_length(\"Json\"::text) AS \"Value\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1").SingleAsync();
     }
 
-    private static async Task<double[]> MeasureAsync<T>(int count, Func<Task<T>> operation)
+    private static async Task<double[]> MeasureAsync<T>(int count, Func<Task<T>> operation, Func<Task>? before = null, Func<T, Task>? after = null)
     {
         var samples = new double[count];
         for (var index = 0; index < count; index++)
         {
+            if (before is not null) await before();
             var started = Stopwatch.GetTimestamp();
-            await operation();
+            var result = await operation();
             samples[index] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (after is not null) await after(result);
         }
         return samples;
     }
@@ -403,8 +414,9 @@ public sealed class RuntimeMeasurementHarnessTests
 
     private sealed class ProfileClock : TimeProvider
     {
-        private readonly DateTimeOffset now = DateTimeOffset.UtcNow;
+        private DateTimeOffset now = DateTimeOffset.UtcNow;
         public override DateTimeOffset GetUtcNow() => now;
+        public void Advance(TimeSpan duration) => now += duration;
     }
 
     private sealed class MeasurementApiFactory(string connection, SqlCallCounter counter, bool voiceProfile) : WebApplicationFactory<Program>

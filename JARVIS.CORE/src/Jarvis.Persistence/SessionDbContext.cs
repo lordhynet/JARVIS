@@ -12,6 +12,9 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<PrivacyJobRow> PrivacyJobs => Set<PrivacyJobRow>();
     public DbSet<CheckpointRow> Checkpoints => Set<CheckpointRow>();
     public DbSet<RuntimeDocument> RuntimeDocuments => Set<RuntimeDocument>();
+    public DbSet<RuntimeAudioRow> RuntimeAudioState => Set<RuntimeAudioRow>();
+    public DbSet<RuntimeVoiceTicketRow> RuntimeVoiceTickets => Set<RuntimeVoiceTicketRow>();
+    public DbSet<RuntimeVoiceTurnRow> RuntimeVoiceTurns => Set<RuntimeVoiceTurnRow>();
     public DbSet<WorkflowRunRow> WorkflowRuns => Set<WorkflowRunRow>();
     public DbSet<WorkflowEventRow> WorkflowEvents => Set<WorkflowEventRow>();
     public DbSet<DomainDefinitionRow> DomainDefinitions => Set<DomainDefinitionRow>();
@@ -27,6 +30,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     protected override void OnModelCreating(ModelBuilder model)
     {
         DomainModel.Configure(model);
+        RuntimeHotModel.Configure(model);
         model.Entity<PrivacyControlRow>(b => { b.HasKey(x => x.Id); b.HasData(new PrivacyControlRow()); });
         model.Entity<PrivacyJobRow>(b => { b.HasKey(x => x.Id); b.Property(x => x.CountsJson).HasColumnType("jsonb"); b.HasIndex(x => x.CompletedAt); });
         model.Entity<WorkflowRunRow>(b =>
@@ -46,6 +50,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
         {
             b.HasKey(r => r.Id);
             b.Property(r => r.Json).HasColumnType("jsonb");
+            b.Property(r => r.Fingerprint).HasMaxLength(64).HasDefaultValue("");
             b.HasData(new RuntimeDocument { Id = 1, Json = "{}" });
         });
         model.Entity<SessionRow>(b =>
