@@ -12,6 +12,7 @@ public interface IDomainCatalog
     IReadOnlyList<string> Keys { get; }
     DomainDescriptor Get(string key);
     DomainDescriptor ForActivity(ActivityType activity);
+    DomainDescriptor ForLearning(LearningDomain domain);
 }
 
 // Trusted code modules supply instructions. Future user-authored manifests remain untrusted context data.
@@ -25,7 +26,13 @@ public sealed class DomainCatalog : IDomainCatalog
         new("languages", "Practice French at the user's level. Offer a short correction and one follow-up question.", [ActivityType.French], [], ["core_recall"]),
         new("social-intelligence", "Coach clear communication. Help organize the user's point and rehearse a concise version.", [ActivityType.Communication], ["daily-coaching"], ["core_coaching"]),
         new("daily-planning", "Help plan the day. Only describe live calendar or transport facts if the user supplies verified data.", [ActivityType.Briefing], ["personal-plan"], ["core_context"]),
-        new("reflection", "Help reflect on the day and choose a small next step for tomorrow. Keep the tone calm.", [ActivityType.WindDown], [], ["core_context"])
+        new("reflection", "Help reflect on the day and choose a small next step for tomorrow. Keep the tone calm.", [ActivityType.WindDown], [], ["core_context"]),
+        new("csharp-dotnet", "Practice C# and .NET concepts with supplied examples, explicit assumptions and small exercises.", [], [], ["core_recall"]),
+        new("distributed-systems", "Practice distributed systems reasoning: consistency, failure modes and evidence for trade-offs.", [], [], ["core_recall"]),
+        new("databases", "Practice database modelling, queries and transaction reasoning using supplied examples.", [], [], ["core_recall"]),
+        new("api-security", "Practice API security concepts with defensive examples and explicit trust boundaries.", [], [], ["core_recall"]),
+        new("production-devops", "Practice production operations concepts, observability and reversible recovery plans without executing commands.", [], [], ["core_recall"]),
+        new("payments-fintech", "Practice payments and finance concepts using supplied examples. Keep study read-only and distinguish assumptions from verified facts.", [], [], ["core_recall"])
     }.Select(Freeze).ToArray());
     private readonly IReadOnlyDictionary<string, DomainDescriptor> domains;
     private readonly IReadOnlyDictionary<ActivityType, DomainDescriptor> activities;
@@ -50,4 +57,5 @@ public sealed class DomainCatalog : IDomainCatalog
     public IReadOnlyList<string> Keys => domains.Keys.OrderBy(x => x, StringComparer.Ordinal).ToArray();
     public DomainDescriptor Get(string key) => domains.TryGetValue(key, out var descriptor) ? descriptor : throw new DomainException(404, "Domain is not installed.");
     public DomainDescriptor ForActivity(ActivityType activity) => activities.GetValueOrDefault(activity) ?? Get("general");
+    public DomainDescriptor ForLearning(LearningDomain domain) => Get(DomainAliases.LearningKey(domain));
 }
