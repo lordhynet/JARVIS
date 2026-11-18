@@ -87,7 +87,7 @@ public sealed class AnthropicMessagesAdapter(IHttpClientFactory clients, IRuntim
             if (rates.Fallbacks.Count > 0) request.Headers.Add("anthropic-beta", FallbackBeta);
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
             using var response = await Jarvis.Api.Operations.CoreObservability.SendAsync(clients.CreateClient("providers"), request, Provider, ct);
-            Guard.Require(response.IsSuccessStatusCode, response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? 429 : 502, "Provider rejected the request; its reservation is retained.");
+            ProviderRetryAfter.RequireSuccess(response, clock.GetUtcNow());
             result = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             IReadOnlyList<ProviderModelUsage> usages;
             ModelRoute served;

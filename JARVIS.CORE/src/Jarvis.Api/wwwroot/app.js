@@ -24,6 +24,9 @@ async function api(path, body, method) {
     verb === 'POST' && /^\/devices\/[^/]+\/grants$/.test(path) ||
     ['GET', 'DELETE'].includes(verb) && /^\/device-grants(?:\/[^/]+)?$/.test(path) ||
     verb === 'POST' && /^\/device-commands\/[^/]+\/confirm$/.test(path) ||
+    verb === 'POST' && /^\/agents\/runs\/[^/]+\/(tool-grants|release)$/.test(path) ||
+    verb === 'POST' && /^\/agents\/actions\/[^/]+\/approve$/.test(path) ||
+    verb === 'DELETE' && /^\/agents\/tool-grants\/[^/]+$/.test(path) ||
     verb === 'POST' && /^\/domains\/[^/]+\/(activate|disable|rollback)$/.test(path) ||
     verb === 'POST' && /^\/tools\/[^/]+\/confirm$/.test(path) ||
     verb === 'POST' && /^\/budget\/(approvals(?:\/[^/]+\/revoke)?|legacy\/[^/]+\/classify)$/.test(path) ||

@@ -42,6 +42,8 @@ public sealed class RuntimeState
     public Dictionary<Guid, AgentTask> AgentTasks { get; set; } = [];
     public Dictionary<Guid, AgentToolGrant> AgentToolGrants { get; set; } = [];
     public Dictionary<Guid, AgentToolInvocation> AgentToolInvocations { get; set; } = [];
+    public Dictionary<Guid, AgentActionProposal> AgentActions { get; set; } = [];
+    public Dictionary<Guid, AgentVoiceReview> AgentVoiceReviews { get; set; } = [];
     public Dictionary<Guid, AgentNotification> AgentOutbox { get; set; } = [];
     public Dictionary<Guid, AiCoachAssessment> AiCoachAssessments { get; set; } = [];
     public Dictionary<Guid, AiCoachAssessmentClaim> AiCoachAssessmentClaims { get; set; } = [];
@@ -144,6 +146,7 @@ public sealed class DomainException(int statusCode, string message, string? code
 {
     public int StatusCode { get; } = statusCode;
     public string? Code { get; } = code;
+    public TimeSpan? RetryAfter { get; init; }
 }
 
 public static class Guard

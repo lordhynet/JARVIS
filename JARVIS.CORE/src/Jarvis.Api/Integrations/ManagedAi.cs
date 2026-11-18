@@ -120,8 +120,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
         request.Headers.Authorization = new("Bearer", reviewed.ApiKey);
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
         using var response = await Jarvis.Api.Operations.CoreObservability.SendAsync(clients.CreateClient("providers"), request, ProviderIds.OpenAi, ct);
-        Guard.Require(response.IsSuccessStatusCode, response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? 429 : 502,
-            "AI provider rejected the request. Its reservation is retained; automatic paid replay is blocked.");
+        ProviderRetryAfter.RequireSuccess(response, clock.GetUtcNow());
         var result = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
         if (result.TryGetProperty("usage", out var usage) && usage.TryGetProperty("input_tokens", out var input) && usage.TryGetProperty("output_tokens", out var output))
         {

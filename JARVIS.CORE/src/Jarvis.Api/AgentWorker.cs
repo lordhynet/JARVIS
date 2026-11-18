@@ -5,7 +5,7 @@ using Jarvis.Orchestrator.Workflows;
 
 namespace Jarvis.Api;
 
-public sealed class AgentWorker(AgentRuntime runtime, IAgentExecutor executor, IRuntimeReader reader, IPrivacyReader privacy, IConfiguration configuration, ILogger<AgentWorker> logger) : BackgroundService
+public sealed class AgentWorker(AgentRuntime runtime, IAgentExecutor executor, IRuntimeReader reader, IPrivacyReader privacy, IConfiguration configuration, ILogger<AgentWorker> logger, AgentActionService actions) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -16,7 +16,7 @@ public sealed class AgentWorker(AgentRuntime runtime, IAgentExecutor executor, I
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         while (await timer.WaitForNextTickAsync(ct))
-            try { var status = await privacy.StatusAsync(ct); if (status.Erased) continue; using var scope = PrivacyContext.Enter(status.Epoch); await runtime.TickAsync(ct); } catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            try { var status = await privacy.StatusAsync(ct); if (status.Erased) continue; using var scope = PrivacyContext.Enter(status.Epoch); await actions.RefreshAsync(ct); await runtime.TickAsync(ct); } catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception e) { logger.LogWarning("Agent scheduling tick failed ({Type}).", e.GetType().Name); }
     }
     private async Task Work(CancellationToken ct)
@@ -44,6 +44,7 @@ public sealed class AgentWorker(AgentRuntime runtime, IAgentExecutor executor, I
                 if (task is null) { logger.LogWarning("Agent claim failed ({Type}).", e.GetType().Name); continue; }
                 try
                 {
+                    if (e is DomainException { RetryAfter: { } retry }) await runtime.RecordRetryAfterAsync(task.Id, retry, ct);
                     var uncertain = await reader.ReadAsync(s => s.UsageReservations.Values.Any(x => x.RunId == task.Id && x.ActualUsd is null), ct);
                     await runtime.CompleteAsync(task.Id, task.ClaimToken!.Value, "", uncertain ? "provider_outcome_uncertain" : e is DomainException d && d.StatusCode == 503 ? "provider_not_configured" : "task_failed_validation", uncertain, ct);
                 }

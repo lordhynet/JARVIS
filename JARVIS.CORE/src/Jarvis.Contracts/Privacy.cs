@@ -25,4 +25,5 @@ public sealed record CoreDataExport(int SchemaVersion, DateTimeOffset ExportedAt
     IReadOnlyList<VoiceRecall>? VoiceRecalls = null, IReadOnlyList<GbpCommitment>? GbpCommitments = null,
     IReadOnlyList<BudgetApproval>? BudgetApprovals = null, IReadOnlyList<BudgetManagementReceipt>? BudgetReceipts = null,
     IReadOnlyList<VoiceCoaching>? VoiceCoachings = null, IReadOnlyList<ProviderAttempt>? ProviderAttempts = null, DomainRegistryExport? Domains = null,
-    IReadOnlyList<AgentToolGrant>? AgentToolGrants = null, IReadOnlyList<AgentToolInvocation>? AgentToolInvocations = null);
+    IReadOnlyList<AgentToolGrant>? AgentToolGrants = null, IReadOnlyList<AgentToolInvocation>? AgentToolInvocations = null,
+    IReadOnlyList<AgentActionProposal>? AgentActions = null);

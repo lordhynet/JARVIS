@@ -54,18 +54,18 @@ public sealed class AgentToolGateway(IRuntimeStore store, TimeProvider clock, IC
         }
         return new(run.Id, run.Version, AgentToolScopeKinds.Run);
     }
-    private AgentRun CurrentRun(RuntimeState state, Guid id)
+    private AgentRun CurrentRun(RuntimeState state, Guid id, bool ownerSetup = false)
     {
         Guard.Require(state.AgentRuns.TryGetValue(id, out var run) && run.DeletedAt is null &&
-            run.Status is AgentRunStatus.Queued or AgentRunStatus.Running && run.Deadline > clock.GetUtcNow() &&
-            !state.AgentControls.EffectiveAgentsPaused && state.AgentControls.PausedWorkflows?.Contains(run.Workflow) != true,
+            (run.Status is AgentRunStatus.Queued or AgentRunStatus.Running || ownerSetup && run.Status == AgentRunStatus.AwaitingSetup) && run.Deadline > clock.GetUtcNow() &&
+            (ownerSetup || !state.AgentControls.EffectiveAgentsPaused && state.AgentControls.PausedWorkflows?.Contains(run.Workflow) != true),
             409, "Agent run is paused, cancelled or expired.");
         return run;
     }
     private (AgentTask Task, AgentRun Run, AgentSpecialistDescriptor Specialist) CurrentTask(RuntimeState state, Guid id, Guid claim)
     {
         Guard.Require(state.AgentTasks.TryGetValue(id, out var task) && claim != Guid.Empty && task.ClaimToken == claim &&
-            task.Status == AgentTaskStatus.Running && task.LeaseExpiresAt > clock.GetUtcNow(), 409, "Agent tool claim expired or changed.");
+            task.Status is AgentTaskStatus.Running or AgentTaskStatus.AwaitingApproval && task.LeaseExpiresAt > clock.GetUtcNow(), 409, "Agent tool claim expired or changed.");
         var run = CurrentRun(state, task.RunId);
         Guard.Require(run.TaskIds.Contains(task.Id) && (task.SourceRefs ?? []).All(s => AgentRuntime.SourceCurrent(state, s)), 409, "Agent tool source changed.");
         var specialist = specialists.Get(task.Role);
@@ -77,6 +77,8 @@ public sealed class AgentToolGateway(IRuntimeStore store, TimeProvider clock, IC
     private static string Hash(AgentToolCall call) => PrivacyData.Hash(JsonSerializer.Serialize(new {
         call.TaskId, call.GrantId, call.CapabilityId, call.CapabilityVersion, call.ArgumentsJson, call.DataClass
     }));
+    private static string Hash(RuntimeState state, AgentToolCall call) => state.AgentActions.TryGetValue(call.Id, out var p)
+        ? PrivacyData.Hash(JsonSerializer.Serialize(new { Invocation = Hash(call), p.DeviceGrantId, p.DeviceId, p.ParentTaskId, p.RequiresOwnerApproval })) : Hash(call);
     private AgentToolGrant RequireGrant(RuntimeState state, AgentToolCall call, AgentRun run, CapabilityDescriptor descriptor)
     {
         var scope = ScopeOf(state, run);
@@ -109,9 +111,10 @@ public sealed class AgentToolGateway(IRuntimeStore store, TimeProvider clock, IC
     {
         Owner(actor); var descriptor = registry.Get(capabilityId);
         Guard.Require(id != Guid.Empty && maximumUsd is >= 0 and <= 10 && maximumCalls is > 0 and <= 100 &&
-            (!preApproved || !descriptor.RequiresOwnerApproval && !descriptor.Irreversible), 400, "Invalid agent capability grant.");
+            (!preApproved || !descriptor.RequiresOwnerApproval && !descriptor.Irreversible &&
+                (descriptor.Risk == CapabilityRisk.ReadOnly || descriptor.ActionRisk == DeviceCapabilityRisk.Reversible)), 400, "Invalid agent capability grant.");
         return store.UpdateAsync(state => {
-            var run = CurrentRun(state, runId); var scope = ScopeOf(state, run);
+            var run = CurrentRun(state, runId, true); var scope = ScopeOf(state, run);
             var grant = new AgentToolGrant(id, runId, scope.Id, scope.Revision, scope.Kind, descriptor.Key, descriptor.Version,
                 DescriptorHash(descriptor), descriptor.DataClasses ?? [], maximumUsd, maximumCalls, preApproved, actor.SubjectId, run.Deadline);
             if (state.AgentToolGrants.TryGetValue(id, out var prior)) {
@@ -130,7 +133,24 @@ public sealed class AgentToolGateway(IRuntimeStore store, TimeProvider clock, IC
     }
     public Task<bool> ConfirmAsync(Guid id, string argumentsHash, BudgetActor actor, CancellationToken ct = default)
     {
-        Owner(actor); return store.UpdateAsync(state => {
+        Owner(actor); return ConfirmCoreAsync(id, argumentsHash, actor.SubjectId, null, ct);
+    }
+    internal Task<bool> ConfirmCapturedAsync(Guid id, string hash, Guid session, Guid source, CancellationToken ct)
+    {
+        Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.Voice, 403, "Captured voice authorization is required.");
+        return ConfirmCoreAsync(id, hash, "voice:" + session, state => {
+            Guard.Require(!VoiceAccessRules.ToolRestricted(state, session) && state.AudioLease!.ExpiresAt > clock.GetUtcNow() && !state.RetiredSessions.Contains(session) && state.VoiceTurns.TryGetValue(source, out var turn) &&
+                turn.SessionId == session && turn.Role == ChatRoles.User && !turn.Restricted && turn.At >= clock.GetUtcNow().AddSeconds(-90),
+                403, "A current unlocked captured utterance is required.");
+            Guard.Require(state.AgentToolInvocations.TryGetValue(id, out var invocation) &&
+                registry.Get(invocation.CapabilityId).ActionRisk == DeviceCapabilityRisk.Reversible && !registry.Get(invocation.CapabilityId).Irreversible,
+                403, "Only reversible actions can be approved by voice.");
+        }, ct);
+    }
+    private Task<bool> ConfirmCoreAsync(Guid id, string argumentsHash, string subject, Action<RuntimeState>? additional, CancellationToken ct)
+    {
+        return store.UpdateAsync(state => {
+            additional?.Invoke(state);
             Guard.Require(state.AgentToolInvocations.TryGetValue(id, out var invocation) && invocation.Status == AgentToolStatus.AwaitingApproval &&
                 invocation.ArgumentsHash == argumentsHash && invocation.ExpiresAt > clock.GetUtcNow(), 409, "Approval must match the exact pending parameters.");
             Guard.Require(state.AgentTasks.TryGetValue(invocation.TaskId, out var task), 409, "Agent task was removed.");
@@ -139,7 +159,7 @@ public sealed class AgentToolGateway(IRuntimeStore store, TimeProvider clock, IC
             var descriptor = registry.Get(invocation.CapabilityId);
             _ = RequireGrant(state, new(invocation.Id, task.Id, task.ClaimToken!.Value, invocation.GrantId, invocation.CapabilityId,
                 invocation.CapabilityVersion, "{}", invocation.DataClass), run, descriptor);
-            state.AgentToolInvocations[id] = invocation with { ApprovedBy = actor.SubjectId, ApprovedHash = argumentsHash, Status = AgentToolStatus.Authorized }; return true;
+            state.AgentToolInvocations[id] = invocation with { ApprovedBy = subject, ApprovedHash = argumentsHash, Status = AgentToolStatus.Authorized }; return true;
         }, ct);
     }
 
@@ -170,14 +190,14 @@ public sealed class AgentToolGateway(IRuntimeStore store, TimeProvider clock, IC
         Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.Agent, 403, "Agent tool execution requires the agent invocation boundary.");
         Guard.Require(handlers.TryGetValue(call.CapabilityId, out var handler), 403, "No executable agent handler is installed for this capability.");
         var admitted = await store.UpdateAsync(state => {
-            var policy = Check(state, call); var hash = Hash(call); var claimHash = PrivacyData.Hash(call.ClaimToken.ToString());
+            var policy = Check(state, call); var hash = Hash(state, call); var claimHash = PrivacyData.Hash(call.ClaimToken.ToString());
             if (state.AgentToolInvocations.TryGetValue(call.Id, out var prior)) {
                 Guard.Require(prior.ArgumentsHash == hash && prior.TaskId == call.TaskId && prior.ClaimHash == claimHash && prior.GrantId == call.GrantId,
                     409, "Invocation ID or approval was reused with different parameters or authority.");
                 if (prior.Status == AgentToolStatus.AwaitingApproval) return (policy.Context, policy.Descriptor, policy.Grant, prior);
                 Guard.Require(prior.Status == AgentToolStatus.Authorized || prior.Status == AgentToolStatus.Succeeded && policy.Descriptor.Risk == CapabilityRisk.ReadOnly && !policy.Descriptor.Irreversible,
                     409, "This tool invocation cannot be replayed automatically.");
-                if (policy.Descriptor.RequiresOwnerApproval || policy.Descriptor.Irreversible || !policy.Grant.PreApproved && policy.Descriptor.Risk != CapabilityRisk.ReadOnly)
+                if (policy.Descriptor.RequiresOwnerApproval || policy.Descriptor.Irreversible || state.AgentActions.GetValueOrDefault(call.Id)?.RequiresOwnerApproval == true || !policy.Grant.PreApproved && policy.Descriptor.Risk != CapabilityRisk.ReadOnly)
                     Guard.Require(prior.ApprovedHash == hash && prior.ApprovedBy is not null, 403, "Exact owner approval is required.");
                 var preparing = prior with { Status = AgentToolStatus.Preparing, CompletedAt = null };
                 state.AgentToolInvocations[call.Id] = preparing; return (policy.Context, policy.Descriptor, policy.Grant, preparing);
@@ -186,7 +206,7 @@ public sealed class AgentToolGateway(IRuntimeStore store, TimeProvider clock, IC
                 state.AgentToolInvocations.Values.Count(x => x.TaskId == call.TaskId) < policy.Context.Specialist.MaximumCalls &&
                 state.AgentToolInvocations.Values.Count(x => x.GrantId == call.GrantId) < policy.Grant.MaximumCalls,
                 429, "Agent tool invocation limit reached.");
-            var approval = policy.Descriptor.RequiresOwnerApproval || policy.Descriptor.Irreversible || !policy.Grant.PreApproved && policy.Descriptor.Risk != CapabilityRisk.ReadOnly;
+            var approval = policy.Descriptor.RequiresOwnerApproval || policy.Descriptor.Irreversible || state.AgentActions.GetValueOrDefault(call.Id)?.RequiresOwnerApproval == true || !policy.Grant.PreApproved && policy.Descriptor.Risk != CapabilityRisk.ReadOnly;
             var invocation = new AgentToolInvocation(call.Id, call.GrantId, policy.Context.Run.Id, call.TaskId, claimHash, call.CapabilityId, call.CapabilityVersion,
                 hash, call.DataClass, approval ? AgentToolStatus.AwaitingApproval : AgentToolStatus.Preparing, clock.GetUtcNow(), policy.Grant.ExpiresAt);
             state.AgentToolInvocations.Add(call.Id, invocation); return (policy.Context, policy.Descriptor, policy.Grant, invocation);
@@ -265,6 +285,9 @@ public static class AgentToolLifecycle
             if (erase) state.AgentToolGrants.Remove(grant.Id);
             else state.AgentToolGrants[grant.Id] = grant with { RevokedAt = grant.RevokedAt ?? at };
         }
-        if (erase) foreach (var id in state.AgentToolInvocations.Values.Where(x => x.RunId == runId).Select(x => x.Id).ToArray()) state.AgentToolInvocations.Remove(id);
+        if (erase) {
+            foreach (var id in state.AgentToolInvocations.Values.Where(x => x.RunId == runId).Select(x => x.Id).ToArray()) state.AgentToolInvocations.Remove(id);
+            foreach (var id in state.AgentActions.Values.Where(x => x.RunId == runId).Select(x => x.Id).ToArray()) state.AgentActions.Remove(id);
+        }
     }
 }

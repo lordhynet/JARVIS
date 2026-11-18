@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Workflows;
 
 namespace Jarvis.Orchestrator.Runtime;
 
@@ -129,6 +130,27 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
 
     public Task<DeliveredDeviceCommand?> ClaimAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default) =>
         ClaimAsync(request, homeAssistantOnly: false, ct);
+
+    internal Task<bool> ConfirmGovernedAgentAsync(Guid id, CancellationToken ct) => transaction.ExecuteAsync(async writes => {
+        var s = writes.Runtime;
+        var p = s.AgentActions.GetValueOrDefault(id); var invocation = s.AgentToolInvocations.GetValueOrDefault(id);
+        Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.Agent && AgentToolExecutionScope.Contains(id, id) &&
+            p is not null && AgentActionAuthority.Current(s, p, clock.GetUtcNow()) &&
+            invocation is not null && invocation.Status == AgentToolStatus.Executing && invocation.TaskId == id &&
+            invocation.GrantId == p.GrantId && invocation.CapabilityId == p.CapabilityId, 403, "Gateway action authorization is required.");
+        var command = await writes.ReadDeviceCommandAsync(id);
+        Guard.Require(command is not null && command.Status == DeviceCommandStatus.AwaitingConfirmation && command.Origin == InvocationOrigin.Agent &&
+            command.GrantId == p.DeviceGrantId && command.DeviceId == p.DeviceId && command.ArgumentsJson == p.ArgumentsJson &&
+            command.ArgumentHash == PrivacyData.Hash(p.ArgumentsJson), 409, "Device proposal changed.");
+        var grant = await writes.ReadDeviceGrantAsync(p.DeviceGrantId);
+        Guard.Require(HasActiveGrant(s, grant, p.DeviceId, command.ExpiresAt, clock.GetUtcNow()) && MatchesGrantedArguments(command, grant), 403, "Device grant changed.");
+        var descriptor = capabilities.Get(command.CapabilityId, command.CapabilityVersion);
+        var preapproved = descriptor.Risk == DeviceCapabilityRisk.Reversible && grant.PreApproved && s.AgentToolGrants[p.GrantId].PreApproved && !p.RequiresOwnerApproval;
+        Guard.Require(preapproved || invocation.ApprovedBy is not null && invocation.ApprovedHash == invocation.ArgumentsHash,
+            403, "Exact owner approval is required before action dispatch.");
+        await writes.SaveDeviceCommandAsync(command with { Status = DeviceCommandStatus.Pending,
+            ConfirmedAt = Timestamp(clock.GetUtcNow()), ConfirmedBy = invocation.ApprovedBy ?? "core:preapproved-agent-goal" }); return true;
+    }, ct);
 
     public Task<DeliveredDeviceCommand?> ClaimHomeAssistantAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default) =>
         ClaimAsync(request, homeAssistantOnly: true, ct);
@@ -283,6 +305,9 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
 
     private async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
     {
+        if (writes.Runtime.AgentActions.TryGetValue(command.Id, out var action) &&
+            (!AgentActionAuthority.Current(writes.Runtime, action, clock.GetUtcNow()) ||
+             writes.Runtime.AgentToolInvocations.GetValueOrDefault(command.Id)?.Status is not (AgentToolStatus.Succeeded or AgentToolStatus.Executing))) return null;
         if (IsHomeAssistant(command) && AutomaticOrigin(command.Origin) && writes.Runtime.AgentControls.EffectivePaidAiPaused)
             return null;
         var grant = await writes.ReadDeviceGrantAsync(command.GrantId);

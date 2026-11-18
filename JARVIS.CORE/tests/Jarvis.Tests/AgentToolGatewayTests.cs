@@ -167,7 +167,7 @@ public sealed class AgentToolGatewayTests
         Assert.Contains(typeof(AgentToolGateway), parameters);
         Assert.DoesNotContain(typeof(Jarvis.Orchestrator.Intelligence.ITextReasoningProvider), parameters);
         Assert.DoesNotContain(typeof(IAgentToolHandler), parameters); Assert.DoesNotContain(typeof(HttpClient), parameters);
-        Assert.All(parameters, type => Assert.Contains(type, new[] { typeof(AgentToolGateway), typeof(IRuntimeStore), typeof(TimeProvider), typeof(IWorkflowCatalog), typeof(IDomainRegistry) }));
+        Assert.All(parameters, type => Assert.Contains(type, new[] { typeof(AgentToolGateway), typeof(IRuntimeStore), typeof(TimeProvider), typeof(IWorkflowCatalog), typeof(IDomainRegistry), typeof(AgentActionService) }));
         Assert.Null(typeof(AgentToolExecutionScope).GetMethod("Enter", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
     }
 

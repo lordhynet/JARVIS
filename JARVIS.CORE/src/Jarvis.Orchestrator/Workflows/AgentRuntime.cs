@@ -60,14 +60,17 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
         var descriptor = await workflowCatalog.ResolveAsync(request.Workflow, ct);
         RequireConsent(descriptor, request.AllowCloudProcessing);
         var brief = string.IsNullOrWhiteSpace(request.Brief) ? "" : Guard.Text(request.Brief, "Goal brief", 2000);
+        var occurrence = "manual:" + Hash(brief) + (request.HoldForSetup ? ":setup" : "");
         return await store.UpdateAsync(s =>
         {
             if (s.AgentRuns.TryGetValue(request.RequestId, out var existing))
             {
                 Guard.Require(existing.DeletedAt is null && existing.Workflow == request.Workflow && existing.AllowCloudProcessing == request.AllowCloudProcessing &&
-                    existing.Occurrence == "manual:" + Hash(brief), 409, "Agent request ID belongs to different or deleted work."); return View(s, existing);
+                    existing.Occurrence == occurrence, 409, "Agent request ID belongs to different or deleted work."); return View(s, existing);
             }
-            return View(s, Create(s, request.RequestId, null, "manual:" + Hash(brief), request.Workflow, request.AllowCloudProcessing, brief, clock.GetUtcNow(), descriptor));
+            var created = Create(s, request.RequestId, null, occurrence, request.Workflow, request.AllowCloudProcessing, brief, clock.GetUtcNow(), descriptor);
+            if (request.HoldForSetup) s.AgentRuns[created.Id] = created = created with { Status = AgentRunStatus.AwaitingSetup, Deadline = clock.GetUtcNow().AddDays(1) };
+            return View(s, created);
         }, ct);
     }
     private AgentRun Create(RuntimeState s, Guid id, Guid? scheduleId, string occurrence, string workflow, bool consent, string brief, DateTimeOffset now, WorkflowDescriptor descriptor)
@@ -109,12 +112,12 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             if (!s.AgentRuns.ContainsKey(id)) { Create(s, id, schedule.Id, occurrence, schedule.Workflow, schedule.AllowCloudProcessing, schedule.Title, now, available[schedule.Workflow]); count++; }
             s.AgentSchedules[schedule.Id] = schedule with { LastOccurrence = occurrence };
         }
-        foreach (var run in s.AgentRuns.Values.Where(x => x.DeletedAt is null && x.Status is AgentRunStatus.Queued or AgentRunStatus.Running).ToList())
+        foreach (var run in s.AgentRuns.Values.Where(x => x.DeletedAt is null && x.Status is AgentRunStatus.Queued or AgentRunStatus.Running or AgentRunStatus.AwaitingSetup).ToList())
         {
             var tasks = run.TaskIds.Select(id => s.AgentTasks[id]).ToList();
             if (run.Deadline <= now)
             {
-                foreach (var task in tasks.Where(x => x.Status is AgentTaskStatus.Queued or AgentTaskStatus.Running or AgentTaskStatus.RetryScheduled))
+                foreach (var task in tasks.Where(x => x.Status is AgentTaskStatus.Queued or AgentTaskStatus.Running or AgentTaskStatus.RetryScheduled or AgentTaskStatus.AwaitingApproval or AgentTaskStatus.AwaitingReceipt))
                     s.AgentTasks[task.Id] = task with { Status = AgentTaskStatus.Failed, ClaimToken = null, ErrorCode = "deadline_expired", CompletedAt = now };
                 s.AgentRuns[run.Id] = run with { Status = AgentRunStatus.Expired }; continue;
             }
