@@ -54,6 +54,12 @@ public sealed class DeviceCredentials(IRuntimeReader store, ICoreTransaction tra
             if (browser is not null) {
                 Guard.Require(!state.DeviceCredentials.TryGetValue(deviceId, out var old) || old.Revoked, 409,
                     "This browser already has an active credential. Reconnect with it or revoke it before enrolling again.");
+                if (state.Devices.TryGetValue(deviceId, out var existing)) {
+                    var registration = existing.Registration;
+                    Guard.Require(registration.Capabilities.HasDisplay && registration.Capabilities.Extra?.Contains(VoiceAccessRules.BrowserCompanionTag) == true &&
+                        (old?.Purpose == OwnerBrowserPurpose || old is null && registration.Kind == DeviceKind.WindowsAgent), 409,
+                        "A non-browser device already uses this ID. Enroll with a new browser ID.");
+                }
                 var capabilities = browser.Capabilities with { CanControlHome = false, Extra = [VoiceAccessRules.BrowserCompanionTag] };
                 state.Devices[deviceId] = new(new(deviceId, browser.Name.Trim(), browser.Kind, capabilities, now), now, false);
             }

@@ -8,18 +8,33 @@ using WebPush;
 
 namespace Jarvis.Api.Notifications;
 
-public interface IPushSender { Task SendAsync(BrowserPushSubscription subscription, Guid noticeId, CancellationToken ct); }
+public interface IPushSender
+{
+    Task SendAsync(BrowserPushSubscription subscription, Guid noticeId, CancellationToken ct);
+    Task SendAsync(BrowserPushSubscription subscription, AgentNotification notice, CancellationToken ct) => SendAsync(subscription, notice.Id, ct);
+}
 public static class PushEligibility
 {
     public static bool HasDispatchWork(RuntimeState s, DateTimeOffset now, string fingerprint)
         => HasDispatchWork(s, now, new HashSet<string> { fingerprint });
-    public static bool HasDispatchWork(RuntimeState s, DateTimeOffset now, IReadOnlySet<string> fingerprints)
+    public static bool HasDispatchWork(RuntimeState s, DateTimeOffset now, IReadOnlySet<string> fingerprints, bool travelWhenPaused = true)
     {
         if (s.PushDeliveries.Values.Any(d => !s.AgentOutbox.ContainsKey(d.NotificationId) || !s.PushSubscriptions.ContainsKey(d.SubscriptionId))) return true;
-        return !s.AgentControls.EffectiveAgentsPaused && !AgentRuntime.IsQuiet(s.AgentControls, now) &&
-            s.AgentOutbox.Values.Any(n => n.Delivered && !n.Read && n.ExpiresAt > now &&
+        return s.AgentOutbox.Values.Any(n => Allowed(s, n, now, travelWhenPaused) &&
                 s.PushSubscriptions.Values.Any(subscription => fingerprints.Contains(subscription.KeyFingerprint) &&
                     (!s.PushDeliveries.TryGetValue(AgentRuntime.StableId($"push-v1:{n.Id}:{subscription.Id}"), out var delivery) || IsReady(delivery, now))));
+    }
+
+    public static bool PublicTravel(AgentNotification notice) => notice.Category == NotificationCategories.Travel && notice.RunId == Guid.Empty &&
+        notice.TravelAuthority is { RouteId: var route, RouteRevision: > 0, LineId.Length: > 0, Occurrence.Length: > 0 } && route != Guid.Empty &&
+        notice.PublicSummary is { Length: > 0 } summary && System.Text.Encoding.UTF8.GetByteCount(summary) <= 240 && !summary.Any(char.IsControl);
+    public static bool Allowed(RuntimeState state, AgentNotification notice, DateTimeOffset now, bool travelWhenPaused)
+    {
+        if (!notice.Delivered || notice.Read || notice.CreatedAt > now || notice.DeliverAfter > now || notice.ExpiresAt <= now) return false;
+        // Core writes this authority only inside an opted-in window and bounds expiry to its end.
+        // Route changes atomically expire it. Do not nest a travel-store read inside the runtime transaction.
+        if (notice.Category == NotificationCategories.Travel) return PublicTravel(notice) && (!state.AgentControls.EffectiveAgentsPaused || travelWhenPaused);
+        return !state.AgentControls.EffectiveAgentsPaused && !AgentRuntime.IsQuiet(state.AgentControls, now);
     }
 
     public static bool IsReady(PushDelivery delivery, DateTimeOffset now) =>
@@ -27,16 +42,26 @@ public static class PushEligibility
         (delivery.Status == "Pending" || delivery.Status == "Sending" && delivery.LeaseExpiresAt <= now);
 }
 
-public sealed class WebPushSender(IHttpClientFactory clients, IConfiguration config) : IPushSender
+public sealed class WebPushSender(IHttpClientFactory clients, IConfiguration config, TimeProvider clock) : IPushSender
 {
-    public async Task SendAsync(BrowserPushSubscription subscription, Guid noticeId, CancellationToken ct)
+    public const string PrivateBody = "Open your private JARVIS inbox for a new update.";
+    public static string Payload(Guid id, AgentNotification? notice = null)
+    {
+        var travel = notice is not null && PushEligibility.PublicTravel(notice);
+        return JsonSerializer.Serialize(new { title = travel ? "JARVIS travel" : "JARVIS update", category = travel ? NotificationCategories.Travel : NotificationCategories.Agent,
+            body = travel ? notice!.PublicSummary : PrivateBody, expiresAt = travel ? notice!.ExpiresAt : (DateTimeOffset?)null, tag = id.ToString() });
+    }
+    public Task SendAsync(BrowserPushSubscription subscription, Guid noticeId, CancellationToken ct) => SendPayloadAsync(subscription, Payload(noticeId), ct);
+    public Task SendAsync(BrowserPushSubscription subscription, AgentNotification notice, CancellationToken ct) => SendPayloadAsync(subscription, Payload(notice.Id, notice), ct,
+        PushEligibility.PublicTravel(notice) ? Math.Clamp((int)Math.Floor((notice.ExpiresAt - clock.GetUtcNow()).TotalSeconds), 0, 300) : 300);
+    private async Task SendPayloadAsync(BrowserPushSubscription subscription, string payload, CancellationToken ct, int ttl = 300)
     {
         PushNotifications.ValidateEndpoint(subscription.Endpoint);
         using var sender = new WebPushClient(clients.CreateClient("push"));
         var keys = new VapidDetails(config["Push:Subject"], config["Push:PublicKey"], config["Push:PrivateKey"]);
         await sender.SendNotificationAsync(new PushSubscription(subscription.Endpoint, subscription.P256dh, subscription.Auth),
-            JsonSerializer.Serialize(new { title = "JARVIS update", body = "Open your private JARVIS inbox for a new update.", tag = noticeId.ToString() }),
-            new Dictionary<string, object> { ["vapidDetails"] = keys, ["TTL"] = 300 }, ct);
+            payload,
+            new Dictionary<string, object> { ["vapidDetails"] = keys, ["TTL"] = ttl }, ct);
     }
 }
 
@@ -73,20 +98,16 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
     {
         if (!Ready) return false;
         var nowCheck = clock.GetUtcNow();
-        if (!await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, nowCheck, BrowserOwnerAccess.ActiveFingerprints(s, config)), ct)) return false;
+        var travelWhenPaused = config.GetValue("Travel:NotifyWhenAgentsPaused", true);
+        if (!await store.ReadAsync(s => PushEligibility.HasDispatchWork(s, nowCheck, BrowserOwnerAccess.ActiveFingerprints(s, config), travelWhenPaused), ct)) return false;
         var claim = await store.UpdateAsync(s =>
         {
             var now = clock.GetUtcNow();
             var fingerprints = BrowserOwnerAccess.ActiveFingerprints(s, config);
             foreach (var obsolete in s.PushDeliveries.Values.Where(x => !s.AgentOutbox.ContainsKey(x.NotificationId) || !s.PushSubscriptions.ContainsKey(x.SubscriptionId)).ToList()) s.PushDeliveries.Remove(obsolete.Id);
-            if (!PushEligibility.HasDispatchWork(s, now, fingerprints)) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
-            if (s.AgentControls.EffectiveAgentsPaused) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
-            var local = TimeOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, Jarvis.Orchestrator.Training.TrainingProjection.Zone(s.AgentControls.TimeZone)).DateTime);
-            var start = AgentRuntime.LocalTime(s.AgentControls.QuietStart); var end = AgentRuntime.LocalTime(s.AgentControls.QuietEnd);
-            var quiet = start != end && (start < end ? local >= start && local < end : local >= start || local < end);
-            if (quiet) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
+            if (!PushEligibility.HasDispatchWork(s, now, fingerprints, travelWhenPaused)) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null, Notice: (AgentNotification?)null);
             // The durable inbox owns freshness and quiet-hour release.
-            foreach (var notice in s.AgentOutbox.Values.Where(x => x.Delivered && !x.Read && x.ExpiresAt > now))
+            foreach (var notice in s.AgentOutbox.Values.Where(x => PushEligibility.Allowed(s, x, now, travelWhenPaused)))
                 foreach (var subscription in s.PushSubscriptions.Values.Where(x => fingerprints.Contains(x.KeyFingerprint)))
                 {
                     var id = AgentRuntime.StableId($"push-v1:{notice.Id}:{subscription.Id}");
@@ -94,15 +115,15 @@ public sealed class PushNotifications(IRuntimeStore store, IConfiguration config
                 }
             var next = s.PushDeliveries.Values.OrderBy(x => x.AvailableAt).FirstOrDefault(x =>
                 PushEligibility.IsReady(x, now) &&
-                s.AgentOutbox.TryGetValue(x.NotificationId, out var note) && !note.Read && note.ExpiresAt > now &&
+                s.AgentOutbox.TryGetValue(x.NotificationId, out var note) && PushEligibility.Allowed(s, note, now, travelWhenPaused) &&
                 s.PushSubscriptions.TryGetValue(x.SubscriptionId, out var subscription) && fingerprints.Contains(subscription.KeyFingerprint));
-            if (next is null) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null);
+            if (next is null) return (Delivery: (PushDelivery?)null, Subscription: (BrowserPushSubscription?)null, Notice: (AgentNotification?)null);
             var owned = next with { Status = "Sending", Attempt = next.Attempt + 1, ClaimToken = Guid.NewGuid(), LeaseExpiresAt = now.AddSeconds(30) };
-            s.PushDeliveries[owned.Id] = owned; return (Delivery: (PushDelivery?)owned, Subscription: (BrowserPushSubscription?)s.PushSubscriptions[owned.SubscriptionId]);
+            s.PushDeliveries[owned.Id] = owned; return (Delivery: (PushDelivery?)owned, Subscription: (BrowserPushSubscription?)s.PushSubscriptions[owned.SubscriptionId], Notice: (AgentNotification?)s.AgentOutbox[owned.NotificationId]);
         }, ct);
         if (claim.Delivery is null) return false;
         var succeeded = false; var gone = false;
-        try { await sender.SendAsync(claim.Subscription!, claim.Delivery.NotificationId, ct); succeeded = true; }
+        try { await sender.SendAsync(claim.Subscription!, claim.Notice!, ct); succeeded = true; }
         catch (WebPushException error) { gone = error.StatusCode is HttpStatusCode.Gone or HttpStatusCode.NotFound; }
         catch (HttpRequestException) { }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }

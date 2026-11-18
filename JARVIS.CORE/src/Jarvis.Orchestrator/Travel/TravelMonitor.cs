@@ -6,6 +6,30 @@ namespace Jarvis.Orchestrator.Travel;
 
 public sealed class TravelMonitor(ITravelStore store, ITravelSource source, TimeProvider clock, ITravelDeliveryPolicy policy)
 {
+    public Task<TravelSimulationResult> SimulateAsync(TravelSimulationRequest request, CancellationToken ct = default)
+    {
+        Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.ManualClient, 403, "Travel simulation requires a manual owner request.");
+        Guard.Require(request.RequestId != Guid.Empty && TravelPolicy.ValidId(request.LineId) && request.State is "good" or "minor" or "severe" or "suspended", 400, "Choose a saved line, a request ID, and good/minor/severe/suspended state.");
+        var hash = PrivacyData.Hash(System.Text.Json.JsonSerializer.Serialize(request));
+        return store.UpdateAsync((state, runtime) => {
+            var now = clock.GetUtcNow(); var receipts = (state.Monitor.Simulations ?? new Dictionary<Guid, TravelSimulationReceipt>()).Where(p => p.Value.At > now.AddDays(-1)).ToDictionary();
+            if (receipts.TryGetValue(request.RequestId, out var receipt)) { Guard.Require(receipt.Hash == hash, 409, "Simulation request ID was reused for different input."); return new TravelSimulationResult(true, receipt.NotificationIds); }
+            Guard.Require(receipts.Count < 1000 && !(state.Monitor.LeaseUntil > now), 409, "A poll is running or the daily simulation limit was reached.");
+            // Fixed public fixture strings only: owner text can never become a lock-screen summary.
+            var line = state.Routes.Values.Where(r => TravelPolicy.Active(r, now)).SelectMany(r => r.Lines).FirstOrDefault(l => l.Id.Equals(request.LineId, StringComparison.OrdinalIgnoreCase))
+                ?? throw new DomainException(400, "Simulation requires a saved line inside its opted-in window.");
+            var (code, description) = request.State switch { "good" => (10, "Good Service"), "minor" => (9, "Minor Delays"), "severe" => (6, "Severe Delays"), _ => (2, "Suspended") };
+            var before = runtime.AgentOutbox.Keys.ToHashSet();
+            Observe(state, runtime, [new(line.Id, line.Name, code, description, request.State == "good" ? "Simulation recovery." : "Simulation: signal failure.", now)], now, policy.NotifyWhenAgentsPaused);
+            var ids = runtime.AgentOutbox.Keys.Except(before).ToArray();
+            foreach (var id in ids) {
+                var notice = runtime.AgentOutbox[id]; var summary = TravelPolicy.ClipUtf8("Simulation: " + notice.PublicSummary, 240);
+                runtime.AgentOutbox[id] = notice with { Title = summary, PublicSummary = summary };
+            }
+            receipts[request.RequestId] = new(hash, now, ids);
+            state.Monitor = state.Monitor with { Simulations = receipts }; return new TravelSimulationResult(false, ids);
+        }, ct);
+    }
     public async Task<bool> PollAsync(CancellationToken ct = default)
     {
         var now = clock.GetUtcNow();

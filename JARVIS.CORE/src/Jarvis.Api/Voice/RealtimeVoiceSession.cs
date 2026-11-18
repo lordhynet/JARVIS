@@ -111,15 +111,15 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
 
     private async Task<string> ReadInstructionsAsync(CancellationToken ct)
     {
-        var travel = await tools.TravelContextAsync(ct);
-        var travelText = travel.Length == 0 ? "" : "\n" + travel;
         if (windowLocked || await runtime.ReadAsync(s => VoiceAccessRules.Restricted(s, lease.SessionId), ct))
         {
             sessionId = lease.SessionId;
             recommendedMode = VoiceMode.Everyday;
             return RealtimeVoicePrompt.Build(RealtimeVoicePrompt.DefaultPersona, "{}", "{}", continuing: true) +
-                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information, explicitly permitted home grants, and granted laptop media or lock controls. Never reveal saved private information or app/folder aliases." + travelText;
+                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information, explicitly permitted home grants, and granted laptop media or lock controls. Never reveal saved private information or app/folder aliases. Travel status requires a public line named by the speaker; saved routes and stops are private.";
         }
+        var travel = await tools.TravelContextAsync(ct);
+        var travelText = travel.Length == 0 ? "" : "\n" + travel;
         var session = await sessions.GetAsync(lease.SessionId, ct);
         Guard.Require(session is not null, 404, "Session not found.");
         if (!ReferenceEquals(VoiceConversationMemory.RefreshSummary(session), session))

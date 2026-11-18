@@ -16,5 +16,9 @@ public static class TravelEndpoints
         group.MapPost("/routes", (SaveTravelRouteRequest request, ICommandHandler<SaveTravelRoute, TravelRoute> h, CancellationToken ct) => h.HandleAsync(new(null, request), ct));
         group.MapPut("/routes/{id:guid}", (Guid id, SaveTravelRouteRequest request, ICommandHandler<SaveTravelRoute, TravelRoute> h, CancellationToken ct) => h.HandleAsync(new(id, request), ct));
         group.MapDelete("/routes/{id:guid}", (Guid id, int revision, ICommandHandler<DeleteTravelRoute, bool> h, CancellationToken ct) => h.HandleAsync(new(id, revision), ct));
+        group.MapPost("/simulate", (TravelSimulationRequest request, IConfiguration config, IHostEnvironment environment, ICommandHandler<SimulateTravel, TravelSimulationResult> h, CancellationToken ct) => {
+            Jarvis.Orchestrator.Runtime.Guard.Require(!environment.IsProduction() && config.GetValue("Travel:AllowSimulation", false), 403, "Travel simulation is disabled and is never available in Production.");
+            return h.HandleAsync(new(request), ct);
+        });
     }
 }

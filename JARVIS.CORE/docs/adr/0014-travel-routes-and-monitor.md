@@ -15,3 +15,5 @@ Privacy export includes routes and line state. Full erasure clears both and rese
 Migration: 20261118194620_TravelRoutesAndMonitor follows 20261118184236_RuntimeHotControlState. Stop writers and back up before migration. Down drops the three new tables and therefore loses travel configuration and observation history; export/backup first. Existing runtime data is unchanged by this migration. Restore a matching backup and binary when rolling back a release. Local disposable PostgreSQL rehearsal is separate from production deployment.
 
 No live TfL calls, paid providers, phone installation or hardware acceptance form part of this implementation run.
+
+Item 15 review follow-up R3-01 tightens locked privacy: only an explicitly named public line is accepted while locked; saved route selections and saved-stop arrivals are refused. Locked voice windows receive no saved-route alert context. The bounded next-window alert context applies to unlocked windows only.

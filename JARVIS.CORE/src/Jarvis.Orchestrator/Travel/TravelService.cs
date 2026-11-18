@@ -53,7 +53,9 @@ public sealed class TravelService(ITravelStore store, ITravelSource source, Time
     public async Task<object> VoiceAsync(string action, string? routeName, string? lineName, string? stopName, bool locked, CancellationToken ct)
     {
         Guard.Require(action is "status" or "arrivals" && !(routeName is not null && lineName is not null), 400, "Choose status or arrivals, with one route or line selector.");
-        var routes = (await ListAsync(ct)).Where(r => r.Enabled).ToArray();
+        Guard.Require(!locked || action == "status" && routeName is null && !string.IsNullOrWhiteSpace(lineName) && stopName is null,
+            403, "While locked, name a public TfL line for status. Saved routes and stops are private.");
+        var routes = locked ? [] : (await ListAsync(ct)).Where(r => r.Enabled).ToArray();
         TravelRoute? selected = null;
         if (!string.IsNullOrWhiteSpace(routeName)) selected = routes.SingleOrDefault(r => r.Name.Equals(routeName.Trim(), StringComparison.OrdinalIgnoreCase) || r.Id.ToString().Equals(routeName, StringComparison.OrdinalIgnoreCase))
             ?? throw new DomainException(404, "No enabled saved route matched. Choose a public line instead.");

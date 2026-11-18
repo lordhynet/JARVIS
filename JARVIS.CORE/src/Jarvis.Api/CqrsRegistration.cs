@@ -43,6 +43,7 @@ public static class CqrsRegistration
         Query<GetTravelCatalogue, IReadOnlyList<TravelLine>, TravelQueries>(services);
         Command<SaveTravelRoute, TravelRoute, TravelCommands>(services);
         Command<DeleteTravelRoute, bool, TravelCommands>(services);
+        Command<SimulateTravel, TravelSimulationResult, TravelCommands>(services);
         services.AddSingleton<IWorkflowReader>(s => s.GetRequiredService<IWorkflowStore>());
         services.AddSingleton<WorkflowCommandHandlers>();
         services.AddSingleton<AgentCommandHandlers>();
