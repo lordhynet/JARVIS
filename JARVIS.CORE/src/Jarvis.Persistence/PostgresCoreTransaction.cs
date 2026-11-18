@@ -3,6 +3,7 @@ using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
 using Microsoft.EntityFrameworkCore;
+using Jarvis.Orchestrator.Domains;
 
 namespace Jarvis.Persistence;
 
@@ -33,6 +34,7 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         List<(ConversationSession Before, ConversationSession After)> sessions, CancellationToken ct) : ICoreTransactionWrites
     {
         public RuntimeState Runtime => runtime;
+        public async Task<DomainResolved?> ReadActiveDomainAsync(string key) => DomainRegistryProjection.Active(await PostgresDomainRegistryStore.Snapshot(db, ct), key);
 
         public Task<SessionAudioState?> ReadAudioStateAsync(Guid sessionId) =>
             PostgresSessionStore.ReadAudioStateAsync(db, sessionId, ct, lockSession: true);

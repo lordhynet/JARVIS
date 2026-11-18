@@ -25,6 +25,9 @@ public static class DomainEndpoints
         api.MapPost("/domains/{key}/disable", (string key, DisableDomainRequest request, HttpContext context, OwnerAuthorization owner, ICommandHandler<DisableDomain, DomainOperationReceipt> handler, CancellationToken ct) =>
             handler.HandleAsync(new(key, request, owner.Require(context, "domain.manage")), ct)).RequireAuthorization(CorePolicies.DomainManage);
         api.MapGet("/domains/{key}/state", (string key, IQueryHandler<GetUserDomainState, UserDomainState> handler, CancellationToken ct) => handler.HandleAsync(new(key), ct));
+        api.MapGet("/domains/{key}/memory", (string key, IQueryHandler<ListDomainMemory, IReadOnlyList<ContextMemoryItem>> handler, CancellationToken ct) => handler.HandleAsync(new(key), ct));
+        api.MapPost("/domains/{key}/memory", (string key, SaveContextMemoryRequest request, ICommandHandler<SaveDomainMemory, ContextMemoryItem> handler, CancellationToken ct) => handler.HandleAsync(new(key, request), ct));
+        api.MapDelete("/domains/{key}/memory/{id:guid}", (string key, Guid id, ICommandHandler<DeleteDomainMemory, bool> handler, CancellationToken ct) => handler.HandleAsync(new(key, id), ct));
         api.MapPut("/domains/{key}/state", (string key, SaveDomainStateRequest request, ICommandHandler<SaveUserDomainState, UserDomainState> handler, CancellationToken ct) => handler.HandleAsync(new(key, request), ct));
     }
 }

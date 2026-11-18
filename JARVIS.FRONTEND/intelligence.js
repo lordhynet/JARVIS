@@ -32,11 +32,14 @@ export function initIntelligence({ api, node, button, notice }) {
   domainsCard.append(node('h2', 'Domains'), node('p', 'Describe a domain to propose it. Review its access and missing features before approving an exact version with your owner key.'));
   const domainForm = document.createElement('form'); const requestText = document.createElement('textarea'); requestText.maxLength = 3000; requestText.rows = 3; requestText.required = true; requestText.setAttribute('aria-label', 'Describe a new domain');
   const cloudLabel = node('label', 'Allow cloud processing to generate this proposal'); const domainConsent = document.createElement('input'); domainConsent.type = 'checkbox'; domainConsent.required = true; cloudLabel.append(domainConsent);
-  const proposeButton = node('button', 'Generate domain proposal'); domainForm.append(requestText, cloudLabel, proposeButton); domainsCard.append(domainForm);
+  const sourcesLabel = node('label', 'Knowledge references: one HTTPS URL or import:UUID per line (up to six)'); const domainSources = document.createElement('textarea'); domainSources.rows = 2; domainSources.maxLength = 6100; domainSources.setAttribute('aria-label', 'Domain knowledge references'); sourcesLabel.append(domainSources);
+  const proposeButton = node('button', 'Generate domain proposal'); domainForm.append(requestText, sourcesLabel, node('small', 'URLs are stored as references; JARVIS does not fetch or verify them. Files must already be saved in Imports.'), cloudLabel, proposeButton); domainsCard.append(domainForm);
   const domainList = node('div', '', 'list'); domainsCard.append(domainList); let domainPending = null;
   domainForm.addEventListener('submit', async event => { event.preventDefault(); proposeButton.disabled = true;
-    try { const description = requestText.value.trim(); if (!domainPending || domainPending.description !== description) domainPending = { requestId: crypto.randomUUID(), description };
-      const proposal = await api('/domains/proposals', { ...domainPending, allowCloudProcessing: domainConsent.checked });
+    try { const description = requestText.value.trim(); const knowledgeSources = domainSources.value.split('\n').map(x => x.trim()).filter(Boolean).map(x => x.startsWith('import:') ? { kind: 'import', reference: x.slice(7) } : { kind: 'url', reference: x });
+      const fingerprint = JSON.stringify({ description, knowledgeSources }); if (!domainPending || domainPending.fingerprint !== fingerprint) domainPending = { requestId: crypto.randomUUID(), description, knowledgeSources, fingerprint };
+      const { fingerprint: _, ...proposalRequest } = domainPending;
+      const proposal = await api('/domains/proposals', { ...proposalRequest, allowCloudProcessing: domainConsent.checked });
       domainPending = null; notice(proposal.existingDomain ? 'An equivalent domain already exists. Review it below.' : 'Draft saved. Review its access and missing capabilities before owner approval.'); await load();
     } catch (error) { notice(error.message, true); } finally { proposeButton.disabled = false; }
   });
@@ -50,6 +53,18 @@ export function initIntelligence({ api, node, button, notice }) {
         node('p', preview.estimatedAiGbp === 0 ? 'Authored practice template: no AI cost.' : 'Assisted work requires separate cloud consent and the configured AI budget.'),
         node('p', 'Capabilities: ' + version.manifest.capabilities.map(c => c.id + ' (' + c.versionConstraint + ')').join(', ')));
       if (preview.unmetDependencies.length) row.append(node('p', 'Missing: ' + preview.unmetDependencies.join(' '), 'error'));
+      if (version.manifest.studyGuidance) row.append(node('p', 'Study guidance: ' + version.manifest.studyGuidance));
+      for (const source of version.manifest.knowledgeSources || []) row.append(node('p', 'Knowledge reference (' + source.kind + '): ' + source.reference));
+      const memory = node('div'); row.append(button('View memory for ' + definition.key, async () => {
+        const path = '/domains/' + encodeURIComponent(definition.key) + '/memory';
+        const items = await api(path); memory.replaceChildren(node('h4', 'Domain memory'), node('p', 'Personal notes need consent for assisted work. Sensitive notes stay local. Notes expire within 90 days; disabling a domain keeps them.'));
+        for (const item of items) { const entry = node('div'); entry.append(node('p', item.text), node('small', item.sensitivity + ' · ' + item.source.kind + ' · expires ' + new Date(item.expiresAt).toLocaleDateString()), button('Delete memory note', async () => { await api(path + '/' + item.id, undefined, 'DELETE'); entry.remove(); })); memory.append(entry); }
+        if (definition.status === 'Active') {
+          const note = document.createElement('textarea'); note.maxLength = 1200; note.setAttribute('aria-label', 'Memory note for ' + definition.key);
+          const sensitivity = document.createElement('select'); sensitivity.setAttribute('aria-label', 'Memory sensitivity'); for (const value of ['Personal', 'Sensitive']) { const option = node('option', value); option.value = value; sensitivity.append(option); }
+          memory.append(note, sensitivity, button('Save memory for ' + definition.key, async () => { await api(path, { requestId: crypto.randomUUID(), sourceKind: 'note', text: note.value, sensitivity: sensitivity.value, expiresAt: new Date(Date.now() + 30 * 86400000).toISOString() }); note.value = ''; notice('Domain memory saved for 30 days.'); }));
+        }
+      }), memory);
       const details = document.createElement('details'); details.append(node('summary', 'Exact manifest to approve'), node('pre', JSON.stringify(version.manifest, null, 2)), node('small', 'Manifest hash: ' + version.manifestHash)); row.append(details);
       const riskLabel = node('label', 'Approval risk class'); const approvalRisk = document.createElement('select'); approvalRisk.setAttribute('aria-label', 'Approval risk class');
       const riskChoices = preview.risk === 'General' ? ['General', 'Finance', 'Law', 'Health'] : [preview.risk];

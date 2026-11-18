@@ -46,6 +46,8 @@ public static class CqrsRegistration
         services.AddSingleton<ImportQueryHandlers>();
         services.AddSingleton<DomainCommandHandlers>();
         services.AddSingleton<DomainQueryHandlers>();
+        services.AddSingleton<ContextMemoryCommands>();
+        services.AddSingleton<ContextMemoryQueries>();
         services.AddSingleton<BudgetCommandHandlers>();
         services.AddSingleton<BudgetQueryHandlers>();
         services.AddSingleton<TrainingService>();
@@ -167,6 +169,9 @@ public static class CqrsRegistration
         Query<ListDomains, IReadOnlyList<DomainPreview>, DomainQueryHandlers>(services);
         Query<PreviewDomain, DomainPreview, DomainQueryHandlers>(services);
         Query<GetUserDomainState, UserDomainState, DomainQueryHandlers>(services);
+        Command<SaveDomainMemory, ContextMemoryItem, ContextMemoryCommands>(services);
+        Command<DeleteDomainMemory, bool, ContextMemoryCommands>(services);
+        Query<ListDomainMemory, IReadOnlyList<ContextMemoryItem>, ContextMemoryQueries>(services);
         Command<ApproveMonthlyBudget, BudgetApproval, BudgetCommandHandlers>(services);
         Command<RevokeMonthlyBudgetApproval, BudgetApproval, BudgetCommandHandlers>(services);
         Command<ClassifyLegacyBudgetCharge, GbpCommitment, BudgetCommandHandlers>(services);

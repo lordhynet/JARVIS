@@ -64,6 +64,7 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock)
 
     public static void Purge(RuntimeState s, ImportedDocument document, DateTimeOffset at)
     {
+        AgentRuntime.InvalidateSource(s, "import", document.Id);
         foreach (var group in s.SourceClaims.Values.Where(x => x.DocumentId == document.Id).GroupBy(x => x.StoryId).ToList())
         {
             if (s.Stories.TryGetValue(group.Key, out var story))

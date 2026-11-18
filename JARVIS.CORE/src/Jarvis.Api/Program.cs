@@ -208,6 +208,7 @@ foreach (var capability in BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCap
         s.GetRequiredService<IDeviceGrantStore>(), s.GetRequiredService<IDeviceCapabilityCatalog>(), s.GetRequiredService<DeviceCommandService>(), s.GetRequiredService<TimeProvider>()));
 }
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainFactory, Jarvis.Orchestrator.Domains.DomainFactory>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.ContextMemoryService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistry, Jarvis.Orchestrator.Domains.DomainRegistryService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis.Orchestrator.Domains.DomainCatalog>();
 builder.Services.AddSingleton<HubTickets>();

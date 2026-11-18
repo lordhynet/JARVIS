@@ -6,7 +6,7 @@ public sealed record ReopenCoreRequest(int ExpectedRevision, string Confirmation
 public sealed record RetentionPolicy(bool Enabled = false, int SessionDays = 180, int AnswerDays = 180, int VoiceDays = 30,
     int ProviderCacheDays = 7, int ArtifactDays = 30, int SweepMinutes = 60);
 public sealed record PrivacyCounts(int Sessions, int TrainingAnswers, int CoachingAnswers, int VoiceTurns, int ProviderResults,
-    int WorkflowArtifacts, int AgentArtifacts, int Imports = 0, int DeviceGrants = 0, int DeviceCommands = 0, int DeviceReceipts = 0);
+    int WorkflowArtifacts, int AgentArtifacts, int Imports = 0, int DeviceGrants = 0, int DeviceCommands = 0, int DeviceReceipts = 0, int ContextMemories = 0);
 public sealed record RetentionPreview(DateTimeOffset AsOf, string PolicyFingerprint, RetentionPolicy Policy, PrivacyCounts Eligible);
 public sealed record ApplyRetentionRequest(Guid RequestId, DateTimeOffset AsOf, string PolicyFingerprint, string Confirmation);
 public sealed record PrivacyJob(Guid Id, string Kind, string Fingerprint, DateTimeOffset CompletedAt, PrivacyCounts Removed);
@@ -26,4 +26,5 @@ public sealed record CoreDataExport(int SchemaVersion, DateTimeOffset ExportedAt
     IReadOnlyList<BudgetApproval>? BudgetApprovals = null, IReadOnlyList<BudgetManagementReceipt>? BudgetReceipts = null,
     IReadOnlyList<VoiceCoaching>? VoiceCoachings = null, IReadOnlyList<ProviderAttempt>? ProviderAttempts = null, DomainRegistryExport? Domains = null,
     IReadOnlyList<AgentToolGrant>? AgentToolGrants = null, IReadOnlyList<AgentToolInvocation>? AgentToolInvocations = null,
-    IReadOnlyList<AgentActionProposal>? AgentActions = null, IReadOnlyDictionary<Guid, DeviceVoiceAuthority>? DeviceVoiceAuthorities = null);
+    IReadOnlyList<AgentActionProposal>? AgentActions = null, IReadOnlyDictionary<Guid, DeviceVoiceAuthority>? DeviceVoiceAuthorities = null,
+    IReadOnlyList<ContextMemoryItem>? ContextMemories = null);
