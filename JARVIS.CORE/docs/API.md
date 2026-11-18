@@ -236,4 +236,25 @@ Locked windows receive no saved conversation/task/practice context or private pe
 
 Terminal budget failures retain their error detail and emit a specific ended reason: `serious_daily_cap` or `gbp_budget_ceiling`. A successful retry after the previous window settles remains permitted by the existing accounting rules.
 
-See [the locked voice ADR](adr/0004-locked-voice-boundary.md). The Windows tray app and travel tool are subsequent implementations.
+See [the locked voice ADR](adr/0004-locked-voice-boundary.md). See the Windows companion sources and ADRs 0014/0015 for the implemented public travel tool and bounded alerts.
+
+## Saved London routes and public travel
+
+All /api/travel endpoints require the existing Owner policy. Native companion credentials cannot edit routes or invoke simulation.
+
+| Method | Route | Result |
+|---|---|---|
+| GET | /api/travel/routes | Saved route records and revisions |
+| GET | /api/travel/lines | Daily-cached public TfL line catalogue |
+| POST | /api/travel/routes | Create using SaveTravelRouteRequest; requestId is also the stable new route ID |
+| PUT | /api/travel/routes/{id} | Update with expectedRevision and a fresh requestId |
+| DELETE | /api/travel/routes/{id}?revision=1 | Delete the matching revision and expire its outstanding travel notices |
+| POST | /api/travel/simulate | Explicit non-Production owner simulation only |
+
+SaveTravelRouteRequest carries requestId, expectedRevision (null for create), name, lineIds, optional stopIds, windows, enabled and timeZone=Europe/London. Each window has days (weekday names), start and end in HH:mm. Start weekdays own overnight windows. Limits are ten routes, twelve lines/stops per route and eight windows. Retrying unchanged input with the same requestId is idempotent; different input or a stale revision returns 409. Public line/stop metadata is validated upstream without exposing the private route name.
+
+Simulation body: { "requestId": "a fresh UUID", "lineId": "jubilee", "state": "severe" }. Allowed states are good, minor, severe and suspended. The saved line must currently be inside its route window. Two distinct requests are required to confirm a new state; exact replay is not a second observation. Results contain replayed and notificationIds. Fixed synthetic summaries are labelled Simulation. Travel:AllowSimulation must be true and Production always returns 403. Do not use simulation as a Production smoke test.
+
+The code-owned core_travel voice tool supports read-only status and arrivals. It accepts route/line/stop selectors, hides saved route names while locked, and caps saved-stop arrivals at five. It cannot edit, book or send arbitrary URLs. Browser editing is in Daily briefing; native Android remains audio-only. See ADRs 0014 and 0015 and the draft 0.3 release notes for monitoring, privacy, freshness and rollback.
+
+Round-3 privacy correction: while locked, core_travel accepts status only for a public line explicitly named by the speaker. It refuses saved route selectors, implicit saved-route status and all saved-stop arrivals, and locked windows receive no saved-route alert context.

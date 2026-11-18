@@ -14,6 +14,10 @@ public sealed record TravelLineState(string LineId, TravelStatus? Confirmed = nu
     string? CandidateHash = null, TravelStatus? Candidate = null, int CandidateCount = 0, DateTimeOffset? LastSeenAt = null,
     DateTimeOffset? LastNoticeAt = null, TravelStatus? LastNotified = null, IReadOnlyList<string>? WindowKeys = null);
 public sealed record TravelMonitorState(DateTimeOffset? NextPollAt = null, Guid? Claim = null, DateTimeOffset? LeaseUntil = null,
-    int Failures = 0, DateOnly? NoticeDay = null, int DisruptionNotices = 0, string? LastError = null);
+    int Failures = 0, DateOnly? NoticeDay = null, int DisruptionNotices = 0, string? LastError = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<Guid, TravelSimulationReceipt>? Simulations = null);
+public sealed record TravelSimulationRequest(Guid RequestId, string LineId, string State);
+public sealed record TravelSimulationReceipt(string Hash, DateTimeOffset At, IReadOnlyList<Guid> NotificationIds);
+public sealed record TravelSimulationResult(bool Replayed, IReadOnlyList<Guid> NotificationIds);
 public sealed record TravelNoticeAuthority(Guid RouteId, int RouteRevision, string LineId, string Occurrence);
 public static class NotificationCategories { public const string Agent = "Agent", Travel = "Travel"; }

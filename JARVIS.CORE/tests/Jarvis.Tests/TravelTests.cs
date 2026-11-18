@@ -158,8 +158,11 @@ public sealed class TravelTests
     {
         var rig = new TravelRig(); var lines = new[] { FakeTravelSource.Jubilee, new TravelLine("northern", "Northern", "tube"), new("line1", "Line 1", "tube"), new("line2", "Line 2", "tube") };
         await rig.Add(TravelRig.Route(lines: lines)); await rig.Observe(); await rig.Observe();
-        var status = JsonSerializer.Serialize(await rig.Service.VoiceAsync("status", "PRIVATE ROUTE NAME", null, null, true, default)); Assert.DoesNotContain("PRIVATE ROUTE NAME", status);
-        var arrivals = JsonSerializer.SerializeToElement(await rig.Service.VoiceAsync("arrivals", null, null, "940GZZLUTST", true, default)); Assert.Equal(5, arrivals.GetProperty("arrivals").GetArrayLength());
+        await Assert.ThrowsAsync<DomainException>(() => rig.Service.VoiceAsync("status", "PRIVATE ROUTE NAME", null, null, true, default));
+        await Assert.ThrowsAsync<DomainException>(() => rig.Service.VoiceAsync("status", null, null, null, true, default));
+        await Assert.ThrowsAsync<DomainException>(() => rig.Service.VoiceAsync("arrivals", null, null, "940GZZLUTST", true, default));
+        var status = JsonSerializer.Serialize(await rig.Service.VoiceAsync("status", null, "jubilee", null, true, default)); Assert.DoesNotContain("PRIVATE ROUTE NAME", status);
+        var arrivals = JsonSerializer.SerializeToElement(await rig.Service.VoiceAsync("arrivals", null, null, "940GZZLUTST", false, default)); Assert.Equal(5, arrivals.GetProperty("arrivals").GetArrayLength());
         await Assert.ThrowsAsync<DomainException>(() => rig.Service.VoiceAsync("arrivals", null, null, "490000UNKNOWN", true, default));
         await rig.Store.UpdateAsync((s, _) => { foreach (var (id, line) in s.Lines.ToArray()) s.Lines[id] = line with { Confirmed = line.Confirmed! with { Description = string.Concat(Enumerable.Repeat("🚆", 200)) } }; return true; });
         var context = await rig.Service.PublicContextAsync(default); Assert.InRange(Encoding.UTF8.GetByteCount(context), 1, 300); Assert.DoesNotContain("PRIVATE", context); Assert.DoesNotContain("northern", context);

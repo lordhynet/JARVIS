@@ -54,6 +54,14 @@ try {
     $reviews = Invoke-RestMethod "$base/api/learning/$($card.id)/reviews" -Headers $headers -TimeoutSec 10
     if (@($reviews).Count -ne 1) { throw 'Learning review did not survive container restart.' }
     $checks.Add('Real API container restart survival')
+    # Seed non-empty relational fixtures directly in this isolated database. The route is disabled:
+    # restoring it must not trigger a live TfL request or need provider credentials.
+    Get-Content -LiteralPath ./scripts/restore-fixture.sql -Raw | & docker @composeArgs exec -T postgres psql -U jarvis -d jarvis -v ON_ERROR_STOP=1
+    if ($LASTEXITCODE -ne 0) { throw 'Could not seed relational restore fixtures.' }
+    $expectedCounts = Get-Content -LiteralPath ./scripts/restore-counts.sql -Raw | & docker @composeArgs exec -T postgres psql -U jarvis -d jarvis -tA -v ON_ERROR_STOP=1
+    if ($LASTEXITCODE -ne 0) { throw 'Could not snapshot relational restore fixtures.' }
+    $expectedCounts = $expectedCounts | ConvertFrom-Json -AsHashtable
+    if ($expectedCounts.AudioSingleton -ne 1 -or $expectedCounts.VoiceTurns -ne 1 -or $expectedCounts.TravelRoutes -ne 1 -or $expectedCounts.TravelLineStates -ne 1 -or $expectedCounts.TravelMonitorSingleton -ne 1) { throw 'Relational restore fixtures are incomplete.' }
     $output = Join-Path $PWD "TestResults/$project"
     & ./scripts/backup-database.ps1 -OutputDirectory $output -ComposeFile compose.verify.yaml -ProjectName $project -ConfigurationPath $fixturePath
     $backup = Get-ChildItem -LiteralPath $output -Filter '*.dump.dpapi' | Select-Object -First 1
@@ -67,6 +75,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not read restored runtime state.' }
     $runtime = $runtimeJson | ConvertFrom-Json -AsHashtable
     if ($runtime.Learning.Count -ne 1 -or $runtime.Reviews.Count -ne 1) { throw 'Restored learning state is incorrect.' }
+    $restoredCounts = Get-Content -LiteralPath ./scripts/restore-counts.sql -Raw | & docker @composeArgs exec -T postgres psql -U jarvis -d jarvis_restore_verification -tA -v ON_ERROR_STOP=1
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read restored relational runtime/travel state.' }
+    $restoredCounts = $restoredCounts | ConvertFrom-Json -AsHashtable
+    foreach ($table in $expectedCounts.Keys) { if ($restoredCounts[$table] -ne $expectedCounts[$table]) { throw "Restored $table count differs from the fixture." } }
+    $checks.Add('Restored hot runtime singleton, voice turns/tickets and travel route/line/monitor counts')
     $checks.Add('Binary backup and restore into a separate database')
     if ($LiveTransit) {
         $transit = Invoke-RestMethod "$base/api/transit?lines=jubilee" -Headers $headers -TimeoutSec 50

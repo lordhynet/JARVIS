@@ -109,6 +109,7 @@ public sealed class TravelMonitorWorker(TravelMonitor monitor, IPrivacyReader pr
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using var invocation = CoreInvocationContext.Enter(InvocationOrigin.Agent);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (await timer.WaitForNextTickAsync(stoppingToken)) try {
             var state = await privacy.StatusAsync(stoppingToken); if (state.Erased) continue;

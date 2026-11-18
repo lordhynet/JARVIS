@@ -61,6 +61,7 @@ else
             o.Listen(address, host.GetValue<int>("HttpsPort"), listen => listen.UseHttps(host["CertificatePath"]!, builder.Configuration["Server:Tls:Password"]));
     });
 }
+_ = BrowserOwnerAccess.RequiresEnrollment(builder.Configuration); // Reject an invalid security migration flag before accepting traffic.
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = builder.Configuration.GetValue("Server:MaxRequestBodyBytes", 11_000_000L));
 builder.Services.AddHttpClient("providers", client =>
 {
