@@ -89,6 +89,7 @@ public sealed class DomainFactoryTests
         using var host = new JarvisApiFactory().WithWebHostBuilder(b => b.ConfigureServices(s => s.AddSingleton<ITextReasoningProvider>(generator)));
         var runtime = host.Services.GetRequiredService<IRuntimeStore>(); var session = Guid.NewGuid(); var source = Guid.NewGuid();
         var tools = host.Services.GetRequiredService<CoreVoiceTools>();
+        await VoiceToolFixture.OpenAsync(host.Services, session);
         var args = JsonSerializer.Serialize(new { utterance_id = source });
         Assert.Contains("latest user speech", await tools.ExecuteAsync("core_domain_propose", args, session, new HashSet<Guid>(), default)); Assert.Equal(0, generator.Calls);
         await runtime.UpdateAsync(s => { s.VoiceTurns[source] = new(source, session, "user", "Hello there", null, DateTimeOffset.UtcNow); return true; });

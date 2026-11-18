@@ -22,7 +22,7 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
     private static ChatMessage Utterance(ConversationSession session, Guid id)
     {
         var source = session.Messages?.LastOrDefault(m => m.Role == ChatRoles.User);
-        Guard.Require(source is not null && source.RequestId == id, 409, "Use the latest captured user utterance, not generated or historical text.");
+        Guard.Require(source is not null && !source.Restricted && source.RequestId == id, 409, "Use the latest unrestricted captured user utterance, not generated or historical text.");
         return source;
     }
     private Task<TrainingDrill?> Active(Guid id, CancellationToken ct) => runtime.ReadAsync(s =>
@@ -48,6 +48,7 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
     public async Task<VoicePracticeAnswer> AnswerAsync(Guid sessionId, Guid utteranceId, CancellationToken ct)
     {
         var session = await Session(sessionId, ct);
+        Guard.Require(session.Messages?.Any(m => m.RequestId == utteranceId && m.Restricted) != true, 403, "Locked-room speech cannot become a saved practice answer.");
         var id = Operation("answer", sessionId, utteranceId);
         var previous = await runtime.ReadAsync(s => s.TrainingAttempts.GetValueOrDefault(id), ct);
         if (previous is not null)

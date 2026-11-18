@@ -88,7 +88,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
     {
         try
         {
-            Guard.Require(name == CoreHomeVoiceTool.Name || !await runtime.ReadAsync(s => VoiceAccessRules.Restricted(s, sessionId), ct),
+            Guard.Require(name == CoreHomeVoiceTool.Name || !await runtime.ReadAsync(s => VoiceAccessRules.ToolRestricted(s, sessionId), ct),
                 403, "Personal voice tools are unavailable while the device is locked.");
             Guard.Require(Encoding.UTF8.GetByteCount(arguments) <= 2048, 400, "Tool arguments exceeded the Core limit.");
             using var parsed = JsonDocument.Parse(arguments, new JsonDocumentOptions { MaxDepth = 8 });

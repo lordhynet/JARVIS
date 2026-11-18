@@ -14,7 +14,7 @@ public sealed class CompanionVoiceService(ISessionStore sessions, DeviceService 
     {
         Guard.Require(request.RequestId != Guid.Empty && request.AllowCloudProcessing, 400, "An explicit, consented voice start is required.");
         var deviceId = Guard.Text(request.DeviceId, "DeviceId", 80);
-        await devices.RequireOnlineAsync(deviceId, true, ct);
+        var device = await devices.RequireOnlineAsync(deviceId, true, ct);
         var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"companion-voice-v1:{deviceId}:{request.RequestId}"))[..16]);
         await preparation.WaitAsync(ct);
         try
@@ -26,6 +26,8 @@ public sealed class CompanionVoiceService(ISessionStore sessions, DeviceService 
             ConversationSession? transferred = null;
             if (incoming.Count == 1)
             {
+                Guard.Require(!VoiceAccessRules.RequiresLockReport(device) || request.Locked == false,
+                    409, "Unlock the target Windows device before completing an incoming conversation handoff.");
                 var targetId = incoming[0].Id; var handoff = incoming[0].Handoff!;
                 if (handoff.State == HandoffState.Checkpointed)
                     handoff = (await lifecycle.AdvanceAsync(targetId, "ready", new(handoff.Id, deviceId), ct)).Handoff!;

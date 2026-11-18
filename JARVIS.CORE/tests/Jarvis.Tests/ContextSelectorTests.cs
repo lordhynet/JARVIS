@@ -53,7 +53,8 @@ public sealed class ContextSelectorTests
             return true;
         });
         var tools = host.Services.GetRequiredService<CoreVoiceTools>();
-        using var result = JsonDocument.Parse(await tools.ExecuteAsync("core_story_search", "{\"query\":\"FX\"}", Guid.NewGuid(), new HashSet<Guid>(), default));
+        var session = Guid.NewGuid(); await VoiceToolFixture.OpenAsync(host.Services, session);
+        using var result = JsonDocument.Parse(await tools.ExecuteAsync("core_story_search", "{\"query\":\"FX\"}", session, new HashSet<Guid>(), default));
         Assert.True(result.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal(target.Id, result.RootElement.GetProperty("result")[0].GetProperty("id").GetGuid());
         Assert.Equal(1, result.RootElement.GetProperty("result")[0].GetProperty("version").GetInt32());
