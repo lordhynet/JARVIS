@@ -40,7 +40,7 @@ public sealed class JarvisItemAuthenticationHandler(
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, actor.SubjectId),
-            new("jarvis_actor", actor.DeviceId is null ? "owner" : "companion")
+            new("jarvis_actor", actor.DeviceId is null || actor.IsOwnerBrowser ? "owner" : "companion")
         };
         if (actor.DeviceId is not null) claims.Add(new("jarvis_device_id", actor.DeviceId));
         if (Context.Items[ApiKeyMiddleware.FingerprintItem] is string fingerprint)

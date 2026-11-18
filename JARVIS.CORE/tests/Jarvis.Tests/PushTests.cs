@@ -3,11 +3,34 @@ using Jarvis.Api;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.Extensions.Configuration;
+using Jarvis.Api.Security;
 
 namespace Jarvis.Tests;
 
 public sealed class PushTests
 {
+    [Fact]
+    public async Task Push_uses_enrolled_browser_authority_and_stops_after_revocation_without_allowing_native_credentials()
+    {
+        var store = new InMemoryRuntimeStore(); var clock = new Clock(); var sender = new Sender();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+            ["Push:Enabled"] = "true", ["Push:PublicKey"] = "fixture", ["Push:PrivateKey"] = "fixture", [ConfigKeys.CoreApiKey] = "legacy-key",
+            [ConfigKeys.RequireEnrolledBrowser] = "true" }).Build();
+        var browserHash = PrivacyData.Hash("enrolled-browser-fixture"); var nativeHash = PrivacyData.Hash("ordinary-native-fixture");
+        await store.UpdateAsync(s => {
+            s.DeviceCredentials["browser"] = new("browser", browserHash, clock.Now, Purpose: DeviceCredentials.OwnerBrowserPurpose);
+            s.DeviceCredentials["native"] = new("native", nativeHash, clock.Now);
+            foreach (var hash in new[] { browserHash, nativeHash, PrivacyData.Hash("legacy-key") }) {
+                var id = Guid.NewGuid(); s.PushSubscriptions[id] = new(id, "https://fcm.googleapis.com/fcm/send/fixture", "fixture", "fixture", hash, clock.Now);
+            }
+            var notice = Guid.NewGuid(); s.AgentOutbox[notice] = new(notice, Guid.NewGuid(), "Fixture", clock.Now, clock.Now, clock.Now.AddHours(1), Delivered: true); return true;
+        });
+        var notifications = new PushNotifications(store, config, sender, clock);
+        Assert.True(await notifications.DispatchOneAsync(default)); Assert.Equal(1, sender.Count); Assert.False(await notifications.DispatchOneAsync(default));
+        await store.UpdateAsync(s => { s.DeviceCredentials["browser"] = s.DeviceCredentials["browser"] with { Revoked = true };
+            var id = Guid.NewGuid(); s.AgentOutbox[id] = new(id, Guid.NewGuid(), "Fixture 2", clock.Now, clock.Now, clock.Now.AddHours(1), Delivered: true); return true; });
+        Assert.False(await notifications.DispatchOneAsync(default)); Assert.Equal(1, sender.Count);
+    }
     private sealed class Clock : TimeProvider
     {
         public DateTimeOffset Now = DateTimeOffset.Parse("2026-11-13T12:00Z"); public override DateTimeOffset GetUtcNow() => Now;

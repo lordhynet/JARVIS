@@ -190,6 +190,7 @@ builder.Services.AddSingleton<DeviceReceiptService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Runtime.IDeviceCapabilityCatalog>(
     _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCapabilities.All)));
 builder.Services.AddSingleton<OwnerAuthorization>();
+builder.Services.AddSingleton<BrowserOwnerAccess>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IWorkflowCatalog, Jarvis.Orchestrator.Domains.WorkflowCatalog>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(s => new Jarvis.Orchestrator.Domains.CapabilityCatalog(
     Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat(AgentCapabilityIds.BuiltIns).Concat(
@@ -294,6 +295,7 @@ app.MapAgentEndpoints();
 app.MapDomainEndpoints();
 app.MapBudgetEndpoints();
 app.MapPrivacyEndpoints();
+app.MapBrowserAccessEndpoints();
 app.MapPost("/api/hubs/ticket", (HubTickets tickets, CancellationToken ct) => tickets.IssueAsync(ct)).RequireAuthorization(CorePolicies.Owner);
 app.MapImportEndpoints();
 app.MapGet("/api/push/status", (PushNotifications push, IConfiguration config) => new { ready = push.Ready, publicKey = push.Ready ? config["Push:PublicKey"] : "" }).RequireAuthorization(CorePolicies.Owner);

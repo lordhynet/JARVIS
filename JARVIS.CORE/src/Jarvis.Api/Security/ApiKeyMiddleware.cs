@@ -18,7 +18,7 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
     private const string QueryName = "access_token";
 
     public async Task InvokeAsync(HttpContext context, DeviceCredentials credentials, IPrivacyReader privacy, HubTickets hubTickets,
-        CoreRequestLimits limits)
+        CoreRequestLimits limits, BrowserOwnerAccess browserAccess)
     {
         if (!IsProtected(context.Request.Path))
         {
@@ -41,14 +41,17 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
             Guard.Require(context.WebSockets.IsWebSocketRequest && context.Request.Path.Equals(new PathString("/hubs/status")) &&
                 context.Request.Query[QueryName].Count == 1 && context.Request.Query[QueryName][0]!.StartsWith(HubTickets.Prefix, StringComparison.Ordinal),
                 401, "Use a short-lived hub ticket, never a Core key in the URL.");
-            context.Items[FingerprintItem] = await hubTickets.ConsumeAsync(context.Request.Query[QueryName][0]!, context.RequestAborted);
-            context.Items[ActorItem] = new CoreActor("hub-ticket", null);
+            var identity = await hubTickets.ConsumeIdentityAsync(context.Request.Query[QueryName][0]!, context.RequestAborted);
+            context.Items[FingerprintItem] = identity.Fingerprint;
+            context.Items[ActorItem] = identity.Actor;
+            using var hubCredential = DeviceCredentialContext.Enter(identity.Actor);
+            using var hubInvocation = CoreInvocationContext.Enter(InvocationOrigin.ManualClient);
             await next(context); return;
         }
 
         var actor = supplied is { Length: <= 1024 } && supplied.StartsWith(DeviceCredentials.Prefix, StringComparison.Ordinal)
             ? await credentials.AuthenticateAsync(supplied, context.RequestAborted) : null;
-        var legacy = supplied is { Length: <= 1024 } && FixedTimeEquals(supplied, expected);
+        var legacy = !BrowserOwnerAccess.RequiresEnrollment(config) && supplied is { Length: <= 1024 } && FixedTimeEquals(supplied, expected);
         if (actor is null && !legacy)
         {
             if (!limits.AdmitAnonymous())
@@ -74,8 +77,10 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, IConfiguration config
 
         context.Items[FingerprintItem] = Jarvis.Orchestrator.Runtime.PrivacyData.Hash(supplied!);
         context.Items[ActorItem] = actor ?? new CoreActor("legacy-owner-browser", null);
+        if (actor is { IsOwnerBrowser: true } && context.Request.Headers[BrowserOwnerAccess.ElevationHeader] is { Count: 1 } elevationHeader)
+            context.Items[BrowserOwnerAccess.ElevationItem] = await browserAccess.ValidateAsync(elevationHeader[0], actor, context.RequestAborted);
         using var credentialScope = DeviceCredentialContext.Enter((CoreActor)context.Items[ActorItem]!);
-        using var invocation = CoreInvocationContext.Enter(actor is null ? InvocationOrigin.ManualClient : InvocationOrigin.ExternalContent);
+        using var invocation = CoreInvocationContext.Enter(actor is null || actor.IsOwnerBrowser ? InvocationOrigin.ManualClient : InvocationOrigin.ExternalContent);
         await next(context);
     }
 
