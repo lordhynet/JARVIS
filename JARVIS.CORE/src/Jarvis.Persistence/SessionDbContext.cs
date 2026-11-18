@@ -164,16 +164,17 @@ public sealed class DeviceGrantRow
     public string? GrantedBy { get; set; }
     public string? Reason { get; set; }
     public bool PreApproved { get; set; }
+    public bool AllowWhenLocked { get; set; }
 
     public Jarvis.Orchestrator.Runtime.DeviceGrant Contract() => new(Id, DeviceId, CapabilityId, CapabilityVersion,
-        ConstraintsJson, CredentialHash, GrantedAt, ExpiresAt, RevokedAt, GrantedBy, Reason, PreApproved);
+        ConstraintsJson, CredentialHash, GrantedAt, ExpiresAt, RevokedAt, GrantedBy, Reason, PreApproved, AllowWhenLocked);
     public static DeviceGrantRow From(Jarvis.Orchestrator.Runtime.DeviceGrant grant) => new()
     {
         Id = grant.Id, DeviceId = grant.DeviceId, CapabilityId = grant.CapabilityId,
         CapabilityVersion = grant.CapabilityVersion, ConstraintsJson = grant.ConstraintsJson,
         CredentialHash = grant.CredentialHash, GrantedAt = SessionRow.DatabaseTimestamp(grant.GrantedAt),
         ExpiresAt = SessionRow.DatabaseTimestamp(grant.ExpiresAt), RevokedAt = grant.RevokedAt,
-        GrantedBy = grant.GrantedBy, Reason = grant.Reason, PreApproved = grant.PreApproved
+        GrantedBy = grant.GrantedBy, Reason = grant.Reason, PreApproved = grant.PreApproved, AllowWhenLocked = grant.AllowWhenLocked
     };
 }
 

@@ -78,7 +78,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                     fallbackTried = true;
                     if (client.StopRequested || !await negotiation.ConfirmEverydayAsync(error.Message, context.RequestAborted))
                     {
-                        ending = client.StopRequested ? "stopped" : "voice_mode_declined";
+                        ending = client.StopRequested ? "stopped" : (error.InnerException as DomainException)?.Code ?? "voice_mode_declined";
                         break;
                     }
                     current = CreateWindow(number);
@@ -101,13 +101,17 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                     SeriousVoiceConfirmationRequired => "The Serious voice estimate changed. Start again to review it.",
                     _ => "Voice stopped. Reconnect to resume the saved session."
                 };
-                var code = error is SeriousVoiceUnavailableException ? "serious_voice_unavailable" : null;
+                var code = client.LockInterrupted ? VoiceEndReasons.DeviceLocked :
+                    (error as DomainException ?? error.InnerException as DomainException)?.Code ??
+                    (error is SeriousVoiceUnavailableException ? "serious_voice_unavailable" : null);
                 if (lease is null && !limits.AdmitAnonymous())
                 {
                     detail = "Too many unauthenticated requests.";
                     code = "rate_limited";
                 }
                 await client.SendAsync(new { type = "error", detail, code }, last.Token);
+                if (code is VoiceEndReasons.DeviceLocked or VoiceEndReasons.SeriousDailyCap or VoiceEndReasons.GbpBudgetCeiling)
+                    await client.SendAsync(new { type = "ended", reason = code }, last.Token);
             }
             catch { /* The client can already be disconnected. */ }
         }

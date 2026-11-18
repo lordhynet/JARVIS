@@ -223,3 +223,17 @@ Sensitive routes now additionally require `X-Jarvis-Owner-Key`: privacy export/e
 New owner routes: `POST /api/devices/{id}/credential` issues/rotates a companion secret for an existing registration; `DELETE` revokes it. The POST returns `{ deviceId, secret }` once per issuance. Rotation/revocation invalidate the device's active lease and pending tickets. Enrolled active registrations cannot be overwritten; revoke before changing their capabilities.
 
 A companion sends its secret using the existing `X-Jarvis-Key` header. It can only read `/api/privacy/status`, `/api/voice/status`, and its filtered `/api/devices`; send its own heartbeat; prepare its own voice conversation and obtain its own voice tickets. Every other API/hub route is denied, even when a companion supplies an owner header. Request-body device identity must match the authenticated device. No arbitrary grants or roles can be supplied by a client. Existing voice WebSocket tickets remain short-lived and single-use.
+
+## Windows locked voice boundary (Item 15a)
+
+Voice ticket and wake-candidate admission accept optional `locked: true|false`. Native Windows registrations (`WindowsAgent`) without a lock report are restricted. Historical desktop browsers also use that kind; their existing Core registration must have both `hasDisplay: true` and the `browser-companion` tag to retain the browser default. This exemption cannot be asserted in a heartbeat. Existing Android clients retain their supported default. The request's device ID must still match the authenticated companion and the existing audio claim.
+
+WebSocket heartbeat example: `{ "type": "heartbeat", "sequence": 1, "locked": true }`. Windows clients must report lock state on each heartbeat. Missing state is restricted; non-boolean values are refused. A lease now also returns optional-compatible `locked` and nullable `reportedLocked` metadata. These fields are server-owned. Echoing a different value in an old lease cannot relax policy or bypass its session/device/fence checks.
+
+An unlock report is applied only when Core activates the next window. A newly reported lock during a window that already received personal context ends the connection with code/reason `device_locked`; the client stops audio and returns to local listening. A later consented claim starts a restricted stream. Core does not replay the previous paid request.
+
+Locked windows receive no saved conversation/task/practice context or private persona. Personal tools are neither advertised nor executable. The installed home tool uses only effective grants explicitly carrying `allowWhenLocked: true`. This flag is optional/default false on grant requests and views, is audited with the existing grant, and cannot be changed by reusing a grant request ID. It does not replace pre-approval or sensitive-action owner confirmation. Existing grants remain false after migration.
+
+Terminal budget failures retain their error detail and emit a specific ended reason: `serious_daily_cap` or `gbp_budget_ceiling`. A successful retry after the previous window settles remains permitted by the existing accounting rules.
+
+See [the locked voice ADR](adr/0004-locked-voice-boundary.md). The Windows tray app and travel tool are subsequent implementations.

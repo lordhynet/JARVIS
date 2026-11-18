@@ -79,6 +79,8 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         })
     ];
     public static string Failure(string message) => JsonSerializer.Serialize(new { ok = false, error = message }, Json);
+    public static IReadOnlyList<object> DefinitionsFor(bool locked) => !locked ? Definitions :
+        Definitions.Where(tool => JsonSerializer.SerializeToElement(tool).GetProperty("name").GetString() == CoreHomeVoiceTool.Name).ToArray();
     private static string Clip(string value, int length) => value.Length <= length ? value : value[..length];
 
     public async Task<string> ExecuteAsync(string name, string arguments, Guid sessionId, IReadOnlySet<Guid> windowUtterances,
@@ -86,6 +88,8 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
     {
         try
         {
+            Guard.Require(name == CoreHomeVoiceTool.Name || !await runtime.ReadAsync(s => VoiceAccessRules.Restricted(s, sessionId), ct),
+                403, "Personal voice tools are unavailable while the device is locked.");
             Guard.Require(Encoding.UTF8.GetByteCount(arguments) <= 2048, 400, "Tool arguments exceeded the Core limit.");
             using var parsed = JsonDocument.Parse(arguments, new JsonDocumentOptions { MaxDepth = 8 });
             var args = parsed.RootElement;

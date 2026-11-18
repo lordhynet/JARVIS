@@ -138,9 +138,10 @@ public sealed class InMemoryRuntimeStore(AudioFenceChanges? audioChanges = null)
     }
 }
 
-public sealed class DomainException(int statusCode, string message) : Exception(message)
+public sealed class DomainException(int statusCode, string message, string? code = null) : Exception(message)
 {
     public int StatusCode { get; } = statusCode;
+    public string? Code { get; } = code;
 }
 
 public static class Guard
@@ -151,8 +152,8 @@ public static class Guard
             throw new DomainException(400, $"{name} must contain 1–{max} characters.");
         return value.Trim();
     }
-    public static void Require([DoesNotReturnIf(false)] bool condition, int status, string message)
+    public static void Require([DoesNotReturnIf(false)] bool condition, int status, string message, string? code = null)
     {
-        if (!condition) throw new DomainException(status, message);
+        if (!condition) throw new DomainException(status, message, code);
     }
 }

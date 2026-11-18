@@ -34,12 +34,15 @@ data class AudioLease(
     val deviceId: String = "",
     val fence: Long = 0L,
     val expiresAt: String = "",
+    val locked: Boolean = false,
+    val reportedLocked: Boolean? = null,
 )
 
 data class CompanionVoiceRequest(
     val requestId: String = "",
     val deviceId: String = "",
     val allowCloudProcessing: Boolean = false,
+    val locked: Boolean? = null,
 )
 
 data class CompanionVoiceSession(
@@ -94,6 +97,7 @@ data class VoiceStartRequest(
     val sessionId: String = "",
     val deviceId: String = "",
     val allowCloudProcessing: Boolean = false,
+    val locked: Boolean? = null,
 )
 
 data class VoiceTicket(
@@ -107,6 +111,7 @@ data class WakeCandidateRequest(
     val requestId: String = "",
     val deviceId: String = "",
     val allowCloudProcessing: Boolean = false,
+    val locked: Boolean? = null,
 )
 
 data class WakeCandidateResponse(

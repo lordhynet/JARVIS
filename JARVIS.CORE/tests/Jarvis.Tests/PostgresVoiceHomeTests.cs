@@ -16,11 +16,14 @@ public sealed partial class PostgresSessionTests
         var (old, secret) = await DeviceCommandTests.SetupAsync(services, deviceId);
         var grants = services.GetRequiredService<IDeviceGrantStore>();
         Assert.False((await grants.GetAsync(old))!.PreApproved);
-        var request = DeviceGrantTests.GrantRequest() with { PreApproved = true };
+        Assert.False((await grants.GetAsync(old))!.AllowWhenLocked);
+        var request = DeviceGrantTests.GrantRequest() with { PreApproved = true, AllowWhenLocked = true };
         var grantService = services.GetRequiredService<DeviceGrantService>();
         var owner = new BudgetActor("fixture-owner", [DeviceGrantService.ManageScope]);
         var grant = await grantService.GrantAsync(deviceId, request, owner);
         Assert.True((await grants.GetAsync(grant.Id))!.PreApproved);
+        Assert.True((await grants.GetAsync(grant.Id))!.AllowWhenLocked);
+        Assert.Equal(409, (await Assert.ThrowsAsync<DomainException>(() => grantService.GrantAsync(deviceId, request with { AllowWhenLocked = false }, owner))).StatusCode);
         var tampered = await Assert.ThrowsAsync<DomainException>(() => grantService.GrantAsync(deviceId, request with { PreApproved = false }, owner));
         Assert.Equal(409, tampered.StatusCode);
         var now = DateTimeOffset.UtcNow;

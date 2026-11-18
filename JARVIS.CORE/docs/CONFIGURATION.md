@@ -273,3 +273,9 @@ Draft-preservation follow-up: ordinary 401 credential revocation and malformed/m
 ## Independent pause controls
 
 `AgentControls` adds nullable `PaidAiPaused` and `AgentsPaused`. Missing new values inherit the historical `Paused` flag, so existing persisted settings/old requests keep their meaning. A management write normalizes both new flags and clears the legacy flag. Paid admission/approval uses the paid flag; scheduling, claims, completion and notification delivery use the agent flag. The dashboard exposes separate controls. Neither flag revokes an existing audio lease or blocks unpaid local audio. Already reserved voice windows keep their bounded lease; the next paid reservation is refused while paid AI is paused. Explicit audio Stop, handoff, device revocation and privacy erasure retain their fences. Erasure keeps both work types paused on reopen.
+
+## Locked-room home authority
+
+Item 15a adds `AllowWhenLocked` to the owner-managed Home Assistant capability grant, with default **false**. Set the request's `allowWhenLocked` field only when every entity in that grant is intended to be callable by anyone near a locked voice companion. The flag does not grant another capability, bypass entity/action constraints, pre-approve an action or remove owner confirmation for covers, locks and alarms. Revoke and issue a new audited grant to change this authority; reusing a grant request ID with a different flag returns conflict.
+
+No private appsettings key enables locked personal access. Core enforces the device's lock report through the existing fenced voice protocol. Windows clients must send current lock state on admission and every heartbeat. Unknown Windows state is restricted, and unlocking takes effect at the next window activation. The Windows companion itself is a later slice.

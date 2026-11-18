@@ -43,6 +43,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private string configurationEventId = "";
     private Guid sessionId;
     private bool hasDisplay;
+    private bool windowLocked = lease.Locked;
+    private bool requiresLockReport;
     private int phase;
     private int paidPauseRequested;
     private int providerFailed;
@@ -107,6 +109,13 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
 
     private async Task<string> ReadInstructionsAsync(CancellationToken ct)
     {
+        if (windowLocked || await runtime.ReadAsync(s => VoiceAccessRules.Restricted(s, lease.SessionId), ct))
+        {
+            sessionId = lease.SessionId;
+            recommendedMode = VoiceMode.Everyday;
+            return RealtimeVoicePrompt.Build(RealtimeVoicePrompt.DefaultPersona, "{}", "{}", continuing: true) +
+                "\nThe device is locked. Personal context and practice tools are unavailable. Use only public information and explicitly permitted home grants. Never reveal saved private information.";
+        }
         var session = await sessions.GetAsync(lease.SessionId, ct);
         Guard.Require(session is not null, 404, "Session not found.");
         if (!ReferenceEquals(VoiceConversationMemory.RefreshSummary(session), session))
@@ -227,6 +236,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         {
             using var audioFence = new LiveAudioFence(lease, ownership, fenceChanges, clock);
             fence = audioFence;
+            windowLocked = (await ownership.ActivateVoiceWindowAsync(lease, timeout.Token)).Locked;
+            requiresLockReport = VoiceAccessRules.RequiresLockReport(await runtime.ReadRegisteredDeviceAsync(lease.DeviceId, timeout.Token));
             var downstream = Task.Run(() => PumpClientAsync(inputStop.Token), timeout.Token);
             pumps.Add(downstream);
             if (reservation is null) await PrepareWindowAsync(timeout.Token);
@@ -352,7 +363,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         configurationEventId = Guid.NewGuid().ToString("N");
         return SendProviderAsync(new { type = "session.update", event_id = configurationEventId,
             session = new { type = "realtime", model = model, output_modalities = new[] { "audio" },
-            instructions, max_output_tokens = RealtimeWindowCost.OutputTokenLimit, tools = CoreVoiceTools.Definitions,
+            instructions, max_output_tokens = RealtimeWindowCost.OutputTokenLimit, tools = CoreVoiceTools.DefinitionsFor(windowLocked),
             truncation = new { type = "retention_ratio", retention_ratio = .8,
                 token_limits = new { post_instructions = RealtimeWindowCost.ConversationTokenLimit } },
             audio = new { input = new { format = new { type = "audio/pcm", rate = 24000 }, transcription = new { model = pricing.TranscriptionModel },
@@ -458,7 +469,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     }
 
     private async Task<bool> CurrentAudioAsync(CancellationToken ct) =>
-        !IsEnding && await ownership.CurrentAsync(lease, ct) && fence.IsCurrent() && !IsEnding;
+        !IsEnding && !client.LockInterrupted && await ownership.CurrentAsync(lease, ct) && fence.IsCurrent() && !IsEnding && !client.LockInterrupted;
 
     private async Task HandleSpeechStartedAsync(JsonElement message)
     {
@@ -578,7 +589,18 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
 
     private async Task HandleHeartbeatAsync(JsonElement message)
     {
-        var renewed = await ownership.RenewAsync(lease, timeout.Token);
+        bool? locked = null;
+        if (message.TryGetProperty("locked", out var reported)) {
+            Guard.Require(reported.ValueKind is JsonValueKind.True or JsonValueKind.False, 400, "Lock state must be a boolean.");
+            locked = reported.GetBoolean();
+        }
+        var restrict = locked ?? requiresLockReport;
+        if (!windowLocked && restrict) client.RecordLockInterrupt();
+        var renewed = await ownership.RenewAsync(lease, timeout.Token, locked);
+        if (client.LockInterrupted) {
+            BeginEnding();
+            throw new DomainException(409, "The device locked. Start a new restricted voice connection.", VoiceEndReasons.DeviceLocked);
+        }
         await SendClientAsync(new { type = "lease", fence = renewed.Fence, leaseSeconds = 15, sequence = message.GetProperty("sequence").GetInt64() });
     }
 
@@ -648,6 +670,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         await clientSend.WaitAsync(timeout.Token);
         try
         {
+            Guard.Require(!client.LockInterrupted, 409, "The device locked.");
             if (audioFence is not null)
             {
                 if (IsEnding) return;
@@ -664,6 +687,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         await providerSend.WaitAsync(timeout.Token);
         try
         {
+            Guard.Require(!client.LockInterrupted, 409, "The device locked.");
             if (requireAudio)
             {
                 if (IsEnding) return;
