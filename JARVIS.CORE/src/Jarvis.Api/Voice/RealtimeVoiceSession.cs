@@ -58,6 +58,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private readonly HashSet<string> usageSeen = [];
     private readonly Dictionary<string, int> speechStarts = [];
     private readonly Dictionary<string, double> speechDurations = [];
+    private readonly Dictionary<string, SpeechTiming> speechTimings = [];
+    private readonly SpeechAudioMeter speechAudio = new((int)Math.Min(window.MaxInputBytes, 8_640_000));
     private readonly Dictionary<string, (string Fingerprint, string Output)> toolResults = [];
     private readonly HashSet<Guid> utterances = [];
     private readonly ConcurrentDictionary<string, byte> audioItems = new();
@@ -480,7 +482,11 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
     private async Task HandleSpeechStoppedAsync(JsonElement message)
     {
         var item = message.GetProperty("item_id").GetString()!;
-        if (speechStarts.TryGetValue(item, out var at)) speechDurations[item] = Math.Max(0, message.GetProperty("audio_end_ms").GetInt32() - at) / 1000d;
+        if (speechStarts.TryGetValue(item, out var at)) {
+            var end = message.GetProperty("audio_end_ms").GetInt32();
+            speechDurations[item] = Math.Max(0, end - at) / 1000d;
+            if (!windowLocked && speechAudio.Measure(at, end) is { } timing) speechTimings[item] = timing;
+        }
         if (!IsEnding) await RequestResponseAsync();
     }
 
@@ -502,7 +508,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         {
             var id = ManagedAi.Operation(role + ":" + item, sessionId, reservation.Id); var bounded = text.Length <= 8000 ? text : text[..8000];
             var duration = role == ChatRoles.User && speechDurations.TryGetValue(item, out var seconds) ? (double?)seconds : null;
-            await transcripts.RecordAsync(sessionId, id, role, bounded, duration, timeout.Token, restricted: windowLocked);
+            var timing = role == ChatRoles.User && !windowLocked ? speechTimings.GetValueOrDefault(item) : null;
+            await transcripts.RecordAsync(sessionId, id, role, bounded, duration, timeout.Token, restricted: windowLocked, timing: timing);
             if (role == ChatRoles.User && utterances.Count < window.MaxTurns * 4 && utterances.Add(id))
             {
                 latestUtterance = id;
@@ -611,6 +618,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         Guard.Require(pcm.Length is > 0 and <= 24000 && pcm.Length % 2 == 0, 400, "PCM chunks must be aligned mono 24kHz samples.");
         bytes += pcm.Length;
         Guard.Require(bytes <= window.MaxInputBytes && bytes <= VoiceWindowLimits.BytesPerSecond * (clock.GetElapsedTime(started).TotalSeconds + 2), 429, "Voice input exceeded its real-time window.");
+        if (!windowLocked) speechAudio.Append(pcm);
         await SendProviderAsync(new { type = "input_audio_buffer.append", audio }, requireAudio: true);
     }
 
@@ -718,6 +726,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         provider?.Abort();
         try { await Task.WhenAll(pumps).WaitAsync(TimeSpan.FromSeconds(3)); } catch { /* Every pump is cancelled; unknown provider usage retains its reserved charge. */ }
         provider?.Dispose();
+        speechAudio.Dispose();
     }
 
     private static Task SendAsync(WebSocket socket, object value, CancellationToken ct) => socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(value), WebSocketMessageType.Text, true, ct);
