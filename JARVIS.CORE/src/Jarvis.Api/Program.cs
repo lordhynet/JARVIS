@@ -201,6 +201,12 @@ builder.Services.AddSingleton<IAgentToolHandler, AgentTemplateTool>();
 builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentReasoningTool(s.GetRequiredService<TextReasoningService>(), false));
 builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentReasoningTool(s.GetRequiredService<TextReasoningService>(), true));
 builder.Services.AddSingleton<AgentToolGateway>();
+builder.Services.AddSingleton<AgentActionService>();
+foreach (var capability in BuiltInDeviceCapabilities.All) {
+    var id = capability.Id;
+    builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentDeviceTool(id, s.GetRequiredService<IRuntimeStore>(),
+        s.GetRequiredService<IDeviceGrantStore>(), s.GetRequiredService<IDeviceCapabilityCatalog>(), s.GetRequiredService<DeviceCommandService>(), s.GetRequiredService<TimeProvider>()));
+}
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainFactory, Jarvis.Orchestrator.Domains.DomainFactory>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistry, Jarvis.Orchestrator.Domains.DomainRegistryService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis.Orchestrator.Domains.DomainCatalog>();
@@ -256,6 +262,7 @@ app.Use(async (context, next) =>
     catch (DomainException ex) when (!context.Response.HasStarted)
     {
         context.Response.StatusCode = ex.StatusCode;
+        if (ex.RetryAfter is { } retry) context.Response.Headers.RetryAfter = Math.Clamp((int)Math.Ceiling(retry.TotalSeconds), 1, 86400).ToString(System.Globalization.CultureInfo.InvariantCulture);
         await context.Response.WriteAsJsonAsync(new { error = ex.Message });
     }
     catch (Exception ex) when (!context.Response.HasStarted && (ex is HttpRequestException || ex is OperationCanceledException && !context.RequestAborted.IsCancellationRequested))

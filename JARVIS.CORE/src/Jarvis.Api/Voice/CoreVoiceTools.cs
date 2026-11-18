@@ -10,7 +10,7 @@ namespace Jarvis.Api.Voice;
 
 /// <summary>Fixed Core capabilities, never a provider-selected URL or arbitrary command.</summary>
 public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService practice, TimeProvider clock, VoiceRecallService recall,
-    VoiceCoachingService coaching, CoreHomeVoiceTool home, Jarvis.Orchestrator.Domains.IDomainFactory? domains = null)
+    VoiceCoachingService coaching, CoreHomeVoiceTool home, Jarvis.Orchestrator.Domains.IDomainFactory? domains = null, Jarvis.Orchestrator.Workflows.AgentActionService? runs = null)
 {
     public static IReadOnlyList<Jarvis.Orchestrator.Domains.CapabilityDescriptor> Capabilities => Definitions.Select(tool => {
         var json = JsonSerializer.SerializeToElement(tool); var name = json.GetProperty("name").GetString()!;
@@ -28,6 +28,9 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         new { type = "function", name, description, parameters = Schema(properties) };
     private static readonly object Utterance = new { type = "string", description = "Core utterance_id supplied after the latest captured user speech. Never invent an ID." };
     public static readonly object[] Definitions = [
+        Tool("core_runs", "Read the current agent runs and numbered action proposals. Use list first, with an empty utterance_id. For approve or cancel use the latest separately captured utterance_id; Core resolves the spoken number from the last list. Only reversible actions may be approved by voice, while unlocked. Sensitive actions require exact dashboard owner approval. Never claim completion without a verified receipt.", new() {
+            ["action"] = new { type = "string", @enum = new[] { "list", "approve", "cancel" } }, ["utterance_id"] = Utterance
+        }),
         Tool(CoreHomeVoiceTool.Name, "Use for explicit spoken requests about granted lights, switches, scenes, thermostat targets, covers, locks and alarms. Covers, locks and alarms only propose for manual owner approval. Never ask for a PIN or read command IDs aloud. For list use an empty utterance_id. For changes use the latest captured utterance_id. Ask which entity if ambiguous. Report success only for status succeeded.", new() {
             ["action"] = new { type = "string", @enum = new[] { "list", "turn", "light_set", "scene", "climate_set", "cover", "lock", "alarm" } }, ["utterance_id"] = Utterance
         }),
@@ -96,6 +99,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             var args = parsed.RootElement;
             Guard.Require(args.ValueKind == JsonValueKind.Object, 400, "Tool arguments must be an object.");
             string[] fields = name switch {
+                "core_runs" => ["action", "utterance_id"],
                 CoreHomeVoiceTool.Name => ["action", "utterance_id"],
                 "core_domain_propose" => ["utterance_id"],
                 "core_coaching_correction" => ["action", "utterance_id", "attempt_id", "expected_revision"],
@@ -112,7 +116,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             Guard.Require(properties.Length == fields.Length && fields.All(f => properties.Count(p => p == f) == 1), 400, "Tool arguments do not match the Core schema.");
             Guid source = Guid.Empty;
             if (fields.Contains("utterance_id") && !((name is "core_recall" or "core_coaching") && args.GetProperty("action").GetString() == "current") &&
-                !(name == CoreHomeVoiceTool.Name && args.GetProperty("action").GetString() == "list"))
+                !((name == CoreHomeVoiceTool.Name || name == "core_runs") && args.GetProperty("action").GetString() == "list"))
             {
                 source = args.GetProperty("utterance_id").GetGuid();
                 Guard.Require(windowUtterances.Contains(source), 409, "Wait for Core to capture the latest user speech before requesting that action.");
@@ -120,6 +124,10 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             object? result;
             switch (name)
             {
+                case "core_runs":
+                    Guard.Require(runs is not null, 503, "Agent actions are unavailable.");
+                    Guard.Require(args.GetProperty("action").GetString() == "list" || source != Guid.Empty && source == latestUtterance, 409, "Use the latest captured spoken request.");
+                    result = await runs.VoiceAsync(args.GetProperty("action").GetString()!, sessionId, source, currentAudio, ct); break;
                 case CoreHomeVoiceTool.Name:
                     var homeAction = args.GetProperty("action").GetString()!;
                     Guard.Require(homeAction == "list" || (source != Guid.Empty && source == latestUtterance),

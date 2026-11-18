@@ -9,12 +9,13 @@ export function initIntelligence({ api, node, button, notice }) {
   const workflow = field('Workflow', 'select');
   const brief = field('Scoped goal or preparation brief', 'textarea', { maxLength: 2000, rows: 3 });
   const consent = field('Allow cloud processing for this goal and its selected sources', 'input', { type: 'checkbox' });
+  const hold = field('Hold this run while I set up action permissions', 'input', { type: 'checkbox' });
   const submit = node('button', 'Start agent workflow', 'primary'); submit.disabled = true; form.append(submit);
   let pending = null;
   form.addEventListener('submit', async event => {
     event.preventDefault(); submit.disabled = true;
     try {
-      const body = { workflow: workflow.value, brief: brief.value, allowCloudProcessing: consent.checked };
+      const body = { workflow: workflow.value, brief: brief.value, allowCloudProcessing: consent.checked, holdForSetup: hold.checked };
       const key = JSON.stringify(body); if (pending?.key !== key) pending = { key, id: crypto.randomUUID() };
       await api('/agents/runs', { requestId: pending.id, ...body }); pending = null; notice('Durable agent workflow accepted.'); await load();
     } catch (error) { notice(error.message, true); } finally { submit.disabled = false; }
@@ -64,7 +65,7 @@ export function initIntelligence({ api, node, button, notice }) {
     }
   }
   async function load() {
-    const [settings, saved, jobs, messages, catalog, domains] = await Promise.all([api('/agents/controls'), api('/agents/schedules'), api('/agents/runs'), api('/agents/notifications'), api('/agents/catalog'), api('/domains')]);
+    const [settings, saved, jobs, messages, catalog, domains, proposals, grants, specialists] = await Promise.all([api('/agents/controls'), api('/agents/schedules'), api('/agents/runs'), api('/agents/notifications'), api('/agents/catalog'), api('/domains'), api('/agents/actions'), api('/agents/tool-grants'), api('/agents/specialists')]);
     renderDomains(domains);
     const selected = workflow.value; workflows = catalog.map(entry => entry.key); workflow.replaceChildren();
     for (const kind of workflows) { const option = node('option', kind); option.value = kind; workflow.append(option); }
@@ -94,7 +95,37 @@ export function initIntelligence({ api, node, button, notice }) {
     for (const view of jobs) {
       const row = node('div', '', 'list-item'); row.append(node('h3', `${view.run.workflow} · ${view.run.status}`));
       for (const task of view.tasks) { const details = document.createElement('details'); details.append(node('summary', `${task.role} · ${task.status}`)); if (task.output) details.append(node('p', task.output)); if (task.errorCode) details.append(node('p', task.errorCode)); row.append(details); }
-      if (['Queued', 'Running'].includes(view.run.status)) row.append(button('Cancel agent run', async () => { await api(`/agents/runs/${view.run.id}/cancel`, {}); await load(); }));
+      for (const grant of grants.filter(g => g.runId === view.run.id && g.grantedBy !== 'installed-artifact-policy')) {
+        row.append(node('p', `${grant.capabilityId} · ${grant.revokedAt ? 'Revoked' : grant.preApproved ? 'Pre-approved reversible actions' : 'Exact approval required'} · up to ${grant.maximumCalls} calls`));
+        if (!grant.revokedAt) row.append(button('Revoke ' + grant.capabilityId, async () => { await api('/agents/tool-grants/' + grant.id, undefined, 'DELETE'); await load(); }));
+      }
+      if (view.run.status === 'AwaitingSetup') {
+        const capability = document.createElement('select'); capability.setAttribute('aria-label', 'Agent action capability');
+        const allowed = new Set(specialists.filter(s => view.tasks.some(t => t.role === s.role)).flatMap(s => s.allowedCapabilities).filter(id => !id.startsWith('core_')));
+        for (const id of allowed) { const option = node('option', id); option.value = id; capability.append(option); }
+        const label = node('label', 'Pre-approve reversible actions within existing device allow-lists'); const preapprove = document.createElement('input'); preapprove.type = 'checkbox'; label.append(preapprove);
+        const grantId = crypto.randomUUID();
+        row.append(node('p', 'This run is held. Add scoped permissions using your owner key, then start it. Existing device grants and their entity constraints are also required.'), capability, label,
+          button('Grant capability for this run', async () => { await api(`/agents/runs/${view.run.id}/tool-grants`, { requestId: grantId, capabilityId: capability.value, preApproved: preapprove.checked }); await load(); }),
+          button('Start configured run', async () => { await api(`/agents/runs/${view.run.id}/release`, {}); await load(); }));
+      }
+      for (const item of proposals.filter(p => p.proposal.runId === view.run.id)) {
+        const action = node('div', '', 'card'); action.append(node('h4', item.proposal.capabilityId + ' · ' + item.status), node('p', 'Risk: ' + item.risk),
+          node('pre', item.proposal.argumentsJson), node('small', 'Approval hash: ' + item.argumentsHash), node('p', 'Expires ' + new Date(item.proposal.expiresAt).toLocaleString()));
+        if (item.status === 'AwaitingApproval') action.append(button('Approve exact agent action', async () => {
+          if (!confirm('Approve this exact action?\n' + item.proposal.capabilityId + '\n' + item.proposal.argumentsJson)) return;
+          await api(`/agents/actions/${item.proposal.id}/approve`, { argumentsHash: item.argumentsHash }); await load();
+        }));
+        if (item.status === 'AwaitingReceipt') action.append(node('p', 'Waiting for a verified device receipt. Completion has not been confirmed.'));
+        row.append(action);
+      }
+      if (['Queued', 'Running', 'AwaitingSetup'].includes(view.run.status)) row.append(button('Cancel agent run', async () => { await api(`/agents/runs/${view.run.id}/cancel`, {}); await load(); }));
+      if (['Failed', 'Expired', 'NeedsReconciliation'].includes(view.run.status)) {
+        const retryId = crypto.randomUUID(); row.append(button('Retry agent run', async () => {
+          if (!confirm('Start fresh work with the original cloud consent? This may incur AI cost. Unreconciled spending and external actions block retries.')) return;
+          await api(`/agents/runs/${view.run.id}/retry`, { requestId: retryId }); await load();
+        }));
+      }
       row.append(button('Delete agent artifacts', async () => { if (!confirm('Delete this run’s private inputs and outputs? Minimal billing metadata remains.')) return; await api(`/agents/runs/${view.run.id}`, undefined, 'DELETE'); await load(); })); runs.append(row);
     }
   }
