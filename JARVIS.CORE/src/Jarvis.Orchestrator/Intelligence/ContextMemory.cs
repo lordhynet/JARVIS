@@ -59,7 +59,7 @@ public sealed class ContextMemoryService(IDomainRegistry domains, ICoreTransacti
                         !state.RetiredSessions.Contains(turn.SessionId), 409, "Restricted, retired or missing speech cannot become memory.");
                     original = turn.Text; version = PrivacyData.Hash(JsonSerializer.Serialize(turn)); session = turn.SessionId;
                 } else if (request.SourceKind == "import") {
-                    Guard.Require(state.ImportedDocuments.TryGetValue(sourceId, out var document) && document.DeletedAt is null, 409, "Knowledge import is unavailable.");
+                    Guard.Require(state.ImportedDocuments.TryGetValue(sourceId, out var document) && document.DeletedAt is null && document.Kind != "interview", 409, "Interview transcripts cannot become memory or domain knowledge.");
                     original = document.Text; version = document.ContentHash;
                 } else throw new DomainException(400, "Memory sources are owner notes, captured speech or stored imports.");
                 Guard.Require(request.Start >= 0 && request.Length is > 0 and <= 1200 && request.Start <= original.Length - request.Length, 400, "Memory source range is invalid.");

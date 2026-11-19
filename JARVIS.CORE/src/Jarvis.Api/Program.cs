@@ -160,6 +160,7 @@ builder.Services.AddSingleton<IIntegrationReader>(s => s.GetRequiredService<Prov
 builder.Services.AddSingleton<OpenAiProvider>();
 builder.Services.AddSingleton<IConversationProvider>(s => s.GetRequiredService<OpenAiProvider>());
 builder.Services.AddSingleton<ITranscriptionProvider>(s => s.GetRequiredService<OpenAiProvider>());
+builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingTranscriber, RecordingTranscriber>();
 builder.Services.AddSingleton<ConversationService>();
 builder.Services.AddJarvisCqrs();
 builder.Services.AddHostedService<RuntimeWorker>();

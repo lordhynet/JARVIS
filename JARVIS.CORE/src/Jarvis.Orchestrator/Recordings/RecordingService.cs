@@ -105,7 +105,7 @@ public sealed class RecordingService(IRecordingStore store, IRecordingAudioFiles
                             finally { CryptographicOperations.ZeroMemory(persisted); }
                             if (request.Discontinuous && !session.Discontinuous) {
                                 recording = recording with { Status = recording.Status == "Complete" ? "Incomplete" : recording.Status, Revision = recording.Revision + 1 };
-                                s.Sessions[recording.Id] = session with { View = recording, Discontinuous = true };
+                                s.Sessions[recording.Id] = RecordingTranscriptService.CaptureBecameIncomplete(session with { View = recording, Discontinuous = true }, runtime);
                             }
                             return Result(s, recording);
                         }

@@ -22,6 +22,15 @@ internal static class RecordingModel
 }
 public sealed class PostgresRecordingStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges audioChanges) : IRecordingStore
 {
+    public async Task<T> ReadWithRuntimeAsync<T>(Func<RecordingState, RuntimeState, T> read, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct); await PostgresPrivacyGate.LockAsync(db, ct);
+        var row = await db.RuntimeDocuments.AsNoTracking().Where(r => r.Id == 1).Select(r => new RuntimeDocument { Id = r.Id, Fingerprint = r.Fingerprint }).SingleAsync(ct);
+        var runtime = new RuntimeState(); await PostgresRuntimeHotState.LoadAsync(db, runtime, row.Fingerprint, ct, deferCold: true);
+        var result = read(await Snapshot(db, ct), runtime); PostgresRuntimeHotState.Detach(runtime, result);
+        await tx.CommitAsync(ct); return result;
+    }
     internal static async Task<RecordingState> Snapshot(SessionDbContext db, CancellationToken ct) => new() {
         Epoch = await db.PrivacyControls.Select(p => p.Epoch).SingleAsync(ct),
         Sessions = (await db.InterviewRecordings.ToListAsync(ct)).ToDictionary(x => x.Id, x => JsonSerializer.Deserialize<RecordingSession>(x.Json)!),

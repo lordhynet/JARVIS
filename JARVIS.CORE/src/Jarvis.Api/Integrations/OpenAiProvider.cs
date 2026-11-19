@@ -94,6 +94,16 @@ public sealed class OpenAiProvider(ProviderGateway gateway, ManagedAi ai, IAudio
         return text.GetString()!;
     }
 
+    internal async Task<string> TranscribeRecordingPieceAsync(byte[] canonicalWave, Jarvis.Orchestrator.Recordings.RecordingTranscriptionPrice price, CancellationToken ct)
+    {
+        var rate = ai.TranscriptionRates();
+        Guard.Require(rate.Model == price.Model && rate.PerMinute == price.PerMinute, 409, "Reviewed transcription pricing changed before dispatch.");
+        var samples = Jarvis.Orchestrator.Recordings.RecordingAudio.Samples(canonicalWave);
+        Guard.Require(canonicalWave.Length <= 10_000_000 && samples <= 180 * Jarvis.Contracts.RecordingProtocol.SampleRate, 400, "Recording piece exceeds the existing transcription bound.");
+        using var audio = new MemoryStream(canonicalWave, writable: false);
+        return await RequestTranscriptAsync(audio, rate.Model, rate.ApiKey, ct);
+    }
+
     private HttpRequestMessage Request(string path, string apiKey)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/" + path);
