@@ -11,7 +11,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 
 internal object WakePhraseMatcher {
-    fun matches(text: String): Boolean = Regex("\\bhey\\s+jarvis\\b", RegexOption.IGNORE_CASE)
+    fun matches(text: String): Boolean = Regex("^hey\\s+jarvis\\b", RegexOption.IGNORE_CASE)
         .containsMatchIn(text.replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim())
 }
 
@@ -41,7 +41,7 @@ internal class LocalWakeDetector(
         }
     }
 
-    fun stop() = main.post { stopNow() }
+    fun stop() { if (Looper.myLooper() == Looper.getMainLooper()) stopNow() else main.post { stopNow() } }
 
     private fun listen() {
         if (stopped || triggered) return
@@ -79,7 +79,9 @@ internal class LocalWakeDetector(
         override fun onBufferReceived(buffer: ByteArray?) = Unit
         override fun onEndOfSpeech() = Unit
         override fun onError(error: Int) {
-            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) {
+            if (error == SpeechRecognizer.ERROR_AUDIO) {
+                stopNow(); onUnavailable("The microphone became unavailable; Hey JARVIS stopped.")
+            } else if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) {
                 stopNow(); onUnavailable("Android's local recognizer cannot use this language or microphone permission.")
             } else restart(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1500 else 700)
         }

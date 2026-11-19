@@ -76,7 +76,7 @@ class InterviewRecordingService : Service() {
         return START_NOT_STICKY
     }
     private fun unlocked(): Boolean = getSystemService(KeyguardManager::class.java).let { !it.isDeviceLocked && !it.isKeyguardLocked }
-    private fun callActive(): Boolean = getSystemService(AudioManager::class.java).mode in listOf(AudioManager.MODE_IN_CALL, AudioManager.MODE_IN_COMMUNICATION)
+    private fun callActive(): Boolean = getSystemService(AudioManager::class.java).mode in listOf(AudioManager.MODE_IN_CALL, AudioManager.MODE_RINGTONE, AudioManager.MODE_IN_COMMUNICATION)
     private fun notification(capturing: Boolean, message: String): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.ic_btn_speak_now).setContentTitle(if (capturing) "JARVIS is recording" else "JARVIS recording upload")
@@ -96,8 +96,8 @@ class InterviewRecordingService : Service() {
             val core = RecordingCoreTransport.connect(this); transport = core
             val offers = core.send(RecordingCaptureRequest("poll", core.deviceId))
             check(offers.ready && offers.offers.any { it.id == id && it.status == "Prepared" && it.tracks == listOf("unknown") }) { "Prepare a new recording for this phone in the owner dashboard." }
-            if (LiveVoiceService.state.value.active || LiveVoiceService.state.value.wakeListening) startService(Intent(this, LiveVoiceService::class.java).setAction(LiveVoiceService.STOP))
-            withTimeout(5000) { while (LiveVoiceService.state.value.active || LiveVoiceService.state.value.wakeListening) delay(50) }
+            if (LiveVoiceService.state.value.let { it.active || it.wakeListening || it.wakeArbitrating }) startService(Intent(this, LiveVoiceService::class.java).setAction(LiveVoiceService.STOP))
+            withTimeout(5000) { while (LiveVoiceService.state.value.let { it.active || it.wakeListening || it.wakeArbitrating }) delay(50) }
             check(!stopRequested && unlocked() && !callActive()) { "Recording start was cancelled. Unlock this phone to begin capture." }
             val started = core.send(RecordingCaptureRequest("start", core.deviceId, id, false, true, true))
             coreStarted = true; captureId = id
