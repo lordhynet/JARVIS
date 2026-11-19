@@ -5,7 +5,8 @@ using Jarvis.Orchestrator.Runtime;
 namespace Jarvis.Orchestrator.Recordings;
 
 public sealed record RecordingSession(InterviewRecording View, string CredentialHash, string RequestHash,
-    bool Discontinuous = false, IReadOnlyDictionary<string, int>? FinalCounts = null, string OwnerId = "owner");
+    bool Discontinuous = false, IReadOnlyDictionary<string, int>? FinalCounts = null, string OwnerId = "owner",
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] RecordingTranscriptJob? TranscriptJob = null);
 public sealed record RecordingChunk(Guid Id, Guid RecordingId, string Track, int Sequence, string Sha256, int Samples,
     Guid BlobId, long Epoch, long Bytes, DateTimeOffset At);
 public sealed class RecordingState
@@ -17,6 +18,7 @@ public sealed class RecordingState
 public interface IRecordingStore
 {
     Task<T> ReadAsync<T>(Func<RecordingState, T> read, CancellationToken ct = default);
+    Task<T> ReadWithRuntimeAsync<T>(Func<RecordingState, RuntimeState, T> read, CancellationToken ct = default);
     Task<T> UpdateAsync<T>(Func<RecordingState, RuntimeState, Task<T>> update, CancellationToken ct = default);
 }
 public interface IRecordingAudioFiles
@@ -32,6 +34,9 @@ public interface IRecordingAudioFiles
 public sealed class MemoryRecordingStore(InMemoryRuntimeStore runtime, MemoryPrivacyBoundary boundary) : IRecordingStore
 {
     private static RecordingState Copy(RecordingState s) => JsonSerializer.Deserialize<RecordingState>(JsonSerializer.Serialize(s))!;
+    public Task<T> ReadWithRuntimeAsync<T>(Func<RecordingState, RuntimeState, T> read, CancellationToken ct = default) => boundary.Run(() => {
+        var copy = Copy(boundary.Recordings); copy.Epoch = boundary.Status.Epoch; return runtime.ReadAsync(s => read(copy, s), ct);
+    });
     public Task<T> ReadAsync<T>(Func<RecordingState, T> read, CancellationToken ct = default) => boundary.Run(() => {
         ct.ThrowIfCancellationRequested(); var copy = Copy(boundary.Recordings); copy.Epoch = boundary.Status.Epoch; return Task.FromResult(read(copy));
     });

@@ -16,6 +16,10 @@ public static class RecordingEndpoints
         group.MapGet("/", (bool? locked, IQueryHandler<ListRecordings, IReadOnlyList<InterviewRecording>> handler, CancellationToken ct) => handler.HandleAsync(new(locked), ct));
         group.MapPost("/", (PrepareRecordingRequest request, ICommandHandler<PrepareRecording, InterviewRecording> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct)).RequireAuthorization(CorePolicies.DeviceManage);
         group.MapPost("/{id:guid}/delete", (Guid id, DeleteRecordingRequest request, ICommandHandler<DeleteRecording, bool> handler, CancellationToken ct) => handler.HandleAsync(new(id, request.Revision, request.Locked), ct)).RequireAuthorization(CorePolicies.PrivacyManage);
+        group.MapGet("/{id:guid}/transcription", (Guid id, bool? locked, IQueryHandler<GetRecordingTranscript, RecordingTranscriptProgress?> handler, CancellationToken ct) => handler.HandleAsync(new(id, locked), ct));
+        group.MapPost("/{id:guid}/transcription/quote", (Guid id, QuoteRecordingTranscriptRequest request, ICommandHandler<QuoteRecordingTranscript, RecordingTranscriptProgress> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct));
+        group.MapPost("/{id:guid}/transcription/advance", (Guid id, AdvanceRecordingTranscriptRequest request, ICommandHandler<AdvanceRecordingTranscript, RecordingTranscriptProgress> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct));
+        group.MapPost("/{id:guid}/transcription/speakers", (Guid id, RelabelRecordingSegmentRequest request, ICommandHandler<RelabelRecordingTranscript, ImportedDocument> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct));
         app.MapPost(RecordingProtocol.Capture, (RecordingCaptureRequest request, HttpContext context, ICommandHandler<CaptureRecording, RecordingCaptureResult> handler, CancellationToken ct) => {
             ApiKeyMiddleware.RequireDevice(context, request.DeviceId); return handler.HandleAsync(new(request), ct);
         }).RequireAuthorization(CorePolicies.OwnerOrCompanion);

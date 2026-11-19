@@ -216,7 +216,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
     {
         "story" => s.Stories.TryGetValue(source.Id, out var story) && story.Version.ToString(CultureInfo.InvariantCulture) == source.Version,
         "learning" => s.Learning.TryGetValue(source.Id, out var item) && LearningVersion(item) == source.Version,
-        "import" => s.ImportedDocuments.TryGetValue(source.Id, out var document) && document.DeletedAt is null && document.ContentHash == source.Version,
+        "import" => s.ImportedDocuments.TryGetValue(source.Id, out var document) && document.DeletedAt is null && document.Kind != "interview" && document.ContentHash == source.Version,
         "voice" => s.VoiceTurns.TryGetValue(source.Id, out var turn) && !turn.Restricted && turn.Role == ChatRoles.User && !s.RetiredSessions.Contains(turn.SessionId) &&
             PrivacyData.Hash(System.Text.Json.JsonSerializer.Serialize(turn)) == source.Version,
         "memory" => s.ContextMemories.TryGetValue(source.Id, out var memory) && Jarvis.Orchestrator.Intelligence.ContextMemoryService.Version(memory) == source.Version &&
