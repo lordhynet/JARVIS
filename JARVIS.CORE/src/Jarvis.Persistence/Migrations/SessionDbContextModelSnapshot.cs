@@ -456,6 +456,20 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("DomainVersions", (string)null);
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.InterviewRecordingRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("InterviewRecordings", (string)null);
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.PrivacyControlRow", b =>
                 {
                     b.Property<int>("Id")
@@ -522,6 +536,34 @@ namespace Jarvis.Persistence.Migrations
                     b.HasIndex("CompletedAt");
 
                     b.ToTable("PrivacyJobs");
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.RecordingChunkRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("RecordingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Track")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecordingId", "Track", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("RecordingChunks", (string)null);
                 });
 
             modelBuilder.Entity("Jarvis.Persistence.RuntimeAudioRow", b =>
@@ -926,6 +968,15 @@ namespace Jarvis.Persistence.Migrations
                     b.HasOne("Jarvis.Persistence.DomainDefinitionRow", null)
                         .WithMany()
                         .HasForeignKey("DomainId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.RecordingChunkRow", b =>
+                {
+                    b.HasOne("Jarvis.Persistence.InterviewRecordingRow", null)
+                        .WithMany()
+                        .HasForeignKey("RecordingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

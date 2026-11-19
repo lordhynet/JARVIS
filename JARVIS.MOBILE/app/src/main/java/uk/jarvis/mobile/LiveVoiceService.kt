@@ -148,6 +148,11 @@ class LiveVoiceService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val recording = InterviewRecordingService.state.value
+        if (intent?.action != STOP && (recording.starting || recording.recording)) {
+            stopVoice("Interview recording is active. Voice and local wake stay off.", disableWake = true)
+            return START_NOT_STICKY
+        }
         when (WakeRestartPolicy.action(intent != null, wakeController.wasEnabled)) {
             WakeRestartAction.OfferResume -> {
                 showTapToResumeNotification()

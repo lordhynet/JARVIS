@@ -5,7 +5,7 @@ using Microsoft.Win32;
 
 namespace Jarvis.Windows;
 
-internal sealed class TrayCompanion : ApplicationContext
+internal sealed partial class TrayCompanion : ApplicationContext
 {
     private readonly Control dispatcher = new();
     private readonly NotifyIcon tray;
@@ -25,11 +25,14 @@ internal sealed class TrayCompanion : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add(status); menu.Items.Add(detail); menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Off — stop microphone and audio (Ctrl+Alt+Shift+J)", null, (_, _) => Halt());
-        Add(menu, "Listen locally for Hey JARVIS", async () => { if (controller is null) await SetupAsync(); else await controller.ListenAsync(); });
-        Add(menu, "Push to talk / interrupt (Ctrl+Alt+J)", () => { controller?.PushToTalk(); return Task.CompletedTask; });
+        Add(menu, "Listen locally for Hey JARVIS", async () => { if (recorder?.IsRecording == true) throw new InvalidOperationException("Stop interview recording before listening for JARVIS."); if (controller is null) await SetupAsync(); else await controller.ListenAsync(); });
+        Add(menu, "Push to talk / interrupt (Ctrl+Alt+J)", () => { PushToTalkUnlessRecording(); return Task.CompletedTask; });
         Add(menu, "Everyday voice next window", () => controller?.RequestModeAsync(VoiceMode.Everyday) ?? Task.CompletedTask);
         Add(menu, "Request Serious voice price…", () => controller?.RequestModeAsync(VoiceMode.Serious) ?? Task.CompletedTask);
         menu.Items.Add(new ToolStripSeparator());
+        Add(menu, "Record an interview…", StartInterviewAsync);
+        Add(menu, "Stop interview recording", () => StopInterviewAsync());
+        Add(menu, "Resume protected recording uploads", ResumeInterviewUploadsAsync);
         Add(menu, "Connection and startup…", SetupAsync);
         Add(menu, "Stop laptop actions", async () => { if (commands is not null) { await commands.DisposeAsync(); commands = null; } });
         Add(menu, "Forget this connection", async () => {
@@ -40,7 +43,7 @@ internal sealed class TrayCompanion : ApplicationContext
         Add(menu, "Exit", ExitAsync);
         tray = new NotifyIcon { Text = "JARVIS — Off", Icon = SystemIcons.Application, ContextMenuStrip = menu, Visible = true };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Halt(); };
-        hotkeys = new Hotkeys(() => Post(() => controller?.PushToTalk()), () => Post(Halt));
+        hotkeys = new Hotkeys(() => Post(PushToTalkUnlessRecording), () => Post(Halt));
         SystemEvents.SessionSwitch += SessionSwitch;
         Application.ApplicationExit += ApplicationExit;
         Post(() => Run(InitializeAsync));
@@ -93,6 +96,7 @@ internal sealed class TrayCompanion : ApplicationContext
     }
     private async Task SetupAsync()
     {
+        if (recorder?.IsRecording == true) throw new InvalidOperationException("Stop interview recording before changing this connection.");
         await DisconnectAsync();
         using var form = new ConnectionForm(connection);
         if (form.ShowDialog() == DialogResult.OK && form.Result is { } saved) {
@@ -102,12 +106,14 @@ internal sealed class TrayCompanion : ApplicationContext
     }
     private async Task DisconnectAsync()
     {
+        if (recorder is not null) { await recorder.DisposeAsync(); recorder = null; CloseRecordingBanner(); }
         if (commands is not null) { await commands.DisposeAsync(); commands = null; }
         if (controller is not null) { var previous = controller; controller = null; await previous.DisposeAsync(); }
         SetState(CompanionState.Off, "Off");
     }
     private void SetState(CompanionState state, string text)
     {
+        if (recorder?.IsRecording == true) { SetRecordingIndicator("JARVIS is recording — microphone and system playback"); return; }
         status.Text = state switch { CompanionState.ListeningLocally => "Listening locally", CompanionState.Live => "Live with Core", _ => state.ToString() };
         detail.Text = text;
         var tooltip = "JARVIS — " + status.Text;

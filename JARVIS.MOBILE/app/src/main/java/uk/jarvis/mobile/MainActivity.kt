@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
             startService(Intent(this, LiveVoiceService::class.java).setAction(action).putExtra(key, value))
     }
     private fun requestVoice(everyday: Boolean) {
+        if (InterviewRecordingService.state.value.let { it.starting || it.recording }) return
         if (model.state.value.busy || !model.state.value.connected) return
         permissionPurposeWake = false
         if (!permissions.begin()) { permissions.cancel(); model.reportAudioIssue("The earlier start was cancelled. Tap Talk again when ready."); return }
@@ -81,6 +82,7 @@ class MainActivity : ComponentActivity() {
         if (missing.isEmpty()) resolvePermissions() else permission.launch(missing.toTypedArray())
     }
     private fun requestLocalWake() {
+        if (InterviewRecordingService.state.value.let { it.starting || it.recording }) return
         if (model.state.value.busy || !model.state.value.connected) return
         if (Build.VERSION.SDK_INT < 31) { model.reportAudioIssue("Local Hey JARVIS needs Android 12 or newer with an on-device speech recognizer."); return }
         if (!model.state.value.verified) { model.reportAudioIssue("Have the Core owner confirm this phone's microphone and audio setup first."); return }
@@ -117,6 +119,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun stopVoice() {
+        tone?.release(); tone = null
         permissions.cancel(); model.setAudioStarting(false)
         permissionPurposeWake = false
         if (LiveVoiceService.state.value.active || LiveVoiceService.state.value.wakeListening) startService(Intent(this, LiveVoiceService::class.java).setAction(LiveVoiceService.STOP))
@@ -126,6 +129,7 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
     }
     private fun testAudio() {
+        if (InterviewRecordingService.state.value.let { it.starting || it.recording }) return
         runCatching {
             tone?.release()
             val current = ToneGenerator(AudioManager.STREAM_MUSIC, 35); tone = current; current.startTone(ToneGenerator.TONE_PROP_ACK, 500)
@@ -141,6 +145,8 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
     appPermissions: () -> Unit, test: () -> Unit, requestMode: (String) -> Unit, confirmMode: (String) -> Unit, export: () -> Unit) {
     val state by model.state.collectAsStateWithLifecycle()
     val voice by LiveVoiceService.state.collectAsStateWithLifecycle()
+    val recording by InterviewRecordingService.state.collectAsStateWithLifecycle()
+    val recordingActive = recording.starting || recording.recording
     var settings by remember { mutableStateOf(false) }
     var consent by remember(state.url) { mutableStateOf(false) }
     var forget by remember { mutableStateOf(false) }
@@ -151,7 +157,7 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
     val haptic = LocalHapticFeedback.current
     LaunchedEffect(voice.active) { if (voice.active) haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
     val voiceReady = state.verified && state.voice?.ready == true && !state.offline
-    val canStart = consent && voiceReady && !state.busy && !state.audioStarting
+    val canStart = consent && voiceReady && !state.busy && !state.audioStarting && !recordingActive
     Scaffold(containerColor = JarvisColors.Ink, topBar = {
         Wordmark(state.connected, if (state.connected && !state.pairingOffered) voice.mode else null,
             if (state.connected && !state.pairingOffered) { { settings = !settings } } else null, settings)
@@ -160,7 +166,10 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = JarvisColors.Mint, trackColor = JarvisColors.Line)
             if (state.notice.isNotBlank()) Text(state.notice, color = JarvisColors.Amber, fontSize = 14.sp)
-            if (!state.connected || state.pairingOffered) {
+            if (state.connected || recordingActive) RecordingControls(stop)
+            if (recordingActive) {
+                Text("Voice and connection changes are paused until recording stops.", color = JarvisColors.Muted)
+            } else if (!state.connected || state.pairingOffered) {
                 PairingScreen(state, model::acceptPairing) { url, key -> model.connect(url, key) }
                 if (state.connected || state.legacyDrafts) TextButton(onClick = { forget = true }) { Text("Forget this phone", color = JarvisColors.Red) }
             } else if (settings) {
@@ -171,7 +180,7 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
                 }
                 SectionLabel("Voice")
                 SettingRow("Hey JARVIS", if (voice.wakeListening) "Listening on this phone only" else "Off") {
-                    Switch(checked = voice.wakeListening, enabled = !voice.active && !state.busy && voiceReady,
+                    Switch(checked = voice.wakeListening, enabled = !recordingActive && !voice.active && !state.busy && voiceReady,
                         onCheckedChange = { on -> if (on) confirmLocalWake = true else stop() })
                 }
                 SettingRow("Finish by saying", "“Thanks, JARVIS” · “That's all” · “Bye”")
@@ -180,7 +189,7 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
                 }
                 SectionLabel("Audio")
                 SettingRow("Test sound", "Plays a short tone in your earbuds") {
-                    TextButton(onClick = test, enabled = !voice.active, modifier = Modifier.heightIn(min = 48.dp)) { Text("Play") }
+                    TextButton(onClick = test, enabled = !recordingActive && !voice.active, modifier = Modifier.heightIn(min = 48.dp)) { Text("Play") }
                 }
                 SettingRow("Permissions", "Microphone and notifications") {
                     TextButton(onClick = appPermissions, enabled = !voice.active, modifier = Modifier.heightIn(min = 48.dp)) { Text("Open") }
@@ -246,17 +255,23 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
             }
         }
     }
-    if (confirmLocalWake) AlertDialog(onDismissRequest = { confirmLocalWake = false }, title = { Text("Turn on Hey JARVIS?") },
+    if (confirmLocalWake) {
+        AlertDialog(onDismissRequest = { confirmLocalWake = false }, title = { Text("Turn on Hey JARVIS?") },
         text = { Text("This phone listens for \u201cHey JARVIS\u201d itself, with a notification showing. Nothing is sent until it hears you. It uses some battery, and Android may pause it.") },
         confirmButton = { TextButton(onClick = { confirmLocalWake = false; enableWake() }) { Text("Turn on") } },
         dismissButton = { TextButton(onClick = { confirmLocalWake = false }) { Text("Cancel") } })
-    if (forget) AlertDialog(onDismissRequest = { forget = false }, title = { Text("Forget this phone?") },
+    }
+    if (forget) {
+        AlertDialog(onDismissRequest = { forget = false }, title = { Text("Forget this phone?") },
         text = { Text("Removes this phone's key and old drafts. Your conversations stay on JARVIS.") },
         confirmButton = { TextButton(onClick = { stop(); model.disconnect(); forget = false }) { Text("Forget") } },
         dismissButton = { TextButton(onClick = { forget = false }) { Text("Keep connection") } })
-    if (recover) AlertDialog(onDismissRequest = { recover = false }, title = { Text("Export legacy drafts?") },
+    }
+    if (recover) {
+        AlertDialog(onDismissRequest = { recover = false }, title = { Text("Export legacy drafts?") },
         text = { Text("Choose where to save a JSON copy of old private editor drafts and unconfirmed requests. This does not send or replay them to Core.") },
         confirmButton = { TextButton(onClick = { export(); recover = false }) { Text("Choose export file") } },
         dismissButton = { TextButton(onClick = { recover = false }) { Text("Cancel") } })
+    }
 }
 

@@ -9,8 +9,11 @@ services:
       - "127.0.0.1:${JARVIS_API_PORT:?Run scripts/start-server.ps1}:${JARVIS_CONTAINER_HTTP_PORT:?Run scripts/start-server.ps1}"
     volumes:
       - ./appsettings.json:/app/appsettings.json:ro
+      - jarvis-recordings:/app/recordings
     healthcheck:
       test: ["CMD", "dotnet", "Jarvis.Api.dll", "--health-probe"]
       interval: 10s
       timeout: 5s
       retries: 12
+volumes:
+  jarvis-recordings:

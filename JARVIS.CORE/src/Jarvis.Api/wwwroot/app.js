@@ -6,6 +6,7 @@ import { initPlanning } from './planning.js';
 import { initImports } from './imports.js';
 import { initNotifications } from './notifications.js';
 import { initTravel } from './travel.js';
+import { initRecordings } from './recordings.js';
 import { qrSvg } from './qr.js';
 let liveVoice;
 let connectionGeneration = 0;
@@ -51,6 +52,7 @@ async function api(path, body, method) {
     verb === 'POST' && ['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply'].includes(path) ||
     ['POST', 'DELETE'].includes(verb) && /^\/devices\/[^/]+\/(verify|credential)$/.test(path) ||
     verb === 'POST' && path === '/devices/pairing-codes' ||
+    verb === 'POST' && (path === '/recordings' || /^\/recordings\/[^/]+\/delete$/.test(path)) ||
     verb === 'POST' && /^\/devices\/[^/]+\/grants$/.test(path) ||
     ['GET', 'DELETE'].includes(verb) && /^\/device-grants(?:\/[^/]+)?$/.test(path) ||
     verb === 'POST' && /^\/device-commands\/[^/]+\/confirm$/.test(path) ||
@@ -119,10 +121,11 @@ const notifications = initNotifications({ api, node, button, notice });
 const imports = initImports({ api, node, button, notice });
 const planning = initPlanning({ api, node, button, notice });
 const travel = initTravel({ api, node, button, notice });
+const recordings = initRecordings({ api, node, button, notice });
 const privacy = initPrivacy({ api, node, button, notice, onErased: () => {
   connectionGeneration++;
   clearBrowserAccess(true);
-  stopAudio(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); travel.clear(); imports.clear(); notifications.clear(); state.session = null; state.devices = []; state.registered = false;
+  stopAudio(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); travel.clear(); recordings.clear(); imports.clear(); notifications.clear(); state.session = null; state.devices = []; state.registered = false;
   for (const id of ['session-list', 'device-list', 'learning-list', 'tool-list', 'device-command-list', 'messages', 'checkpoints', 'briefing-content', 'integration-list']) $(id)?.replaceChildren();
   for (const field of document.querySelectorAll('[data-panel] input,[data-panel] textarea')) { if (field.type === 'checkbox' || field.type === 'radio') field.checked = false; else field.value = ''; }
   for (const id of ['selected-title', 'owner', 'handoff-state']) $(id).textContent = '';
@@ -135,7 +138,7 @@ document.querySelectorAll('[data-tab]').forEach(tab => tab.addEventListener('cli
   document.querySelectorAll('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== tab.dataset.tab);
   $('page-title').textContent = tab.textContent;
   if (!state.key) return;
-  try { if (tab.dataset.tab === 'sessions') { await loadSessions(); await loadDevices(); } if (tab.dataset.tab === 'devices') await loadDevices(); if (tab.dataset.tab === 'learning') await loadLearning(); if (tab.dataset.tab === 'tools') await loadTools(); if (tab.dataset.tab === 'agents') await intelligence.load(); if (tab.dataset.tab === 'privacy') await privacy.load(); if (tab.dataset.tab === 'planning') await planning.load(); if (tab.dataset.tab === 'imports') await imports.load(); if (tab.dataset.tab === 'briefing') await travel.load(); await extraModules.load(tab.dataset.tab); } catch (e) { notice(e.message, true); }
+  try { if (tab.dataset.tab === 'sessions') { await loadSessions(); await loadDevices(); } if (tab.dataset.tab === 'devices') await loadDevices(); if (tab.dataset.tab === 'learning') await loadLearning(); if (tab.dataset.tab === 'tools') await loadTools(); if (tab.dataset.tab === 'agents') await intelligence.load(); if (tab.dataset.tab === 'privacy') await privacy.load(); if (tab.dataset.tab === 'planning') await planning.load(); if (tab.dataset.tab === 'imports') await imports.load(); if (tab.dataset.tab === 'briefing') await travel.load(); if (tab.dataset.tab === 'recordings') await recordings.load(); await extraModules.load(tab.dataset.tab); } catch (e) { notice(e.message, true); }
 }));
 on('connect-form', 'submit', async () => {
   connectionGeneration++;
@@ -153,7 +156,7 @@ on('connect-form', 'submit', async () => {
   $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false; $('connection').textContent = 'Connected'; notice('Connected. Your saved sessions are ready.');
   await liveVoice.refresh();
 });
-on('disconnect', 'click', () => { connectionGeneration++; stopAudio(); clearBrowserAccess(true); document.getElementById('verify-device')?.remove(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); travel.clear(); imports.clear(); notifications.clear(); privacy.clear(); state.key = ''; $('owner-key').value = ''; state.session = null; state.registered = false; $('workspace').hidden = true; $('login').hidden = false; $('connection').textContent = 'Disconnected'; $('notice').hidden = true; });
+on('disconnect', 'click', () => { connectionGeneration++; stopAudio(); clearBrowserAccess(true); document.getElementById('verify-device')?.remove(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); travel.clear(); recordings.clear(); imports.clear(); notifications.clear(); privacy.clear(); state.key = ''; $('owner-key').value = ''; state.session = null; state.registered = false; $('workspace').hidden = true; $('login').hidden = false; $('connection').textContent = 'Disconnected'; $('notice').hidden = true; });
 function renderBrowserAccess() {
   if (!$('browser-access-status')) return;
   $('browser-access-status').textContent = browserAccess?.enrolled

@@ -33,3 +33,14 @@ individual-record retention/deletion into every cached view, or manage provider/
 Cleanup follows the connection being checked. Previously abandoned cache identities for
 other addresses/credentials require the explicit local erase action; this is not a device-wide
 remote wipe protocol.
+
+Interview capture adds dedicated recording/chunk metadata and AES-GCM audio files.
+Audio expires after 30 days, independently of transcript retention. Core export includes
+recording metadata only. Recording deletion and full erasure remove owned ciphertext,
+including orphaned files; a failed file deletion prevents a success response. Native
+recording queues use DPAPI/Android Keystore and retain unacknowledged audio during an
+outage or ordinary authorization failure. They remove copies on a confirmed Core erasure
+or epoch change for that origin; an offline device learns this on reconnect. This differs
+from the older practice-cache cleanup policy described above. No capture starts after a
+restart without another explicit owner start. See [recording ADR](adr/0019-interview-recording-storage.md)
+for consent, key/volume backup, locking, third-party data boundaries and hardware limits.

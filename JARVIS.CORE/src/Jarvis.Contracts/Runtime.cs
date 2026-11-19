@@ -1,7 +1,8 @@
 namespace Jarvis.Contracts;
 
 public sealed record RegisterDeviceRequest(string DeviceId, string Name, DeviceKind Kind, DeviceCapabilities Capabilities);
-public sealed record RegisteredDevice(DeviceRegistration Registration, DateTimeOffset LastSeenAt, bool CapabilitiesVerified);
+public sealed record RegisteredDevice(DeviceRegistration Registration, DateTimeOffset LastSeenAt, bool CapabilitiesVerified,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] RecordingAudioBlock? Recording = null);
 public sealed record DeviceView(RegisteredDevice Device, bool Online, string OwnerDisplayName = "");
 public sealed record SessionTransitionRequest(SessionStatus Status);
 public sealed record StartHandoffRequest(string FromDeviceId, string ToDeviceId, string Summary);

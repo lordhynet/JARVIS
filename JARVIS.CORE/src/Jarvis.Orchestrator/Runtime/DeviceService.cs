@@ -46,7 +46,7 @@ public sealed class DeviceService(IRuntimeStore store, TimeProvider clock)
         Guard.Require(device is not null, 404, "Device not registered.");
         Guard.Require(IsOnline(device!), 409, "Device is offline. Send a heartbeat first.");
         Guard.Require(device!.CapabilitiesVerified, 409, "Verify the device capabilities first.");
-        if (voice) Guard.Require(device.Registration.Capabilities.CanListen && device.Registration.Capabilities.CanSpeak,
+        if (voice) Guard.Require(!(device.Recording?.Until > clock.GetUtcNow()) && device.Registration.Capabilities.CanListen && device.Registration.Capabilities.CanSpeak,
             409, "Target device must support both listening and speaking.");
         return device;
     }

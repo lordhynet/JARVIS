@@ -3,10 +3,11 @@ using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.EntityFrameworkCore;
+using Jarvis.Orchestrator.Recordings;
 
 namespace Jarvis.Persistence;
 
-public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges audioChanges) : IPrivacyStore
+public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges audioChanges, IRecordingAudioFiles? recordingFiles = null) : IPrivacyStore
 {
     public async Task<PrivacyStatus> StatusAsync(CancellationToken ct = default)
     {
@@ -37,8 +38,9 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var events = await db.WorkflowEvents.AsNoTracking().OrderBy(x => x.OccurredAt).Select(x => new WorkflowEvent(x.EventId, x.RunId, x.Revision, x.Status, x.OccurredAt)).ToListAsync(ct);
         var jobs = (await db.PrivacyJobs.AsNoTracking().ToListAsync(ct)).Select(x => x.Contract()).ToList();
         var travel = await PostgresTravelStore.Snapshot(db, ct);
+        var recordings = await PostgresRecordingStore.Snapshot(db, ct);
         var export = PrivacyData.Export(control.Status(), state, sessions, runs, events, jobs, now, (await PostgresDomainRegistryStore.Snapshot(db, ct)).Export()) with {
-            TravelRoutes = travel.Routes.Values.ToArray(), TravelLineStates = travel.Lines.Values.ToArray() };
+            TravelRoutes = travel.Routes.Values.ToArray(), TravelLineStates = travel.Lines.Values.ToArray(), InterviewRecordings = recordings.Sessions.Values.Select(r => r.View).ToArray() };
         await tx.CommitAsync(ct); return export;
     }
     public async Task<RetentionPreview> PreviewAsync(RetentionPolicy policy, DateTimeOffset asOf, CancellationToken ct = default)
@@ -57,6 +59,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             DeviceCommands = await commands.CountAsync(ct),
             DeviceReceipts = await db.DeviceReceipts.CountAsync(x => commands.Any(command => command.Id == x.CommandId), ct)
         };
+        counts = RecordingRetention.Counts(await PostgresRecordingStore.Snapshot(db, ct), counts, asOf);
         var result = new RetentionPreview(asOf, PrivacyData.PolicyHash(policy), policy, counts);
         await tx.CommitAsync(ct); return result;
     }
@@ -85,6 +88,11 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             DeviceCommands = await db.DeviceCommands.CountAsync(ct),
             DeviceReceipts = await db.DeviceReceipts.CountAsync(ct)
         };
+        counts = RecordingRetention.Counts(await PostgresRecordingStore.Snapshot(db, ct), counts);
+        // The exclusive privacy gate also excludes a file publisher holding the shared D2 gate.
+        // Do not report erasure success if ciphertext deletion fails.
+        if (recordingFiles is not null) await recordingFiles.EraseAsync(ct);
+        await db.InterviewRecordings.ExecuteDeleteAsync(ct);
         hot.Apply(row, PrivacyData.EmptyAfterErase(state));
         await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
         await db.DomainDefinitions.ExecuteDeleteAsync(ct);
@@ -126,6 +134,11 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var workflowRows = await db.WorkflowRuns.ToListAsync(ct);
         var runs = workflowRows.Select(x => x.ToContract()).ToList();
         var counts = PrivacyData.Counts(state, sessionRows.Select(x => x.ToContract()).ToList(), runs, policy, request.AsOf);
+        var recordingState = await PostgresRecordingStore.Snapshot(db, ct);
+        counts = RecordingRetention.Counts(recordingState, counts, request.AsOf);
+        await RecordingRetention.ApplyAsync(recordingState, state, recordingFiles, request.AsOf, ct);
+        foreach (var recording in db.InterviewRecordings.Local) recording.Json = JsonSerializer.Serialize(recordingState.Sessions[recording.Id]);
+        foreach (var chunk in db.RecordingChunks.Local.ToArray()) if (!recordingState.Chunks.ContainsKey(chunk.Id)) db.RecordingChunks.Remove(chunk);
         var selection = PrivacyData.Select(state, sessionRows.Select(x => x.ToContract()).ToList(), runs, policy, request.AsOf);
         var voiceIds = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
         foreach (var session in sessionRows)

@@ -11,6 +11,7 @@ ARG FFMPEG_VERSION=7:8.0.1-3ubuntu2
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg=${FFMPEG_VERSION} && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app ./
+RUN mkdir -p /app/recordings && chown "$APP_UID" /app/recordings && chmod 700 /app/recordings
 ENV ASPNETCORE_HTTP_PORTS=8080
 USER $APP_UID
 EXPOSE 8080
