@@ -41,26 +41,67 @@ public sealed class PostgresRecordingStore(IDbContextFactory<SessionDbContext> f
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
         await PostgresPrivacyGate.LockAsync(db, ct); var result = read(await Snapshot(db, ct)); await tx.CommitAsync(ct); return result;
     }
-    public async Task<T> UpdateAsync<T>(Func<RecordingState, RuntimeState, Task<T>> update, CancellationToken ct = default)
+    public Task<T> UpdateAsync<T>(Func<RecordingState, RuntimeState, Task<T>> update, CancellationToken ct = default) =>
+        MutateAsync<object?, T>(null, null, (state, runtime, _) => update(state, runtime), null, ct);
+    public Task<T> UpdatePreparedAsync<TPlan, T>(Func<RecordingState, RuntimeState, TPlan> plan,
+        Func<TPlan, CancellationToken, Task> prepare, Func<RecordingState, RuntimeState, TPlan, Task<T>> update,
+        Func<TPlan, RecordingCommitOutcome, Task>? finish = null, CancellationToken ct = default) => MutateAsync(plan, prepare, update, finish, ct);
+    private async Task<T> MutateAsync<TPlan, T>(Func<RecordingState, RuntimeState, TPlan>? plan,
+        Func<TPlan, CancellationToken, Task>? prepare, Func<RecordingState, RuntimeState, TPlan, Task<T>> update,
+        Func<TPlan, RecordingCommitOutcome, Task>? finish, CancellationToken ct)
     {
-        await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct); await PostgresPrivacyGate.LockAsync(db, ct);
+        await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
+        TPlan prepared = default!; var planned = false; var committing = false; var outcome = RecordingCommitOutcome.Rejected;
+        try {
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        // Separate from D2: serialize recording file admission across hosts, while voice
+        // remains free to renew its lease during encryption, directory IO and fsync.
+        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(1246906966, 1380270927)", ct);
+        // The recording gate excludes every recording writer, and the shared privacy
+        // gate excludes erasure/retention. Hydrate and fingerprint these stable rows
+        // before D2, rather than making voice wait for a growing chunk collection.
+        var state = await Snapshot(db, ct);
+        var recordings = state.Sessions.ToDictionary(p => p.Key, p => JsonSerializer.Serialize(p.Value));
+        var chunks = state.Chunks.ToDictionary(p => p.Key, p => JsonSerializer.Serialize(p.Value));
+        if (plan is not null) {
+            var row = await db.RuntimeDocuments.AsNoTracking().Where(r => r.Id == 1).Select(r => new RuntimeDocument { Id = r.Id, Fingerprint = r.Fingerprint }).SingleAsync(ct);
+            var runtime = new RuntimeState(); await PostgresRuntimeHotState.LoadAsync(db, runtime, row.Fingerprint, ct, deferCold: true);
+            prepared = plan(state, runtime); planned = true;
+            PostgresRuntimeHotState.Detach(runtime, prepared);
+        }
+        // Reload hot runtime rows after staging: a lease or credential may change
+        // during file IO. Recording rows are persisted explicitly as a delta below.
+        db.ChangeTracker.Clear();
+        if (plan is not null) {
+            await prepare!(prepared, ct);
+        }
         var at = System.Diagnostics.Stopwatch.GetTimestamp();
         var result = await PostgresRuntimeStore.UpdateInTransactionAsync(db, async runtime => {
-            var state = await Snapshot(db, ct); var recordings = state.Sessions.ToDictionary(p => p.Key, p => JsonSerializer.Serialize(p.Value));
-            var chunks = state.Chunks.ToDictionary(p => p.Key, p => JsonSerializer.Serialize(p.Value)); var value = await update(state, runtime);
-            foreach (var row in db.InterviewRecordings.Local.ToArray()) if (!state.Sessions.ContainsKey(row.Id)) db.InterviewRecordings.Remove(row);
+            var value = await update(state, runtime, prepared);
+            foreach (var id in recordings.Keys.Except(state.Sessions.Keys)) db.InterviewRecordings.Remove(new() { Id = id });
             foreach (var (id, session) in state.Sessions) {
                 var json = JsonSerializer.Serialize(session); if (recordings.GetValueOrDefault(id) == json) continue;
-                var row = db.InterviewRecordings.Local.SingleOrDefault(x => x.Id == id); if (row is null) db.InterviewRecordings.Add(new() { Id = id, Json = json }); else row.Json = json;
+                var row = new InterviewRecordingRow { Id = id, Json = json };
+                if (recordings.ContainsKey(id)) db.InterviewRecordings.Update(row); else db.InterviewRecordings.Add(row);
             }
-            foreach (var row in db.RecordingChunks.Local.ToArray()) if (!state.Chunks.ContainsKey(row.Id)) db.RecordingChunks.Remove(row);
+            foreach (var id in chunks.Keys.Except(state.Chunks.Keys)) db.RecordingChunks.Remove(new() { Id = id });
             foreach (var (id, chunk) in state.Chunks) {
                 var json = JsonSerializer.Serialize(chunk); if (chunks.GetValueOrDefault(id) == json) continue;
-                var row = db.RecordingChunks.Local.SingleOrDefault(x => x.Id == id);
-                if (row is null) db.RecordingChunks.Add(new() { Id = id, RecordingId = chunk.RecordingId, Track = chunk.Track, Sequence = chunk.Sequence, Json = json }); else row.Json = json;
+                var row = new RecordingChunkRow { Id = id, RecordingId = chunk.RecordingId, Track = chunk.Track, Sequence = chunk.Sequence, Json = json };
+                if (chunks.ContainsKey(id)) db.RecordingChunks.Update(row); else db.RecordingChunks.Add(row);
             }
             return value;
         }, at, at, ct);
-        await tx.CommitAsync(ct); audioChanges.LeaseChanged(result.Before, result.After); return result.Result;
+        committing = true; await tx.CommitAsync(ct); outcome = RecordingCommitOutcome.Committed;
+        audioChanges.LeaseChanged(result.Before, result.After); return result.Result;
+        } catch {
+            if (committing && outcome != RecordingCommitOutcome.Committed) outcome = RecordingCommitOutcome.Unknown;
+            try { await tx.RollbackAsync(CancellationToken.None); } catch { }
+            throw;
+        } finally {
+            // A known rejection can remove its unique staged blob after rollback releases
+            // D2. An uncertain commit retains it: metadata may already reference it.
+            if (planned && finish is not null) try { await finish(prepared, outcome); } catch when (outcome != RecordingCommitOutcome.Committed) { }
+        }
     }
 }
