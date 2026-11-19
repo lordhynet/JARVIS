@@ -27,7 +27,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Android build or verification failed.' }
     $artifacts = Join-Path $PSScriptRoot '../artifacts'
     New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-    $apk = Join-Path $artifacts 'JARVIS-Android-0.11.1.apk'
+    $apk = Join-Path $artifacts 'JARVIS-Android-0.11.3.apk'
     Copy-Item -LiteralPath app/build/outputs/apk/release/app-release.apk -Destination $apk -Force
     & (Join-Path $sdk 'build-tools/35.0.0/apksigner.bat') verify --verbose $apk
     if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed.' }
