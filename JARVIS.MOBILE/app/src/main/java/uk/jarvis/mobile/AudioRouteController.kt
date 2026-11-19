@@ -79,7 +79,7 @@ internal class AudioRouteController(private val context: Context, private val on
     @Suppress("DEPRECATION")
     fun stopForNoisy(): Boolean {
         fun headset(device: AudioDeviceInfo?) = device?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-            device?.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+            Build.VERSION.SDK_INT >= 31 && device?.type == AudioDeviceInfo.TYPE_BLE_HEADSET
         val selected: Boolean
         val available: Boolean
         try {
