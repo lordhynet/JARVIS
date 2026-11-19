@@ -105,6 +105,16 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
 
     private async Task PrepareWindowAsync(CancellationToken ct)
     {
+        var started = clock.GetTimestamp();
+        try { await PrepareWindowCoreAsync(ct); }
+        finally {
+            CoreTelemetry.VoicePrepare.Record(clock.GetElapsedTime(started).TotalSeconds,
+                new KeyValuePair<string, object?>("window", number == 1 ? "first" : "renewal"));
+        }
+    }
+
+    private async Task PrepareWindowCoreAsync(CancellationToken ct)
+    {
         Guard.Require(await ownership.CurrentAsync(lease, ct), 409, "Audio ownership expired before voice reservation.");
         voiceOutput = ai.RealtimeOutput();
         turnDetection = ai.VoiceTurnDetection();
@@ -415,6 +425,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         Guard.Require(fence.IsCurrent(), 409, "Audio lease expired before the voice session was ready.");
         MarkReady();
         Interlocked.Exchange(ref lastActivity, clock.GetTimestamp());
+        if (number == 1 && client.AuthenticatedAt is var authenticated and not 0)
+            CoreTelemetry.VoiceTicketToReady.Record(clock.GetElapsedTime(authenticated).TotalSeconds);
         await SendClientAsync(new { type = "ready", fence = lease.Fence, leaseSeconds = 15, windowSeconds = window.Seconds,
             window = number, sampleRate = VoiceWindowLimits.SampleRate, voiceName = voiceOutput.Name, speed = voiceOutput.Speed,
             mode = SelectedMode(preparedMode).ToString(), model, recommendedMode = recommendedMode.ToString(), locked = windowLocked });
@@ -806,6 +818,9 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
                 Guard.Require(audioFence.IsCurrent(), 409, "Audio lease expired.");
                 var latencyStart = Interlocked.Exchange(ref firstAudioAt, 0);
                 if (latencyStart != 0) CoreTelemetry.VoiceFirstAudio.Record(clock.GetElapsedTime(latencyStart).TotalSeconds);
+                // Once per connection: authenticated ticket to the first reply audio sent to the device.
+                if (client.TakeAuthenticatedAt() is var authenticated and not 0)
+                    CoreTelemetry.VoiceTicketToFirstAudio.Record(clock.GetElapsedTime(authenticated).TotalSeconds);
             }
             await client.SendAsync(value, timeout.Token);
         }
