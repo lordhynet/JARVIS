@@ -14,8 +14,9 @@ namespace Jarvis.Tests;
 internal sealed class RecordingFilesFake : IRecordingAudioFiles
 {
     public bool Ready { get; set; } = true; public bool FailErase; public long ExtraBytes; public int Writes; public Dictionary<Guid, byte[]> Blobs = [];
-    public long BytesOnDisk => ExtraBytes + Blobs.Values.Sum(b => (long)b.Length + 32);
-    public Task WriteAsync(RecordingChunk c, ReadOnlyMemory<byte> data, CancellationToken ct) { Blobs[c.BlobId] = data.ToArray(); Writes++; return Task.CompletedTask; }
+    public Action? BeforeScan; public Func<CancellationToken, Task>? BeforeWrite;
+    public long BytesOnDisk { get { BeforeScan?.Invoke(); return ExtraBytes + Blobs.Values.Sum(b => (long)b.Length + 32); } }
+    public async Task WriteAsync(RecordingChunk c, ReadOnlyMemory<byte> data, CancellationToken ct) { if (BeforeWrite is not null) await BeforeWrite(ct); Blobs[c.BlobId] = data.ToArray(); Writes++; }
     public Task<byte[]> ReadAsync(RecordingChunk c, CancellationToken ct) => Task.FromResult(Blobs[c.BlobId].ToArray());
     public Task DeleteAsync(RecordingChunk c, CancellationToken ct) { Blobs.Remove(c.BlobId); return Task.CompletedTask; }
     public Task DeleteRecordingAsync(Guid id, CancellationToken ct) { Blobs.Clear(); return Task.CompletedTask; }

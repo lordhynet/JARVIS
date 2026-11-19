@@ -16,6 +16,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
+using Jarvis.Orchestrator.Recordings;
+using System.Security.Cryptography;
 
 namespace Jarvis.Tests;
 
@@ -55,18 +57,19 @@ public sealed class RuntimeMeasurementHarnessTests
             await command.ExecuteNonQueryAsync();
         }
         var voiceProfile = Environment.GetEnvironmentVariable("JARVIS_PERF_VOICE_PROFILE") == "1";
+        var recordingLoad = Environment.GetEnvironmentVariable("JARVIS_PERF_RECORDING_LOAD") == "1";
         var databaseConnection = new NpgsqlConnectionStringBuilder(admin.ConnectionString)
         {
             Database = databaseName,
-            Pooling = voiceProfile
+            Pooling = voiceProfile || recordingLoad
         };
         try
         {
-            await MeasureDatabaseAsync(databaseConnection.ConnectionString, outputPath, voiceProfile);
+            await MeasureDatabaseAsync(databaseConnection.ConnectionString, outputPath, voiceProfile, recordingLoad);
         }
         finally
         {
-            if (voiceProfile)
+            if (voiceProfile || recordingLoad)
             {
                 using var pooled = new NpgsqlConnection(databaseConnection.ConnectionString);
                 NpgsqlConnection.ClearPool(pooled);
@@ -78,10 +81,15 @@ public sealed class RuntimeMeasurementHarnessTests
         }
     }
 
-    private static async Task MeasureDatabaseAsync(string connection, string outputPath, bool voiceProfile)
+    private static async Task MeasureDatabaseAsync(string connection, string outputPath, bool voiceProfile, bool recordingLoad)
     {
         var sql = new SqlCallCounter();
-        using var host = new MeasurementApiFactory(connection, sql, voiceProfile);
+        var audioParent = Path.Combine(AppContext.BaseDirectory, "measurement-recordings");
+        var audioFolder = Path.Combine(audioParent, Guid.NewGuid().ToString("N"));
+        var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var encrypted = new EncryptedRecordingFiles(() => new(true, audioFolder, key));
+        var slowFiles = new MeasurementRecordingFiles(encrypted);
+        using var host = new MeasurementApiFactory(connection, sql, voiceProfile || recordingLoad, recordingLoad ? slowFiles : null);
         using var client = host.CreateClient(); // Starts the isolated API and applies its migrations.
         var services = host.Services;
         var runtime = services.GetRequiredService<IRuntimeStore>();
@@ -142,6 +150,14 @@ public sealed class RuntimeMeasurementHarnessTests
         });
 
         var documentBytes = await ReadRuntimeDocumentBytesAsync(services.GetRequiredService<IDbContextFactory<SessionDbContext>>());
+        if (recordingLoad) {
+            try { await ProfileRecordingAsync(outputPath, documentBytes, services, syntheticSessions[0].Id, deviceId, slowFiles); }
+            finally {
+                await encrypted.EraseAsync(default);
+                if (Path.GetDirectoryName(Path.GetFullPath(audioFolder)) == Path.GetFullPath(audioParent) && Directory.Exists(audioFolder)) Directory.Delete(audioFolder, true);
+            }
+            return;
+        }
         if (voiceProfile)
         {
             await ProfileVoiceAsync(connection, outputPath, documentBytes, services, syntheticSessions[0].Id, deviceId);
@@ -201,6 +217,70 @@ public sealed class RuntimeMeasurementHarnessTests
             idleWorkerObservationSeconds = Math.Round(idleSeconds, 2)
         };
         await WriteReportAsync(outputPath, report);
+    }
+
+    private sealed class MeasurementRecordingFiles(IRecordingAudioFiles inner) : IRecordingAudioFiles
+    {
+        public const int DelayMs = 200;
+        public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Persisted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Ready => inner.Ready;
+        public long BytesOnDisk => inner.BytesOnDisk;
+        public async Task WriteAsync(RecordingChunk chunk, ReadOnlyMemory<byte> audio, CancellationToken ct) {
+            Entered.TrySetResult(); await Task.Delay(DelayMs, ct); await inner.WriteAsync(chunk, audio, ct); Persisted.TrySetResult();
+        }
+        public Task<byte[]> ReadAsync(RecordingChunk chunk, CancellationToken ct) => inner.ReadAsync(chunk, ct);
+        public Task DeleteAsync(RecordingChunk chunk, CancellationToken ct) => inner.DeleteAsync(chunk, ct);
+        public Task DeleteRecordingAsync(Guid id, CancellationToken ct) => inner.DeleteRecordingAsync(id, ct);
+        public Task EraseAsync(CancellationToken ct) => inner.EraseAsync(ct);
+    }
+    private static async Task ProfileRecordingAsync(string outputPath, long documentBytes, IServiceProvider services,
+        Guid sessionId, string voiceDevice, MeasurementRecordingFiles files)
+    {
+        using var manual = CoreInvocationContext.Enter(InvocationOrigin.ManualClient);
+        const string captureDevice = "measurement-recording-laptop";
+        await services.GetRequiredService<DeviceService>().RegisterAsync(new(captureDevice, "Synthetic recording laptop", DeviceKind.WindowsAgent, new(true, true, false, false, [])));
+        var credential = await services.GetRequiredService<DeviceCredentials>().IssueAsync(captureDevice, default);
+        var recordings = services.GetRequiredService<RecordingService>(); var id = Guid.NewGuid();
+        await recordings.PrepareAsync(new(id, captureDevice, "Synthetic recording load", true, true, Locked: false));
+        async Task<RecordingCaptureResult> Capture(RecordingCaptureRequest request) {
+            using var actor = DeviceCredentialContext.Enter(new("device:" + captureDevice, captureDevice, PrivacyData.Hash(credential.Secret)));
+            return await recordings.CaptureAsync(request);
+        }
+        await Capture(new("start", captureDevice, id, false, true, true));
+        var audio = services.GetRequiredService<AudioOwnership>(); var lease = await audio.StartLocalAsync(sessionId, voiceDevice, default);
+        for (var warm = 0; warm < 5; warm++) lease = await audio.RenewAsync(lease, default);
+        var baseline = await MeasureAsync(VoiceProfileSamples, async () => { lease = await audio.RenewAsync(lease, default); return true; });
+        var concurrent = new double[VoiceProfileSamples]; var committing = new double[VoiceProfileSamples]; var uploads = new double[VoiceProfileSamples];
+        var wave = RecordingRig.Wav(RecordingProtocol.SampleRate * RecordingProtocol.ChunkSeconds); var encoded = Convert.ToBase64String(wave); var sha = RecordingAudio.Hash(wave);
+        for (var sample = 0; sample < VoiceProfileSamples; sample++) {
+            files.Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            files.Persisted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var at = Stopwatch.GetTimestamp(); var upload = Capture(new("chunk", captureDevice, id, Track: sample % 2 == 0 ? "user" : "interviewer", Sequence: sample / 2, Sha256: sha, AudioBase64: encoded));
+            await files.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            // Every timed renewal overlaps the simulated slow write, rather than diluting
+            // a few blocked calls among mostly idle samples.
+            var started = Stopwatch.GetTimestamp(); lease = await audio.RenewAsync(lease, default);
+            concurrent[sample] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            await files.Persisted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            started = Stopwatch.GetTimestamp(); lease = await audio.RenewAsync(lease, default);
+            committing[sample] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            await upload; uploads[sample] = Stopwatch.GetElapsedTime(at).TotalMilliseconds;
+        }
+        await audio.ReleaseAsync(lease, default); CryptographicOperations.ZeroMemory(wave);
+        await Capture(new("finish", captureDevice, id, FinalCounts: new Dictionary<string, int> { ["user"] = VoiceProfileSamples / 2, ["interviewer"] = VoiceProfileSamples / 2 }));
+        var p95 = Math.Max(Percentile(concurrent, .95), Percentile(committing, .95));
+        await WriteReportAsync(outputPath, new {
+            generatedAtUtc = DateTimeOffset.UtcNow, workload = "Pooled PostgreSQL, real AES-GCM/fsync, synthetic two-track recording on another device; no background workers or providers",
+            dataset = new { sessions = SessionCount, messagesPerSession = MessagesPerSession, learningCards = LearningCount, agentRuns = AgentRunCount, voiceTurns = RuntimeTranscriptCount },
+            runtimeDocumentBytes = documentBytes,
+            recording = new { uploadedChunks = VoiceProfileSamples, chunkBytes = RecordingAudio.MaximumChunkBytes, injectedFileDelayMs = MeasurementRecordingFiles.DelayMs, uploadMs = Summary(uploads) },
+            audioControlBaselineMs = Summary(baseline), audioControlDuringRecordingMs = Summary(concurrent),
+            audioControlAtMetadataCommitMs = Summary(committing),
+            runtimeUpdateGate = new { maximumP95Ms = 50, passed = p95 < 50 },
+            boundary = "Core AudioOwnership.RenewAsync during every delayed file write and again at its metadata-commit boundary; excludes microphone, network and live providers"
+        });
+        Assert.True(p95 < 50, $"Audio control p95 during recording was {p95} ms; required < 50 ms. See the report.");
     }
 
     private static async Task ProfileVoiceAsync(string connection, string outputPath, long documentBytes,
@@ -419,7 +499,7 @@ public sealed class RuntimeMeasurementHarnessTests
         public void Advance(TimeSpan duration) => now += duration;
     }
 
-    private sealed class MeasurementApiFactory(string connection, SqlCallCounter counter, bool voiceProfile) : WebApplicationFactory<Program>
+    private sealed class MeasurementApiFactory(string connection, SqlCallCounter counter, bool voiceProfile, IRecordingAudioFiles? recordingFiles = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -433,6 +513,7 @@ public sealed class RuntimeMeasurementHarnessTests
                 services.RemoveAll<IDbContextFactory<SessionDbContext>>();
                 services.AddSingleton(counter);
                 services.AddSingleton<IDbContextFactory<SessionDbContext>>(_ => new CountingContextFactory(connection, counter));
+                if (recordingFiles is not null) services.AddSingleton<IRecordingAudioFiles>(recordingFiles);
                 if (voiceProfile)
                 {
                     services.RemoveAll<IHostedService>();

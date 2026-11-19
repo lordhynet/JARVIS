@@ -10,6 +10,9 @@ namespace Jarvis.Orchestrator.Runtime;
 public sealed class MemoryPrivacyBoundary
 {
     public object Sync { get; } = new();
+    internal SemaphoreSlim RecordingIo { get; } = new(1, 1);
+    internal IDisposable EnterRecordingIo(CancellationToken ct) { RecordingIo.Wait(ct); return new RecordingIoLease(RecordingIo); }
+    private sealed class RecordingIoLease(SemaphoreSlim gate) : IDisposable { public void Dispose() => gate.Release(); }
     public PrivacyStatus Status { get; set; } = new(0, 1, false, null, null);
     public string? ErasureKeyFingerprint { get; set; }
     public Dictionary<Guid, PrivacyJob> Jobs { get; } = [];
@@ -160,6 +163,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
     }
     public Task<PrivacyStatus> EraseAsync(EraseCoreRequest request, string fingerprint, DateTimeOffset now, CancellationToken ct = default)
     {
+        using var recordingIo = boundary.EnterRecordingIo(ct);
         lock(boundary.Sync)
         {
             Guard.Require(request.RequestId != Guid.Empty && request.Confirmation == PrivacyData.ErasePhrase, 400, "Type the exact erasure confirmation and supply a request ID.");
@@ -199,6 +203,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
     public Task<PrivacyJob> RetainAsync(ApplyRetentionRequest request, RetentionPolicy policy, DateTimeOffset now, CancellationToken ct = default)
     {
         request = request with { AsOf = request.AsOf.ToUniversalTime() };
+        using var recordingIo = boundary.EnterRecordingIo(ct);
         lock(boundary.Sync)
         {
             PrivacyContext.RequireWrite(boundary.Status); PrivacyData.Validate(policy);
