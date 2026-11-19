@@ -1,0 +1,43 @@
+using System.Text.Json;
+using Jarvis.Contracts;
+using Jarvis.Orchestrator.Runtime;
+
+namespace Jarvis.Orchestrator.Recordings;
+
+public sealed record RecordingSession(InterviewRecording View, string CredentialHash, string RequestHash,
+    bool Discontinuous = false, IReadOnlyDictionary<string, int>? FinalCounts = null, string OwnerId = "owner");
+public sealed record RecordingChunk(Guid Id, Guid RecordingId, string Track, int Sequence, string Sha256, int Samples,
+    Guid BlobId, long Epoch, long Bytes, DateTimeOffset At);
+public sealed class RecordingState
+{
+    public long Epoch { get; set; }
+    public Dictionary<Guid, RecordingSession> Sessions { get; set; } = [];
+    public Dictionary<Guid, RecordingChunk> Chunks { get; set; } = [];
+}
+public interface IRecordingStore
+{
+    Task<T> ReadAsync<T>(Func<RecordingState, T> read, CancellationToken ct = default);
+    Task<T> UpdateAsync<T>(Func<RecordingState, RuntimeState, Task<T>> update, CancellationToken ct = default);
+}
+public interface IRecordingAudioFiles
+{
+    bool Ready { get; }
+    long BytesOnDisk { get; }
+    Task WriteAsync(RecordingChunk chunk, ReadOnlyMemory<byte> audio, CancellationToken ct);
+    Task<byte[]> ReadAsync(RecordingChunk chunk, CancellationToken ct);
+    Task DeleteAsync(RecordingChunk chunk, CancellationToken ct);
+    Task DeleteRecordingAsync(Guid recordingId, CancellationToken ct);
+    Task EraseAsync(CancellationToken ct);
+}
+public sealed class MemoryRecordingStore(InMemoryRuntimeStore runtime, MemoryPrivacyBoundary boundary) : IRecordingStore
+{
+    private static RecordingState Copy(RecordingState s) => JsonSerializer.Deserialize<RecordingState>(JsonSerializer.Serialize(s))!;
+    public Task<T> ReadAsync<T>(Func<RecordingState, T> read, CancellationToken ct = default) => boundary.Run(() => {
+        ct.ThrowIfCancellationRequested(); var copy = Copy(boundary.Recordings); copy.Epoch = boundary.Status.Epoch; return Task.FromResult(read(copy));
+    });
+    public Task<T> UpdateAsync<T>(Func<RecordingState, RuntimeState, Task<T>> update, CancellationToken ct = default) => boundary.Run(async () => {
+        var copy = Copy(boundary.Recordings); copy.Epoch = boundary.Status.Epoch; RecordingState? saved = null;
+        var result = await runtime.UpdateAsync(s => { var value = update(copy, s).GetAwaiter().GetResult(); saved = Copy(copy); return value; }, ct);
+        boundary.Recordings = saved!; return result;
+    });
+}

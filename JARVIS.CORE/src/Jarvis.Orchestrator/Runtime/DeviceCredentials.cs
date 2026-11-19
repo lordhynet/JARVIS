@@ -97,6 +97,8 @@ public sealed class DeviceCredentials(IRuntimeReader store, ICoreTransaction tra
     }
     private static void InvalidateAudio(RuntimeState s, string deviceId)
     {
+        if (s.Devices.TryGetValue(deviceId, out var recordingDevice) && recordingDevice.Recording is not null)
+            s.Devices[deviceId] = recordingDevice with { Recording = null };
         if (s.AudioLease?.DeviceId == deviceId) AudioFencing.Revoke(s);
         foreach (var key in s.VoiceTickets.Where(x => x.Value.Lease.DeviceId == deviceId).Select(x => x.Key).ToList()) s.VoiceTickets.Remove(key);
     }

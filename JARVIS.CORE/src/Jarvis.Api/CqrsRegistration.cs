@@ -44,6 +44,12 @@ public static class CqrsRegistration
         Command<SaveTravelRoute, TravelRoute, TravelCommands>(services);
         Command<DeleteTravelRoute, bool, TravelCommands>(services);
         Command<SimulateTravel, TravelSimulationResult, TravelCommands>(services);
+        services.AddSingleton<Jarvis.Orchestrator.Recordings.RecordingService>();
+        services.AddSingleton<RecordingQueries>(); services.AddSingleton<RecordingCommands>();
+        Query<ListRecordings, IReadOnlyList<InterviewRecording>, RecordingQueries>(services);
+        Command<PrepareRecording, InterviewRecording, RecordingCommands>(services);
+        Command<CaptureRecording, RecordingCaptureResult, RecordingCommands>(services);
+        Command<DeleteRecording, bool, RecordingCommands>(services);
         services.AddSingleton<IWorkflowReader>(s => s.GetRequiredService<IWorkflowStore>());
         services.AddSingleton<WorkflowCommandHandlers>();
         services.AddSingleton<AgentCommandHandlers>();

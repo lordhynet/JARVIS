@@ -7,22 +7,24 @@ using Jarvis.Contracts;
 
 namespace Jarvis.Windows.Client;
 
-public sealed class CoreRejectedException(HttpStatusCode status) : Exception(status == HttpStatusCode.Conflict
+public sealed class CoreRejectedException(HttpStatusCode status, bool coreErased = false) : Exception(status == HttpStatusCode.Conflict
     ? "Another device owns audio, or the previous lease is still draining."
     : status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
         ? "Core refused this device. Check its enrolment and owner confirmation."
         : "Core could not start voice. Check Core readiness and budgets.")
 {
     public HttpStatusCode Status { get; } = status;
+    public bool CoreErased { get; } = coreErased;
 }
 
-public sealed class CoreClient : IDisposable, IWindowsCommandCore
+public sealed class CoreClient : IDisposable, IWindowsCommandCore, IRecordingCaptureTransport
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
     private readonly Connection connection;
     private readonly HttpClient http;
     private long? epoch;
     public long? Epoch => epoch;
+    public bool PrivacyChanged { get; private set; }
     public string OwnerDisplayName { get; private set; } = "";
     public CoreClient(Connection connection, HttpMessageHandler? handler = null)
     {
@@ -36,7 +38,7 @@ public sealed class CoreClient : IDisposable, IWindowsCommandCore
     public async Task<string> RefreshAsync(CancellationToken ct)
     {
         var privacy = await GetAsync<PrivacyStatus>(CompanionRoutes.PrivacyStatus, ct);
-        if (privacy.Erased || epoch is not null && epoch != privacy.Epoch) throw new InvalidOperationException("Core privacy changed. Pair this companion again.");
+        if (privacy.Erased || epoch is not null && epoch != privacy.Epoch) { PrivacyChanged = true; throw new InvalidOperationException("Core privacy changed. Pair this companion again."); }
         epoch = privacy.Epoch;
         var devices = await GetAsync<DeviceView[]>(CompanionRoutes.Devices, ct);
         var device = devices.Length == 1 ? devices[0].Device : throw new InvalidOperationException("Core must enrol this as its own Windows device.");
@@ -69,6 +71,9 @@ public sealed class CoreClient : IDisposable, IWindowsCommandCore
 
     public async Task ReleaseAsync(AudioLease lease, CancellationToken ct) =>
         _ = await PostAsync<bool>(CompanionRoutes.VoiceLocalRelease, lease, ct);
+    public Task<RecordingCaptureResult> CaptureRecordingAsync(RecordingCaptureRequest request, CancellationToken ct) =>
+        PostAsync<RecordingCaptureResult>(RecordingProtocol.Capture, request, ct);
+    Task<RecordingCaptureResult> IRecordingCaptureTransport.SendAsync(RecordingCaptureRequest request, CancellationToken ct) => CaptureRecordingAsync(request, ct);
 
     public async Task<DeliveredDeviceCommand?> ClaimCommandAsync(Guid requestId, CancellationToken ct)
     {
@@ -98,7 +103,13 @@ public sealed class CoreClient : IDisposable, IWindowsCommandCore
 
     private static async Task<T> ReadAsync<T>(HttpResponseMessage response, CancellationToken ct)
     {
-        if (!response.IsSuccessStatusCode) throw new CoreRejectedException(response.StatusCode);
+        if (!response.IsSuccessStatusCode) {
+            var erased = false;
+            try { var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+                erased = body.ValueKind == JsonValueKind.Object && (body.TryGetProperty("coreErased", out var flag) && flag.ValueKind == JsonValueKind.True || body.TryGetProperty("coreEpochChanged", out flag) && flag.ValueKind == JsonValueKind.True); }
+            catch (JsonException) { }
+            throw new CoreRejectedException(response.StatusCode, erased);
+        }
         return await response.Content.ReadFromJsonAsync<T>(Json, ct) ?? throw new InvalidOperationException("Core returned an invalid response.");
     }
     public void Dispose() => http.Dispose();

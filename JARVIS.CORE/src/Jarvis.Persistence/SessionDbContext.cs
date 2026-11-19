@@ -18,6 +18,8 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<TravelRouteRow> TravelRoutes => Set<TravelRouteRow>();
     public DbSet<TravelLineStateRow> TravelLineStates => Set<TravelLineStateRow>();
     public DbSet<TravelMonitorRow> TravelMonitorState => Set<TravelMonitorRow>();
+    public DbSet<InterviewRecordingRow> InterviewRecordings => Set<InterviewRecordingRow>();
+    public DbSet<RecordingChunkRow> RecordingChunks => Set<RecordingChunkRow>();
     public DbSet<WorkflowRunRow> WorkflowRuns => Set<WorkflowRunRow>();
     public DbSet<WorkflowEventRow> WorkflowEvents => Set<WorkflowEventRow>();
     public DbSet<DomainDefinitionRow> DomainDefinitions => Set<DomainDefinitionRow>();
@@ -35,6 +37,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
         DomainModel.Configure(model);
         RuntimeHotModel.Configure(model);
         TravelModel.Configure(model);
+        RecordingModel.Configure(model);
         model.Entity<PrivacyControlRow>(b => { b.HasKey(x => x.Id); b.HasData(new PrivacyControlRow()); });
         model.Entity<PrivacyJobRow>(b => { b.HasKey(x => x.Id); b.Property(x => x.CountsJson).HasColumnType("jsonb"); b.HasIndex(x => x.CompletedAt); });
         model.Entity<WorkflowRunRow>(b =>

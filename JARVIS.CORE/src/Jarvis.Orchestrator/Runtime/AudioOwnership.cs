@@ -50,7 +50,7 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
             409, "Claim an active session on this verified device first.");
     }
 
-    private static AudioLease StartLease(RuntimeState state, Guid sessionId, string deviceId, DateTimeOffset now)
+    private AudioLease StartLease(RuntimeState state, Guid sessionId, string deviceId, DateTimeOffset now)
     {
         RequireCredentialEnabled(state, deviceId);
         AudioFencing.RequireAvailable(state, now);
@@ -121,9 +121,10 @@ public sealed class AudioOwnership(IRuntimeStore store, ISessionReader sessions,
         Guard.Require(s.AudioLease?.Fence == lease.Fence && s.AudioLease.SessionId == lease.SessionId &&
             s.AudioLease.DeviceId == lease.DeviceId && s.AudioLease.ExpiresAt > clock.GetUtcNow(), 409, "Live audio lease expired or was replaced.");
     }
-    private static void RequireCredentialEnabled(RuntimeState s, string deviceId)
+    private void RequireCredentialEnabled(RuntimeState s, string deviceId)
     {
         DeviceCredentialContext.RequireCurrent(s, deviceId);
+        Guard.Require(!(s.Devices.GetValueOrDefault(deviceId)?.Recording?.Until > clock.GetUtcNow()), 409, "This device is recording an interview. Stop recording before using JARVIS voice.");
         Guard.Require(!s.DeviceCredentials.TryGetValue(deviceId, out var credential) || !credential.Revoked, 401, "The device credential was revoked.");
     }
     private static string Hash(string ticket) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ticket)));

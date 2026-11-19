@@ -37,7 +37,7 @@ public static class CoreRoutes
 
     // Device registration is available during owner-key bootstrap. Paired credentials use the other routes.
     public static IReadOnlyList<string> CompanionPost { get; } =
-        Array.AsReadOnly(new[] { Devices, VoicePrepare, VoiceWakeCandidates, VoiceTickets, VoiceLocalRelease, DeviceHeartbeat });
+        Array.AsReadOnly(new[] { Devices, VoicePrepare, VoiceWakeCandidates, VoiceTickets, VoiceLocalRelease, DeviceHeartbeat, Jarvis.Contracts.RecordingProtocol.Capture });
 
     // Command executors use paired credentials. This contract is separate from the Android audio client.
     public static IReadOnlyList<string> CompanionCommandPost { get; } = Array.AsReadOnly(new[] { DeviceCommandClaim, DeviceCommandReceipts });

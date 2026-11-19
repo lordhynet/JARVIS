@@ -18,7 +18,7 @@ public sealed class CompanionProtocolTests
         Assert.Equal(CoreHeaders.ApiKey, CompanionHeaders.ApiKey); Assert.Equal(CoreHeaders.DataEpoch, CompanionHeaders.DataEpoch);
         Assert.Equal(CoreRoutes.CompanionGet, new[] { CompanionRoutes.PrivacyStatus, CompanionRoutes.VoiceStatus, CompanionRoutes.Devices, CompanionRoutes.DeviceCapabilities });
         Assert.Equal(CoreRoutes.CompanionPost, new[] { CompanionRoutes.Devices, CompanionRoutes.VoicePrepare, CompanionRoutes.VoiceWakeCandidates,
-            CompanionRoutes.VoiceTickets, CompanionRoutes.VoiceLocalRelease, CompanionRoutes.DeviceHeartbeat });
+            CompanionRoutes.VoiceTickets, CompanionRoutes.VoiceLocalRelease, CompanionRoutes.DeviceHeartbeat, RecordingProtocol.Capture });
         Assert.Equal(CoreRoutes.VoiceStream, CompanionRoutes.VoiceStream);
     }
 

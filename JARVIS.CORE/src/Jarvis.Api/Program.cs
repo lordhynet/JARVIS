@@ -106,6 +106,7 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IDeviceReceiptReader, PostgresDeviceReceiptStore>();
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
     builder.Services.AddSingleton<ITravelStore, PostgresTravelStore>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingStore, PostgresRecordingStore>();
     builder.Services.AddSingleton<ICoreTransaction, PostgresCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
     builder.Services.AddSingleton<IPrivacyStore, PostgresPrivacyStore>();
@@ -122,6 +123,7 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IDeviceReceiptReader, InMemoryDeviceReceiptStore>();
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
     builder.Services.AddSingleton<ITravelStore, MemoryTravelStore>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingStore, Jarvis.Orchestrator.Recordings.MemoryRecordingStore>();
     builder.Services.AddSingleton<ICoreTransaction, MemoryCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
     builder.Services.AddSingleton<IPrivacyStore, InMemoryPrivacyStore>();
@@ -143,6 +145,9 @@ builder.Services.AddSingleton<ProviderGateway>();
 builder.Services.AddSingleton<ITravelSource, TflTravelSource>();
 builder.Services.AddSingleton<ITravelDeliveryPolicy, TravelDeliverySettings>();
 builder.Services.AddSingleton<TravelService>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingAudioFiles>(_ => new EncryptedRecordingFiles(() => new(
+    builder.Configuration.GetValue("Recordings:Enabled", false), builder.Configuration["Recordings:Directory"] ?? "recordings", builder.Configuration["Recordings:EncryptionKey"])));
+if (!testing) builder.Services.AddHostedService<Jarvis.Api.Privacy.RecordingRetentionWorker>();
 builder.Services.AddSingleton<TravelMonitor>();
 if (!testing) builder.Services.AddHostedService<TravelMonitorWorker>();
 builder.Services.AddHttpClient(TflTravelSource.ClientName, client => { client.Timeout = TimeSpan.FromSeconds(8); client.MaxResponseContentBufferSize = 2_000_000; })
@@ -309,6 +314,7 @@ app.MapBudgetEndpoints();
 app.MapPrivacyEndpoints();
 app.MapBrowserAccessEndpoints();
 app.MapTravelEndpoints();
+app.MapRecordingEndpoints();
 app.MapPost("/api/hubs/ticket", (HubTickets tickets, CancellationToken ct) => tickets.IssueAsync(ct)).RequireAuthorization(CorePolicies.Owner);
 app.MapImportEndpoints();
 app.MapGet("/api/push/status", (PushNotifications push, IConfiguration config) => new { ready = push.Ready, publicKey = push.Ready ? config["Push:PublicKey"] : "" }).RequireAuthorization(CorePolicies.Owner);
