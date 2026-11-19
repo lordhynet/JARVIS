@@ -20,7 +20,7 @@ public sealed class CompanionVoiceTests
         var audio = services.GetRequiredService<AudioOwnership>(); var lease = await audio.StartAsync(new(id, "source", true), default);
         var started = await lifecycle.StartAsync(id, new("source", "target", "Continue FX practice"), default);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var preparation = services.GetRequiredService<CompanionVoiceService>().PrepareAsync(new(Guid.NewGuid(), "target", true), timeout.Token);
+        var preparation = services.GetRequiredService<CompanionVoiceService>().PrepareAsync(new(Guid.NewGuid(), "target", true, false), timeout.Token);
         while ((await sessions.GetAsync(id))!.Handoff!.State != HandoffState.TargetReady) await Task.Delay(20, timeout.Token);
         Assert.False(preparation.IsCompleted);
         Assert.True(await audio.CurrentAsync(lease.Lease, default));

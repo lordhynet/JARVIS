@@ -11,13 +11,68 @@ public enum CompanionState { Off, ListeningLocally, Connecting, Live, Unavailabl
 public sealed record ModeOffer(Guid Id, decimal MaximumGbpForTenMinutes);
 
 public sealed class CompanionController(Connection connection, CoreClient core, IWakeListener wake, ICompanionAudio audio,
-    ILockState locks, Func<IVoiceSocket>? socketFactory = null) : IAsyncDisposable
+    ILockState locks, Func<IVoiceSocket>? socketFactory = null, bool enableHandoffs = false) : IAsyncDisposable
 {
     private readonly object gate = new();
     private readonly SemaphoreSlim localLifecycle = new(1);
     private CancellationTokenSource? active;
     private Task? running;
     private bool wanted;
+    private readonly CancellationTokenSource handoffLifetime = new();
+    private Task? handoffLoop;
+    private bool moving;
+    private (Guid Session, string Target, Guid Operation)? pendingHandoff;
+    public CompanionHandoffView? Handoffs { get; private set; }
+    public event Action<CompanionHandoffItem>? Incoming;
+    public async Task SendHandoffAsync(string target, CancellationToken ct = default) {
+        if (locks.IsLocked) throw new InvalidOperationException("Unlock before moving a conversation.");
+        var device = await core.RefreshAsync(ct);
+        var view = await core.HandoffAsync(new(device, Locked: false), ct);
+        if (view.ActiveSessionId is not { } id) throw new InvalidOperationException("Start a conversation on this laptop first.");
+        if (pendingHandoff is not { } pending || pending.Session != id || pending.Target != target) pendingHandoff = (id, target, Guid.NewGuid());
+        Handoffs = await core.HandoffAsync(new(device, "start", id, TargetDeviceId: target, RequestId: pendingHandoff.Value.Operation, Locked: false), ct);
+        pendingHandoff = null;
+    }
+    public async Task AcceptHandoffAsync(CompanionHandoffItem offer, CancellationToken ct = default) {
+        if (locks.IsLocked || !connection.AllowCloudProcessing) throw new InvalidOperationException("Unlock and allow normal voice processing before accepting.");
+        var device = await core.RefreshAsync(ct);
+        await core.HandoffAsync(new(device, "ready", offer.SessionId, offer.HandoffId, Locked: false), ct);
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct); wait.CancelAfter(TimeSpan.FromSeconds(22));
+        while (true) {
+            if (locks.IsLocked) throw new InvalidOperationException("Laptop locked before transfer completed.");
+            var view = await core.HandoffAsync(new(device, Locked: false), wait.Token);
+            var current = view.Offers.SingleOrDefault(o => o.HandoffId == offer.HandoffId);
+            if (current is null) throw new InvalidOperationException("The transfer expired or was cancelled.");
+            if (current.State == HandoffState.AudioTransferred) { Begin(true, offer.SessionId); return; }
+            await Task.Delay(500, wait.Token);
+        }
+    }
+    public async Task DeclineHandoffAsync(CompanionHandoffItem offer, CancellationToken ct = default) {
+        var device = await core.RefreshAsync(ct);
+        Handoffs = await core.HandoffAsync(new(device, "cancel", offer.SessionId, offer.HandoffId, Locked: locks.IsLocked), ct);
+    }
+    private async Task WatchHandoffsAsync() {
+        Guid? notified = null; string? device = null; var polls = 0;
+        while (!handoffLifetime.IsCancellationRequested) {
+            try {
+                device ??= await core.RefreshAsync(handoffLifetime.Token);
+                if (polls++ % 5 == 0) await core.HeartbeatAsync(device, handoffLifetime.Token);
+                var view = await core.HandoffAsync(new(device, Locked: locks.IsLocked), handoffLifetime.Token); Handoffs = view;
+                var incoming = view.Offers.FirstOrDefault(o => o.Incoming);
+                if (incoming is not null && incoming.HandoffId != notified && !locks.IsLocked) { notified = incoming.HandoffId; Incoming?.Invoke(incoming); }
+                if (incoming is null) notified = null;
+                var outgoing = view.Offers.FirstOrDefault(o => !o.Incoming && o.State == HandoffState.TargetReady);
+                if (outgoing is not null) {
+                    lock (gate) moving = true;
+                    try { await StopAsync(); await core.HandoffAsync(new(device, "release", outgoing.SessionId, outgoing.HandoffId, Locked: locks.IsLocked, AudioStopped: true), handoffLifetime.Token); }
+                    finally { lock (gate) moving = false; }
+                }
+            } catch (OperationCanceledException) when (handoffLifetime.IsCancellationRequested) { break; }
+            catch (CoreRejectedException error) when (error.CoreErased || error.Status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) { await StopAsync(); break; }
+            catch { /* Metadata polls may recover; no audio or paid retry is started. */ }
+            try { await Task.Delay(2000, handoffLifetime.Token); } catch (OperationCanceledException) { break; }
+        }
+    }
     private int audioFailed;
     private Session? session;
     public event Action<CompanionState, string>? Changed;
@@ -29,6 +84,7 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
         wake.Unavailable += WakeUnavailable;
         audio.Captured += Captured;
         audio.Failed += AudioFailed;
+        if (enableHandoffs && connection.AllowCloudProcessing) handoffLoop = Task.Run(WatchHandoffsAsync);
     }
     private void Detected(string text, bool high) { if (WakeMatcher.Accept(text, high)) Begin(false); }
     private void WakeUnavailable(string _) { lock (gate) wanted = false; Changed?.Invoke(CompanionState.Unavailable, "Local speech is unavailable. Check the English speech resources and microphone privacy."); }
@@ -59,16 +115,16 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
     public Task ConfirmModeAsync(Guid id) => Volatile.Read(ref session)?.ConfirmAsync(id) ?? Task.CompletedTask;
     public Task LockChangedAsync() => Volatile.Read(ref session)?.LockChangedAsync() ?? Task.CompletedTask;
 
-    private void Begin(bool manual)
+    private void Begin(bool manual, Guid? expectedSession = null)
     {
         lock (gate) {
-            if (active is not null || !manual && !wanted) return;
+            if (moving || active is not null || !manual && !wanted) return;
             Volatile.Write(ref audioFailed, 0);
             active = new CancellationTokenSource(); var lifetime = active;
-            running = Task.Run(() => RunAsync(lifetime));
+            running = Task.Run(() => RunAsync(lifetime, expectedSession));
         }
     }
-    private async Task RunAsync(CancellationTokenSource lifetime)
+    private async Task RunAsync(CancellationTokenSource lifetime, Guid? expectedSession)
     {
         WakeCandidateResponse? claimed = null;
         Task? greeting = null;
@@ -78,6 +134,7 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
             try { await wake.StopAsync(); } finally { localLifecycle.Release(); }
             Changed?.Invoke(CompanionState.Connecting, "Checking audio ownership with Core");
             claimed = await core.ClaimAsync(locks.IsLocked, lifetime.Token);
+            if (expectedSession is not null && (locks.IsLocked || claimed.SessionId != expectedSession)) throw new InvalidOperationException("The incoming conversation or lock state changed.");
             greeting = audio.SpeakAsync(core.OwnerDisplayName.Length == 0 ? "Hi." : "Hi, " + core.OwnerDisplayName + ".", lifetime.Token);
             var live = new Session(connection, claimed, core, audio, locks, socketFactory?.Invoke() ?? new VoiceSocket(), greeting, lifetime.Token);
             Volatile.Write(ref session, live);
@@ -124,6 +181,7 @@ public sealed class CompanionController(Connection connection, CoreClient core, 
     }
     public async ValueTask DisposeAsync()
     {
+        await handoffLifetime.CancelAsync(); if (handoffLoop is not null) await handoffLoop; handoffLifetime.Dispose();
         await StopAsync(); wake.Detected -= Detected; wake.Unavailable -= WakeUnavailable; audio.Captured -= Captured; audio.Failed -= AudioFailed;
         await wake.DisposeAsync(); await audio.DisposeAsync(); core.Dispose(); localLifecycle.Dispose();
     }

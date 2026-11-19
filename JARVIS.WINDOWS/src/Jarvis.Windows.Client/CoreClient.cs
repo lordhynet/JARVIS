@@ -68,6 +68,7 @@ public sealed class CoreClient : IDisposable, IWindowsCommandCore, IRecordingCap
 
     public async Task HeartbeatAsync(string deviceId, CancellationToken ct) =>
         _ = await PostAsync<RegisteredDevice>(CompanionRoutes.Heartbeat(deviceId), new { }, ct);
+    public Task<CompanionHandoffView> HandoffAsync(CompanionHandoffRequest request, CancellationToken ct) => PostAsync<CompanionHandoffView>(CompanionRoutes.VoiceHandoff, request, ct);
 
     public async Task ReleaseAsync(AudioLease lease, CancellationToken ct) =>
         _ = await PostAsync<bool>(CompanionRoutes.VoiceLocalRelease, lease, ct);

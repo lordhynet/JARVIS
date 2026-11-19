@@ -24,6 +24,7 @@ public static class CoreRoutes
     public const string VoiceStatus = Jarvis.Contracts.CompanionRoutes.VoiceStatus;
     public const string VoiceModes = Voice + "/modes";
     public const string VoicePrepare = Jarvis.Contracts.CompanionRoutes.VoicePrepare;
+    public const string VoiceHandoff = Jarvis.Contracts.CompanionRoutes.VoiceHandoff;
     public const string VoiceWakeCandidates = Jarvis.Contracts.CompanionRoutes.VoiceWakeCandidates;
     public const string VoiceTickets = Jarvis.Contracts.CompanionRoutes.VoiceTickets;
     public const string VoiceCalibration = Voice + "/calibrate";
@@ -37,7 +38,7 @@ public static class CoreRoutes
 
     // Device registration is available during owner-key bootstrap. Paired credentials use the other routes.
     public static IReadOnlyList<string> CompanionPost { get; } =
-        Array.AsReadOnly(new[] { Devices, VoicePrepare, VoiceWakeCandidates, VoiceTickets, VoiceLocalRelease, DeviceHeartbeat, Jarvis.Contracts.RecordingProtocol.Capture });
+        Array.AsReadOnly(new[] { Devices, VoicePrepare, VoiceWakeCandidates, VoiceTickets, VoiceLocalRelease, DeviceHeartbeat, Jarvis.Contracts.RecordingProtocol.Capture, VoiceHandoff });
 
     // Command executors use paired credentials. This contract is separate from the Android audio client.
     public static IReadOnlyList<string> CompanionCommandPost { get; } = Array.AsReadOnly(new[] { DeviceCommandClaim, DeviceCommandReceipts });

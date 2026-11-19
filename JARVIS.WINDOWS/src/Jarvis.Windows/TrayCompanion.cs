@@ -29,6 +29,16 @@ internal sealed partial class TrayCompanion : ApplicationContext
         Add(menu, "Push to talk / interrupt (Ctrl+Alt+J)", () => { PushToTalkUnlessRecording(); return Task.CompletedTask; });
         Add(menu, "Everyday voice next window", () => controller?.RequestModeAsync(VoiceMode.Everyday) ?? Task.CompletedTask);
         Add(menu, "Request Serious voice price…", () => controller?.RequestModeAsync(VoiceMode.Serious) ?? Task.CompletedTask);
+        var move = new ToolStripMenuItem("Continue on another device"); menu.Items.Add(move);
+        menu.Opening += (_, _) => {
+            move.DropDownItems.Clear();
+            foreach (var target in controller?.Handoffs?.Targets ?? []) {
+                var destination = target; move.DropDownItems.Add(target.Name, null, (_, _) => Run(() => controller?.SendHandoffAsync(destination.DeviceId) ?? Task.CompletedTask));
+            }
+            move.Enabled = controller?.Handoffs?.ActiveSessionId is not null && move.DropDownItems.Count > 0 && !new WindowsLockState().IsLocked;
+        };
+        Add(menu, "Accept incoming conversation…", AcceptIncomingAsync);
+        trayReady = () => Run(AcceptIncomingAsync);
         menu.Items.Add(new ToolStripSeparator());
         Add(menu, "Record an interview…", StartInterviewAsync);
         Add(menu, "Stop interview recording", () => StopInterviewAsync());
@@ -43,6 +53,7 @@ internal sealed partial class TrayCompanion : ApplicationContext
         Add(menu, "Exit", ExitAsync);
         tray = new NotifyIcon { Text = "JARVIS — Off", Icon = SystemIcons.Application, ContextMenuStrip = menu, Visible = true };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Halt(); };
+        tray.BalloonTipClicked += (_, _) => trayReady?.Invoke();
         hotkeys = new Hotkeys(() => Post(PushToTalkUnlessRecording), () => Post(Halt));
         SystemEvents.SessionSwitch += SessionSwitch;
         Application.ApplicationExit += ApplicationExit;
@@ -71,7 +82,7 @@ internal sealed partial class TrayCompanion : ApplicationContext
     }
     private void Connect(Connection value)
     {
-        controller = new(value, new CoreClient(value), new LocalWakeListener(), new WindowsAudio(), new WindowsLockState());
+        controller = new(value, new CoreClient(value), new LocalWakeListener(), new WindowsAudio(), new WindowsLockState(), enableHandoffs: true);
         controller.Changed += (state, text) => Post(() => SetState(state, text));
         controller.Quote += offer => Post(() => Run(async () => {
             if (new WindowsLockState().IsLocked) return;
@@ -79,6 +90,9 @@ internal sealed partial class TrayCompanion : ApplicationContext
                 "Confirm Serious voice", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes)
                 await (controller?.ConfirmModeAsync(offer.Id) ?? Task.CompletedTask);
         }));
+        controller.Incoming += _ => Post(() => {
+            if (!new WindowsLockState().IsLocked) tray.ShowBalloonTip(5000, "Continue on laptop?", "Use the tray to accept with normal cloud voice processing.", ToolTipIcon.Info);
+        });
         controller.Attach();
         if (value.EnableGovernedActions) {
             try {
@@ -103,6 +117,15 @@ internal sealed partial class TrayCompanion : ApplicationContext
             vault.Save(saved); connection = saved;
         }
         if (connection is not null) Connect(connection);
+    }
+    private Action? trayReady;
+    private async Task AcceptIncomingAsync() {
+        if (controller is null || new WindowsLockState().IsLocked) return;
+        var incoming = controller.Handoffs?.Offers.FirstOrDefault(o => o.Incoming); if (incoming is null) return;
+        var answer = MessageBox.Show("Continue the incoming conversation on this laptop with normal cloud voice processing? No audio starts until the source stops and Core grants a lease.",
+            "JARVIS handoff", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+        if (answer == DialogResult.Yes) await controller.AcceptHandoffAsync(incoming);
+        else if (answer == DialogResult.No) await controller.DeclineHandoffAsync(incoming);
     }
     private async Task DisconnectAsync()
     {

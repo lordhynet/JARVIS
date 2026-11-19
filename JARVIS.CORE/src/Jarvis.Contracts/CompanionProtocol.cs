@@ -18,6 +18,7 @@ public static class CompanionRoutes
     public const string PrivacyStatus = "/api/privacy/status";
     public const string VoiceStatus = "/api/voice/status";
     public const string VoicePrepare = "/api/voice/prepare";
+    public const string VoiceHandoff = "/api/voice/handoff";
     public const string VoiceWakeCandidates = "/api/voice/wake-candidates";
     public const string VoiceTickets = "/api/voice/tickets";
     public const string VoiceLocalRelease = "/api/voice/local/release";

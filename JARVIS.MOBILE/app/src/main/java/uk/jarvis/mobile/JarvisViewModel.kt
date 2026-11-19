@@ -18,7 +18,8 @@ data class ScreenState(
     val url: String = "", val pairingOffered: Boolean = false, val offline: Boolean = false,
     val audioStarting: Boolean = false, val privacyRevoked: Boolean = false,
     val verified: Boolean = false, val voice: AiCapabilityStatus? = null, val legacyDrafts: Boolean = false,
-    val certificateTrust: String? = null, val pairingHost: String? = null
+    val certificateTrust: String? = null, val pairingHost: String? = null,
+    val handoffs: CompanionHandoffView? = null
 )
 
 /** Connection/device/audio transport only. Conversation and feature state live on Core. */
@@ -30,6 +31,29 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private var connection: SavedConnection? = null
     private var offer: SavedConnection? = null
     private var preparationId: String? = null
+    private var acceptedSession: String? = null
+    private var handoffOperation: Pair<String, String>? = null
+    private fun locked() = getApplication<Application>().getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked
+    fun sendHandoff(target: CompanionHandoffTarget) = work { client ->
+        check(!locked()) { "Unlock before moving a conversation." }
+        val session = mutable.value.handoffs?.activeSessionId ?: error("Start a conversation on this phone first.")
+        val key = "$session:${target.deviceId}"
+        val operation = handoffOperation?.takeIf { it.first == key }?.second ?: UUID.randomUUID().toString().also { handoffOperation = key to it }
+        val view = client.send(CoreCompanionRoutes.VOICE_HANDOFF, CompanionHandoffRequest(deviceId, "start", session,
+            targetDeviceId = target.deviceId, requestId = operation, locked = false), CompanionHandoffView::class.java)
+        handoffOperation = null; if (api === client) mutable.update { it.copy(handoffs = view, notice = "Waiting for the other device to accept. Keep this voice connection open.") }
+    }
+    fun acceptHandoff(offer: CompanionHandoffItem, start: () -> Unit) = work { client ->
+        HandoffTransfer(deviceId) { request -> client.send(CoreCompanionRoutes.VOICE_HANDOFF, request, CompanionHandoffView::class.java) }.accept(offer, ::locked)
+        check(api === client && !locked()) { "Connection or lock state changed. Accept again when ready." }
+        acceptedSession = offer.sessionId
+        mutable.update { it.copy(busy = false) }; start()
+    }
+    fun declineHandoff(offer: CompanionHandoffItem) = work { client ->
+        val view = HandoffTransfer(deviceId) { request -> client.send(CoreCompanionRoutes.VOICE_HANDOFF, request, CompanionHandoffView::class.java) }.decline(offer, locked())
+        if (acceptedSession == offer.sessionId) acceptedSession = null
+        if (api === client) mutable.update { it.copy(handoffs = view, notice = "Conversation transfer cancelled.") }
+    }
     private val prefs = application.getSharedPreferences("installation", 0)
     private var deviceId = prefs.getString("id", null) ?: ("android-" + UUID.randomUUID()).also { prefs.edit().putString("id", it).apply() }
     init {
@@ -77,7 +101,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun connect(url: String, token: String, pin: String? = null) {
         if (vault.read() != SavedConnection(url.trim().trimEnd('/'), token.trim(), pin)) stopAudio()
-        api?.invalidate(); viewModelScope.coroutineContext.cancelChildren(); api = null; connection = null; preparationId = null
+        api?.invalidate(); viewModelScope.coroutineContext.cancelChildren(); api = null; connection = null; preparationId = null; acceptedSession = null; handoffOperation = null
         viewModelScope.launch {
             val offeredTrust = offer?.let { CertificatePin.trustLabel(it.certificateSha256, connected = false) }
             val offeredHost = offer?.let { URI(it.url).rawAuthority }
@@ -136,8 +160,9 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         val id = preparationId ?: UUID.randomUUID().toString().also { preparationId = it }
         client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
         try {
-            val prepared = client.send(CoreCompanionRoutes.VOICE_PREPARE, CompanionVoiceRequest(id, deviceId, true), CompanionVoiceSession::class.java)
-            preparationId = null; onReady(prepared.sessionId)
+            val prepared = client.send(CoreCompanionRoutes.VOICE_PREPARE, CompanionVoiceRequest(id, deviceId, true, locked()), CompanionVoiceSession::class.java)
+            preparationId = null; val expected = acceptedSession; acceptedSession = null
+            HandoffTransfer.continuePrepared(expected, prepared.sessionId) { onReady(prepared.sessionId) }
         } catch (error: CoreHttpException) { if (error.status in listOf(400, 409)) preparationId = null; throw error }
     }
     fun refresh() = work { client ->
@@ -158,7 +183,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         try {
             client.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java)
             client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
-            if (api === client) mutable.update { it.copy(offline = false) }
+            val handoffs = client.send(CoreCompanionRoutes.VOICE_HANDOFF, CompanionHandoffRequest(deviceId, "poll", locked = locked()), CompanionHandoffView::class.java)
+            if (api === client) { mutable.update { it.copy(offline = false, handoffs = handoffs) }; HandoffNotifications.show(getApplication(), handoffs) }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             if (revoked(error)) revoke(client, CompanionAccessPolicy.eraseLegacyFor(error))
@@ -184,7 +210,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     }
     private fun revoke(client: CoreApi, eraseLegacy: Boolean) {
         client.invalidate(); if (api !== client) return
-        stopAudio(); val saved = connection; api = null; connection = null; preparationId = null
+        stopAudio(); val saved = connection; api = null; connection = null; preparationId = null; acceptedSession = null; handoffOperation = null
         viewModelScope.coroutineContext.cancelChildren()
         var cleaned = true
         if (eraseLegacy && saved != null) runCatching { LegacyDraftRecovery.eraseIdentity(getApplication(), saved) }.onFailure { cleaned = false }
@@ -192,7 +218,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         mutable.value = ScreenState(privacyRevoked = true, notice = if (cleaned) "Core access changed. Voice stopped; reconnect with the current Core." else "Core access changed. Voice stopped; local legacy-file cleanup needs retry in Settings.")
     }
     fun disconnect() {
-        stopAudio(); api?.invalidate(); api = null; connection = null; offer = null; preparationId = null
+        stopAudio(); api?.invalidate(); api = null; connection = null; offer = null; preparationId = null; acceptedSession = null; handoffOperation = null
         viewModelScope.coroutineContext.cancelChildren()
         vault.clear()
         try { LegacyDraftRecovery.eraseAll(getApplication()); mutable.value = ScreenState() }

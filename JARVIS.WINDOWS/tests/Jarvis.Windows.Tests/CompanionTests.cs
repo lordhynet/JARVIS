@@ -16,6 +16,28 @@ namespace Jarvis.Windows.Tests;
 public sealed class CompanionTests
 {
     internal static Connection Connection(bool consent = true) => new(new Uri("https://core.example/"), "jdv1_" + new string('a', 64), AllowCloudProcessing: consent);
+    [Fact]
+    public async Task Incoming_handoff_while_locked_never_claims_or_plays_audio() {
+        await using var f = new Fixture(); f.Locks.IsLocked = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => f.Controller.AcceptHandoffAsync(new(Guid.NewGuid(), Guid.NewGuid(), "phone", "windows-test", HandoffState.Checkpointed, DateTimeOffset.UtcNow.AddSeconds(30), true)));
+        Assert.Equal(0, f.Audio.Starts); Assert.Equal(0, f.Audio.Spoken);
+    }
+    [Fact]
+    public async Task Source_handoff_acknowledges_release_only_after_controller_audio_has_stopped() {
+        await using var f = new Fixture(handoffs: true); await f.StartReadyAsync(); await f.Audio.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); var offer = new CompanionHandoffItem(f.Http.SessionId, Guid.NewGuid(), "windows-test", "phone", HandoffState.TargetReady, DateTimeOffset.UtcNow.AddSeconds(30));
+        f.Http.OnHandoff = request => {
+            if (request.Action == "release") { Assert.True(request.AudioStopped); Assert.False(f.Audio.Active); release.TrySetResult(); return new(null, [], []); }
+            return new(f.Http.SessionId, [offer], []);
+        };
+        await release.Task.WaitAsync(TimeSpan.FromSeconds(10)); Assert.False(f.Audio.Active);
+    }
+    [Fact]
+    public async Task Target_waiting_for_source_release_does_not_start_audio() {
+        await using var f = new Fixture(); var offer = new CompanionHandoffItem(f.Http.SessionId, Guid.NewGuid(), "phone", "windows-test", HandoffState.TargetReady, DateTimeOffset.UtcNow.AddSeconds(30), true);
+        f.Http.OnHandoff = _ => new(null, [offer], []); using var wait = new CancellationTokenSource(250);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Controller.AcceptHandoffAsync(offer, wait.Token)); Assert.Equal(0, f.Audio.Starts); Assert.Equal(0, f.Audio.Spoken);
+    }
 
     [Theory]
     [InlineData("Hey JARVIS", true, true)]
@@ -291,8 +313,8 @@ public sealed class CompanionTests
         public FakeHttp Http { get; } = new(); public FakeWake Wake { get; } = new(); public FakeAudio Audio { get; } = new();
         public FakeLock Locks { get; } = new(); public FakeSocket Socket { get; } = new(); public CompanionController Controller { get; }
         private readonly Channel<(CompanionState State, string Detail)> states = Channel.CreateUnbounded<(CompanionState, string)>();
-        public Fixture(Connection? connection = null) {
-            var value = connection ?? Connection(); Controller = new(value, new CoreClient(value, Http), Wake, Audio, Locks, () => Socket);
+        public Fixture(Connection? connection = null, bool handoffs = false) {
+            var value = connection ?? Connection(); Controller = new(value, new CoreClient(value, Http), Wake, Audio, Locks, () => Socket, enableHandoffs: handoffs);
             Controller.Changed += (state, detail) => states.Writer.TryWrite((state, detail)); Controller.Attach();
         }
         public async Task StateAsync(CompanionState expected, bool skipFirst = false) {
@@ -313,6 +335,8 @@ public sealed class CompanionTests
         public TimeSpan LeaseDuration { get; set; } = TimeSpan.FromSeconds(15);
         public string OwnerName { get; set; } = "";
         public bool Verified { get; set; } = true;
+        public Guid SessionId { get; } = Guid.NewGuid();
+        public Func<CompanionHandoffRequest, CompanionHandoffView>? OnHandoff;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             var path = request.RequestUri!.AbsolutePath;
             Requests.Enqueue(new(path, request.Headers.TryGetValues(CompanionHeaders.ApiKey, out var keys) ? keys.Single() : null,
@@ -323,7 +347,8 @@ public sealed class CompanionTests
                 CompanionRoutes.PrivacyStatus => new PrivacyStatus(7, 1, false, null, null),
                 CompanionRoutes.Devices => new[] { new DeviceView(registered, true, OwnerName) },
                 CompanionRoutes.VoiceStatus => new AiCapabilityStatus(true, "test", "Ready", Protocol),
-                CompanionRoutes.VoiceWakeCandidates => new WakeCandidateResponse(Guid.NewGuid(), new("one-use-ticket", new(Guid.NewGuid(), "windows-test", 42, DateTimeOffset.UtcNow.Add(LeaseDuration)), 300, 24000)),
+                CompanionRoutes.VoiceWakeCandidates => new WakeCandidateResponse(SessionId, new("one-use-ticket", new(SessionId, "windows-test", 42, DateTimeOffset.UtcNow.Add(LeaseDuration)), 300, 24000)),
+                CompanionRoutes.VoiceHandoff => OnHandoff?.Invoke(JsonSerializer.Deserialize<CompanionHandoffRequest>(await request.Content!.ReadAsStringAsync(cancellationToken), new JsonSerializerOptions(JsonSerializerDefaults.Web))!) ?? new CompanionHandoffView(null, [], []),
                 CompanionRoutes.VoiceLocalRelease => true,
                 _ when path == CompanionRoutes.Heartbeat("windows-test") => registered,
                 _ => throw new InvalidOperationException("Unexpected route: " + path)

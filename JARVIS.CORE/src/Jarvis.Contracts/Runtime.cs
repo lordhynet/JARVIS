@@ -5,10 +5,12 @@ public sealed record RegisteredDevice(DeviceRegistration Registration, DateTimeO
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] RecordingAudioBlock? Recording = null);
 public sealed record DeviceView(RegisteredDevice Device, bool Online, string OwnerDisplayName = "");
 public sealed record SessionTransitionRequest(SessionStatus Status);
-public sealed record StartHandoffRequest(string FromDeviceId, string ToDeviceId, string Summary);
+public sealed record StartHandoffRequest(string FromDeviceId, string ToDeviceId, string Summary,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? RequestId = null);
 public sealed record HandoffActionRequest(Guid HandoffId, string DeviceId);
 public sealed record SessionHandoff(Guid Id, string FromDeviceId, string ToDeviceId,
-    HandoffState State, DateTimeOffset RequestedAt, DateTimeOffset ExpiresAt);
+    HandoffState State, DateTimeOffset RequestedAt, DateTimeOffset ExpiresAt,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? RequestHash = null);
 public sealed record ChatMessage(Guid RequestId, string Role, string Text, DateTimeOffset At, bool IsVoice = false, double? SpeechSeconds = null, bool Restricted = false,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] SpeechTiming? Timing = null);
 public sealed record ChatRequest(Guid RequestId, string Text);

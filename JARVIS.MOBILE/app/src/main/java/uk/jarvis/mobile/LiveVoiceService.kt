@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import okhttp3.WebSocket
 import uk.jarvis.mobile.contracts.VoiceTicket
+import uk.jarvis.mobile.contracts.*
 
 data class LiveVoiceState(
     val active: Boolean = false,
@@ -69,11 +70,45 @@ class LiveVoiceService : Service() {
     private var playbackBudget = VoicePlaybackBudget()
     private var captureJob: Job? = null
     private var initializationJob: Job? = null
+    private var handoffMonitor: Job? = null
+    private var handoffReleasing = false
+    @Synchronized private fun monitorHandoffs() {
+        if (handoffMonitor?.isActive == true) return
+        handoffMonitor = scope.launch {
+            val saved = CredentialVault(this@LiveVoiceService).read() ?: return@launch
+            val client = CoreApi(saved.url, saved.token, saved.certificateSha256)
+            try {
+                client.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java)
+                val enrolled = client.list(CoreCompanionRoutes.DEVICES, DeviceView::class.java)
+                val installationId = getSharedPreferences("installation", 0).getString("id", null)
+                val own = (enrolled.firstOrNull { it.device.registration.deviceId == installationId } ?: enrolled.single()).device.registration.deviceId
+                var polls = 0
+                while (isActive && (lifecycle.active || wakeController.enabled)) {
+                    try {
+                    val locked = getSystemService(KeyguardManager::class.java).isDeviceLocked
+                    if (polls++ % 5 == 0) client.send(CoreCompanionRoutes.heartbeat(own), emptyMap<String, String>(), com.google.gson.JsonObject::class.java)
+                    val view = client.send(CoreCompanionRoutes.VOICE_HANDOFF, CompanionHandoffRequest(own, "poll", locked = locked), CompanionHandoffView::class.java)
+                    HandoffNotifications.show(this@LiveVoiceService, view)
+                    val outgoing = view.offers.firstOrNull { !it.incoming && it.state == HandoffState.TargetReady }
+                    if (outgoing != null && lifecycle.active && !handoffReleasing) {
+                        handoffReleasing = true
+                        withContext(Dispatchers.Main) { stopVoice("Moving conversation to the accepted device…", disableWake = true, handoff = outgoing, handoffClient = client) }
+                        break
+                    }
+                    } catch (error: CancellationException) { throw error }
+                    catch (error: CoreHttpException) { if (error.status == 401 || error.status == 403) break }
+                    catch (_: java.io.IOException) { /* Retry only the unpaid scoped metadata poll. */ }
+                    delay(2000)
+                }
+            } catch (error: CancellationException) { throw error }
+            catch (_: Exception) { /* No retries or audio start on uncertain handoff. Core expires its offer. */ }
+        }
+    }
     private var fallbackPromptJob: Job? = null
 
     private val transport = VoiceTransport(scope, lifecycle, object : VoiceTransport.Listener {
         override suspend fun stopCapture(current: Long) = stopCaptureAndJoin(current)
-        override fun ready(current: Long, window: WebSocket, voiceName: String?, mode: String?) = startCapture(current, window, voiceName, mode)
+        override fun ready(current: Long, window: WebSocket, voiceName: String?, mode: String?) { startCapture(current, window, voiceName, mode); monitorHandoffs() }
         override fun modeOffer(offer: VoiceCostOffer) {
             mutable.update { if (it.active && (it.mode != null || offer.starting)) it.copy(modeOffer = offer, modeNotice = "") else it }
         }
@@ -129,7 +164,7 @@ class LiveVoiceService : Service() {
     }
     // When Wi-Fi or mobile data returns, a waiting reconnect tries straight away instead of finishing its backoff.
     private val networkReturned = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) { if (lifecycle.active) transport.networkAvailable() }
+        override fun onAvailable(network: Network) { if (lifecycle.active) transport.networkAvailable(); if (lifecycle.active || mutable.value.wakeListening) monitorHandoffs() }
     }
     override fun onBind(intent: Intent?) = null
     override fun onCreate() {
@@ -155,6 +190,7 @@ class LiveVoiceService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (handoffReleasing) return START_NOT_STICKY
         val recording = InterviewRecordingService.state.value
         if (intent?.action != STOP && (recording.starting || recording.recording)) {
             stopVoice("Interview recording is active. Voice and local wake stay off.", disableWake = true)
@@ -221,6 +257,7 @@ class LiveVoiceService : Service() {
                 playbackBudget = VoicePlaybackBudget()
                 transport.start(sessionId, ticket, intent.getBooleanExtra(START_EVERYDAY_EXTRA, false))
                 mutable.value = LiveVoiceState(active = true, message = "Connecting securely to Core…")
+                monitorHandoffs()
                 wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "jarvis:live-voice")
                     .apply { setReferenceCounted(false); acquire(20000) }
                 initializationJob = scope.launch {
@@ -271,6 +308,7 @@ class LiveVoiceService : Service() {
         try { startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) }
         catch (_: RuntimeException) { stopVoice("Android could not start the microphone foreground service.", disableWake = true); return }
         wakeController.listen()
+        monitorHandoffs()
     }
 
     private suspend fun initialize(current: Long) {
@@ -389,7 +427,8 @@ class LiveVoiceService : Service() {
         if (track != null) runCatching { track.pause(); track.flush(); writtenSamples = 0; itemStartSamples = 0; itemSamples = 0; playbackItem = null; track.play() }
     }
 
-    private fun stopVoice(message: String, disableWake: Boolean = false, wakeStopReason: String? = null, canStartEveryday: Boolean = false) {
+    private fun stopVoice(message: String, disableWake: Boolean = false, wakeStopReason: String? = null, canStartEveryday: Boolean = false,
+        handoff: CompanionHandoffItem? = null, handoffClient: CoreApi? = null) {
         if (disableWake) wakeController.disable() else wakeController.suspendListening()
         val keepWake = wakeController.enabled && !disableWake
         val nextRoute = if (keepWake) CompanionAudioPhase.WakeListening else CompanionAudioPhase.Idle
@@ -401,7 +440,7 @@ class LiveVoiceService : Service() {
         initializationJob?.cancel(); initializationJob = null
         runCatching { capture?.stop() }; captureJob?.cancel(); captureJob = null
         runCatching { playback?.stop() }; playback?.release(); playback = null
-        release?.afterCapture(stoppedCapture)
+        val released = release?.afterCapture(stoppedCapture)
         soundQueue.close()
         wakeInitiatedWindow = false; wakeSpeechObserved = false; wakeSpeechDeadlineElapsed = null
         routes.leaveLive(nextRoute)
@@ -419,6 +458,16 @@ class LiveVoiceService : Service() {
                 .addAction(Notification.Action.Builder(null, "Stop listening", stop).build()).build()
             startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             wakeController.listen()
+        } else if (handoff != null && handoffClient != null) {
+            scope.launch {
+                try {
+                    withTimeout(6000) {
+                        HandoffTransfer(handoff.fromDeviceId) { request -> handoffClient.send(CoreCompanionRoutes.VOICE_HANDOFF, request, CompanionHandoffView::class.java) }
+                            .release(handoff, { stoppedCapture?.join(); released?.join() }, getSystemService(KeyguardManager::class.java).isDeviceLocked)
+                    }
+                } catch (_: Exception) { /* Remain stopped. Core times out rather than transferring uncertain audio. */ }
+                finally { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
+            }
         } else { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
     }
 

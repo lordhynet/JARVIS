@@ -10,6 +10,11 @@ public static class VoiceEndpoints
 {
     public static void MapVoiceEndpoints(this WebApplication app)
     {
+        app.MapPost(CoreRoutes.VoiceHandoff, (CompanionHandoffRequest request, HttpContext context,
+            Jarvis.Orchestrator.Cqrs.ICommandHandler<Jarvis.Orchestrator.Cqrs.Sessions.ControlCompanionHandoff, CompanionHandoffView> handler, CancellationToken ct) => {
+            ApiKeyMiddleware.RequireDevice(context, request.DeviceId); context.Response.Headers.CacheControl = "no-store";
+            return handler.HandleAsync(new(request), ct);
+        }).RequireAuthorization(CorePolicies.OwnerOrCompanion);
         app.MapPost(CoreRoutes.VoiceCalibration, (VoiceStartRequest request, HttpContext context, AudioOwnership ownership, CancellationToken ct) => {
             ApiKeyMiddleware.RequireDevice(context, request.DeviceId); return ownership.StartCalibrationAsync(request.DeviceId, ct);
         }).RequireAuthorization(CorePolicies.Owner);

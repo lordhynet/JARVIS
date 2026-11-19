@@ -17,3 +17,8 @@ Earlier rich-client source is archived outside the build in `legacy-rich-client-
 Transport recovery uses a fresh Core ticket, bounded delays of 1/2/4/8/8 seconds, and no replay of microphone audio. An unacknowledged old lease drains before retry. Permission, ownership, credential, consent and budget rejections stop recovery. Capture closes between windows, and playback queues at most twenty seconds of PCM. API29/30 Bluetooth SCO is explicitly selected when a Bluetooth output is present. Real network-toggle, screen-off, incoming-call and earbud acceptance remains unverified; automated tests do not establish it.
 
 Core participates in an incoming handoff when you explicitly start voice on the target phone. It marks the target ready, waits for the source to acknowledge stopped audio, and completes the transfer using the existing conversation. If the source does not release, Core refuses the start; the phone does not steal the session.
+## Conversation transfers
+
+With a matching Core, use **Continue on another device** during live voice to choose an online peer. To receive a move, open **Continue on phone?**, unlock, and tap **Accept and continue** (normal cloud voice consent), or **Decline**. The source stops audio before Core lets this phone speak. The phone keeps transport IDs only; conversation state stays in Core.
+
+Offers are polled while the connected app is visible or owner-enabled local wake/live voice is already running. A fully stopped background app must be reopened; this is not a new push or background microphone service. Permissions, Core budgets, the existing 30-second handoff expiry and recording exclusions still apply. Hardware acceptance is pending; unsigned builds are not installation approval.
