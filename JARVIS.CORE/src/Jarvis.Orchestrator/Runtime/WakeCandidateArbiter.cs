@@ -42,9 +42,6 @@ public sealed class WakeCandidateArbiter(CompanionVoiceService voice, AudioOwner
         Guard.Require(request.RequestId != Guid.Empty && request.AllowCloudProcessing, 400,
             "A unique request and prior live-voice cloud consent are required after local wake detection.");
         await runtime.UpdateAsync(state => { WakeCandidateRules.RecordAttempt(state, request.DeviceId, clock.GetUtcNow()); return true; }, ct);
-        var prepared = await voice.PrepareAsync(new(request.RequestId, request.DeviceId, true, request.Locked), ct);
-        var sessionId = prepared.SessionId;
-        var ticket = await ownership.StartAsync(new(sessionId, request.DeviceId, true, request.Locked), ct, windowSeconds);
-        return new(sessionId, ticket);
+        return await voice.PrepareWakeAsync(new(request.RequestId, request.DeviceId, true, request.Locked), ownership, windowSeconds, ct);
     }
 }

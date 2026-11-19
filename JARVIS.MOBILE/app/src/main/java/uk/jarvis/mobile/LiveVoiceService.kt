@@ -18,6 +18,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import okhttp3.WebSocket
 import uk.jarvis.mobile.contracts.VoiceTicket
@@ -28,6 +29,7 @@ data class LiveVoiceState(
     val ready: Boolean = false,
     val message: String = "",
     val wakeListening: Boolean = false,
+    val wakeArbitrating: Boolean = false,
     val mode: String? = null,
     val queuedMode: String? = null,
     val modeOffer: VoiceCostOffer? = null,
@@ -171,6 +173,7 @@ class LiveVoiceService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) { if (::wakeController.isInitialized) wakeController.reevaluate() }
     }
     private var callModeChanged: Any? = null // AudioManager.OnModeChangedListener, created only on Android 12+
+    private fun recordingActive(): Boolean = InterviewRecordingService.state.value.let { it.starting || it.recording }
     private fun wakePauseReason(): String? {
         val power = getSystemService(PowerManager::class.java)
         val audio = getSystemService(AudioManager::class.java)
@@ -188,7 +191,7 @@ class LiveVoiceService : Service() {
                 routes.transition(CompanionAudioPhase.WakeListening)
                 mutable.value = LiveVoiceState(message = "LOCAL WAKE LISTENING · on-device recognition", wakeListening = true)
             },
-            onArbitrating = { mutable.value = LiveVoiceState(message = "Hey JARVIS detected locally. Asking Core to arbitrate this device…") },
+            onArbitrating = { mutable.value = LiveVoiceState(message = "Hey JARVIS detected locally. Asking Core to arbitrate this device…", wakeArbitrating = true) },
             onTicket = { candidate, generation ->
                 startService(Intent(this, LiveVoiceService::class.java).setAction(START)
                     .putExtra("sessionId", candidate.sessionId.toString()).putExtra("voiceTicket", gson.toJson(candidate.voice))
@@ -197,6 +200,7 @@ class LiveVoiceService : Service() {
             onRetry = { mutable.value = LiveVoiceState(message = it, wakeListening = true) },
             onUnavailable = { stopVoice(it, disableWake = true) },
             pausedBy = ::wakePauseReason,
+            recordingActive = ::recordingActive,
             onPaused = { reason ->
                 // Release the earbud microphone route while paused; listening resumes on unlock, call end or saver off.
                 routes.transition(CompanionAudioPhase.Idle)
@@ -214,6 +218,12 @@ class LiveVoiceService : Service() {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(routeChanged, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), RECEIVER_NOT_EXPORTED)
         else registerReceiver(routeChanged, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("live-voice", "Active live voice", NotificationManager.IMPORTANCE_LOW))
+        scope.launch(Dispatchers.Main.immediate) {
+            InterviewRecordingService.state.collect { recording ->
+                if (recording.starting || recording.recording)
+                    stopVoice("Interview recording is active. Voice and local wake stay off.", disableWake = true)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -456,8 +466,9 @@ class LiveVoiceService : Service() {
 
     private fun stopVoice(message: String, disableWake: Boolean = false, wakeStopReason: String? = null, canStartEveryday: Boolean = false,
         handoff: CompanionHandoffItem? = null, handoffClient: CoreApi? = null) {
-        if (disableWake) wakeController.disable() else wakeController.suspendListening()
-        val keepWake = wakeController.enabled && !disableWake
+        val stopWake = disableWake || recordingActive()
+        if (stopWake) wakeController.disable() else wakeController.suspendListening()
+        val keepWake = wakeController.enabled && !stopWake
         val nextRoute = if (keepWake) CompanionAudioPhase.WakeListening else CompanionAudioPhase.Idle
         if (lifecycle.phase == VoicePhase.Idle && !keepWake && mutable.value.message == message && routes.phase == nextRoute) return
         if (!lifecycle.beginStop()) return

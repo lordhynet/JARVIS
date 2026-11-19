@@ -15,5 +15,12 @@ class LocalWakeDetectorTest {
         assertFalse(WakePhraseMatcher.matches("hey"))
         assertFalse(WakePhraseMatcher.matches("Jarvis"))
         assertFalse(WakePhraseMatcher.matches("Hey Marvin"))
+        assertFalse(WakePhraseMatcher.matches("The TV said hey Jarvis"))
+        assertFalse(WakePhraseMatcher.matches("Hey Jarvision"))
+    }
+
+    @Test fun accepts_a_question_after_the_wake_phrase_without_requiring_a_pause() {
+        assertTrue(WakePhraseMatcher.matches("Hey JARVIS, what's on today?"))
+        assertTrue(WakePhraseMatcher.matches("Hey, Jarvis! Continue on my phone."))
     }
 }

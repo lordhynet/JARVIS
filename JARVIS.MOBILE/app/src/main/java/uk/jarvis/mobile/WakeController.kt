@@ -25,6 +25,7 @@ internal class WakeController(
     private val onUnavailable: (String) -> Unit,
     private val pausedBy: () -> String? = { null },
     private val onPaused: (String) -> Unit = {},
+    private val recordingActive: () -> Boolean = { false },
 ) {
     private val settings = context.getSharedPreferences("installation", 0)
     @Volatile var enabled = false
@@ -56,14 +57,14 @@ internal class WakeController(
 
     /** Re-checks lock, call and battery-saver state; pauses or resumes local listening as needed. */
     @Synchronized fun reevaluate() {
-        if (!enabled || lifecycle.active) return
+        if (!enabled || stopForRecording() || lifecycle.active) return
         val reason = pausedBy()
         if (reason != null) { if (detector != null || arbitration != null) suspendListening(); onPaused(reason) }
         else if (detector == null && arbitration == null) listen()
     }
 
     @Synchronized fun listen() {
-        if (!enabled) return
+        if (!enabled || stopForRecording()) return
         pausedBy()?.let { reason -> suspendListening(); onPaused(reason); return }
         if (!lifecycle.listen()) return
         detector?.stop()
@@ -76,14 +77,14 @@ internal class WakeController(
     }
 
     @Synchronized private fun detected(listener: Long) {
-        if (!enabled || listener != detectorGeneration) return
+        if (!enabled || listener != detectorGeneration || stopForRecording()) return
+        pausedBy()?.let { reason -> suspendListening(); onPaused(reason); return }
         val generation = lifecycle.beginArbitration() ?: return
         detector = null
         onArbitrating()
         arbitration = scope.launch {
             try {
-                val candidate = requestCandidate()
-                if (enabled && lifecycle.isArbitrating(generation)) onTicket(candidate, generation)
+                requestCandidate(generation)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -100,7 +101,18 @@ internal class WakeController(
         }
     }
 
-    private suspend fun requestCandidate(): WakeCandidateResponse {
+    private fun stopForRecording(): Boolean {
+        if (!recordingActive()) return false
+        disable()
+        onUnavailable("Interview recording is active. Voice and local wake stay off.")
+        return true
+    }
+
+    private fun mayAdmit(generation: Long): Boolean =
+        enabled && !recordingActive() && pausedBy() == null && lifecycle.isArbitrating(generation)
+
+    private suspend fun requestCandidate(generation: Long) {
+        if (!mayAdmit(generation)) return
         val saved = CredentialVault(context).read() ?: error("Reconnect this phone to Core before using local wake.")
         val client = CoreApi(saved.url, saved.token, saved.certificateSha256)
         try {
@@ -108,8 +120,13 @@ internal class WakeController(
             client.bindEpoch(privacy.epoch)
             val deviceId = settings.getString("id", "").orEmpty()
             client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
-            return client.send(CoreCompanionRoutes.VOICE_WAKE_CANDIDATES,
-                WakeCandidateRequest(UUID.randomUUID().toString(), deviceId, true), WakeCandidateResponse::class.java)
+            WakeCandidateAdmission(
+                eligible = { mayAdmit(generation) },
+                request = { client.send(CoreCompanionRoutes.VOICE_WAKE_CANDIDATES,
+                    WakeCandidateRequest(UUID.randomUUID().toString(), deviceId, true, false), WakeCandidateResponse::class.java) },
+                release = { candidate -> client.send(CoreCompanionRoutes.VOICE_LOCAL_RELEASE, candidate.voice.lease, Boolean::class.javaObjectType); Unit },
+                accept = { candidate -> onTicket(candidate, generation) },
+            ).run()
         } finally { client.invalidate() }
     }
 }
