@@ -109,7 +109,7 @@ public sealed partial class PostgresSessionTests
         return (await response.Content.ReadFromJsonAsync<ConversationSession>(Json))!;
     }
 
-    private sealed class PostgresApiFactory(string connection, TimeProvider? clock = null) : WebApplicationFactory<Program>
+    private sealed class PostgresApiFactory(string connection, TimeProvider? clock = null, bool manualAgents = false) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -119,6 +119,10 @@ public sealed partial class PostgresSessionTests
             builder.UseSetting("Jarvis:StorageProvider", "Postgres");
             builder.UseSetting("ConnectionStrings:Jarvis", connection);
             if (clock is not null) builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(clock));
+            if (manualAgents) builder.ConfigureTestServices(services => {
+                foreach (var worker in services.Where(d => d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService) &&
+                    d.ImplementationType == typeof(Jarvis.Api.AgentWorker)).ToArray()) services.Remove(worker);
+            });
         }
 
         public HttpClient AuthorisedClient()

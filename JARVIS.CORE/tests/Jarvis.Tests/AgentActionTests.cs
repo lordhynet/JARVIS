@@ -260,16 +260,17 @@ public sealed partial class PostgresSessionTests
     public async Task Pending_agent_action_keeps_exact_approval_authority_after_restart()
     {
         await using var database = await TestDatabase.CreateAsync(); AgentActionView pending;
-        using (var first = new PostgresApiFactory(database.ConnectionString)) {
+        using (var first = new PostgresApiFactory(database.ConnectionString, manualAgents: true)) {
             var (deviceGrant, _) = await DeviceCommandTests.SetupAsync(first.Services, "restart-agent-actions");
             var runtime = first.Services.GetRequiredService<AgentRuntime>(); var run = await runtime.StartAsync(new(Guid.NewGuid(), "personal-plan", true), default);
-            var task = (await runtime.ClaimAsync(default))!;
+            var task = await runtime.ClaimAsync(default);
+            Assert.NotNull(task);
             AgentToolGrant grant;
             using (CoreInvocationContext.Enter(InvocationOrigin.ManualClient)) grant = await first.Services.GetRequiredService<AgentToolGateway>().GrantAsync(Guid.NewGuid(), run.Run.Id,
                 BuiltInDeviceCapabilities.HomeAssistantTurn, 0, 4, false, new("fixture-owner", [AgentToolGateway.ManageScope]));
             using (CoreInvocationContext.Enter(InvocationOrigin.Agent)) pending = await first.Services.GetRequiredService<AgentActionService>().ProposeAsync(task, 0, grant.Id, deviceGrant, DeviceCommandTests.Arguments, default);
         }
-        using var restarted = new PostgresApiFactory(database.ConnectionString);
+        using var restarted = new PostgresApiFactory(database.ConnectionString, manualAgents: true);
         var actions = restarted.Services.GetRequiredService<AgentActionService>(); var restored = Assert.Single(await actions.ListAsync());
         Assert.Equal(pending.ArgumentsHash, restored.ArgumentsHash); Assert.Equal("AwaitingApproval", restored.Status);
         using (CoreInvocationContext.Enter(InvocationOrigin.ManualClient)) await actions.ApproveAsync(restored.Proposal.Id, restored.ArgumentsHash, new("fixture-owner", [AgentToolGateway.ManageScope]), default);
