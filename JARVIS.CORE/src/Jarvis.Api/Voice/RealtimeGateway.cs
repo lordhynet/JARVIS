@@ -44,6 +44,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             authentication.CancelAfter(TimeSpan.FromSeconds(8));
             var (ticket, continuous, startEveryday, negotiateMode, localGreeting) = await AuthenticateAsync(socket, ownership, authentication.Token);
             lease = ticket.Lease;
+            client.RecordAuthenticated(clock.GetTimestamp());
             Guard.Require(limits.AdmitVoiceStream(lease.DeviceId), 429, "Too many voice connections for this device.");
             if (startEveryday) client.ModeSelection = new(VoiceMode.Everyday);
             client.LocalGreeting = localGreeting;
@@ -89,6 +90,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
             using var last = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             await ownership.ReleaseAsync(lease, last.Token);
             lease = null;
+            CoreTelemetry.RecordVoiceEnded(ending);
             await client.SendAsync(new { type = "ended", reason = ending }, last.Token);
         }
         catch (Exception error) when (error is DomainException or SeriousVoiceUnavailableException or SeriousVoiceConfirmationRequired or JsonException or WebSocketException or OperationCanceledException or FormatException or KeyNotFoundException or HttpRequestException)
@@ -110,6 +112,7 @@ public sealed class RealtimeGateway(AudioOwnership ownership, IRealtimeConnectio
                     detail = "Too many unauthenticated requests.";
                     code = "rate_limited";
                 }
+                CoreTelemetry.RecordVoiceEnded(code ?? "error");
                 await client.SendAsync(new { type = "error", detail, code }, last.Token);
                 if (code is VoiceEndReasons.DeviceLocked or VoiceEndReasons.SeriousDailyCap or VoiceEndReasons.GbpBudgetCeiling)
                     await client.SendAsync(new { type = "ended", reason = code }, last.Token);
