@@ -101,6 +101,7 @@ public static class PrivacyData
     public static PrivacyCounts Counts(RuntimeState s, IReadOnlyList<ConversationSession> sessions, IReadOnlyList<WorkflowRun> workflows, RetentionPolicy p, DateTimeOffset at) => Select(s, sessions, workflows, p, at).Counts;
     public static HashSet<Guid> RetainRuntime(RuntimeState state, RetentionPolicy p, DateTimeOffset at, Selection selection)
     {
+        var privatePractices = state.VoiceCoachings.Values.Where(x => x.SourceRecordingId is not null).ToArray();
         foreach (var id in selection.Imports) ImportService.Purge(state, state.ImportedDocuments[id], at);
         var affected = new HashSet<Guid>();
         foreach (var answer in state.TrainingAttempts.Values.Where(x => selection.Training.Contains(x.Id)).ToList())
@@ -118,6 +119,8 @@ public static class PrivacyData
             x.AnswerUtteranceId is Guid utterance && voiceIds.Contains(utterance) ||
             x.CorrectionStartUtteranceId is Guid correction && voiceIds.Contains(correction) ||
             (x.ScenarioAnswers ?? []).Any(voiceIds.Contains) || (x.ScenarioAttempts ?? []).Any(selection.Coaching.Contains)).ToList()) state.VoiceCoachings.Remove(coaching.Id);
+        foreach (var practice in privatePractices.Where(x => !state.VoiceCoachings.ContainsKey(x.Id)))
+            Jarvis.Orchestrator.Recordings.RecordedPracticePrivacy.PurgeSession(state, practice, at);
         foreach (var id in selection.Memories) { AgentRuntime.InvalidateSource(state, "memory", id); state.ContextMemories.Remove(id); }
         foreach (var id in voiceIds) { AgentRuntime.InvalidateSource(state, "voice", id); state.VoiceTurns.Remove(id); }
         foreach (var id in selection.Providers) {

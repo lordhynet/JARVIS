@@ -9,7 +9,7 @@ namespace Jarvis.Orchestrator.Coaching;
 // Stores selection/lifecycle only. Answers live in the existing canonical coaching history.
 public sealed record VoiceCoachingView(Guid Id, string Status, CoachingPrompt? Prompt, Guid? AttemptId,
     string? CapturedAnswer, CoachingAnalysis? TextAnalysis, int? Revision = null, CoachingScenarioDebrief? Scenario = null,
-    int? QuestionNumber = null, int? TotalQuestions = null);
+    int? QuestionNumber = null, int? TotalQuestions = null, Jarvis.Orchestrator.Recordings.RecordedAnswerComparison? Recorded = null);
 
 public sealed class VoiceCoachingService(IRuntimeStore store, ISessionReader sessions, TimeProvider clock, IDomainRegistry? domains = null, ICoreTransaction? transaction = null)
 {
@@ -26,7 +26,24 @@ public sealed class VoiceCoachingService(IRuntimeStore store, ISessionReader ses
         var source = session.Messages?.LastOrDefault(m => m.Role == ChatRoles.User);
         if (action != "current") Guard.Require(source is not null && !source.Restricted && source.RequestId == utteranceId,
             409, "Use the latest captured user speech, not generated or historical text.");
-        var selected = await store.ReadAsync(s => Active(s, sessionId), ct);
+        var selection = await store.ReadAsync(s => (Active: Active(s, sessionId), Recorded: s.VoiceCoachings.Values.SingleOrDefault(p => p.SessionId == sessionId && p.SourceRecordingId is not null)), ct);
+        var selected = selection.Active; var recorded = selection.Recorded;
+        if (recorded is not null) {
+            Guard.Require(transaction is not null && voiceMode == VoiceMode.Everyday, 409, "Use Everyday voice for private interview practice.");
+            var completed = await transaction.ExecuteAsync(async writes => {
+                ChatMessage? currentSource = null;
+                var current = await writes.UpdateSessionAsync(sessionId, value => { currentSource = value.Messages?.LastOrDefault(m => m.Role == ChatRoles.User); return value; });
+                Guard.Require(current is { Status: SessionStatus.Active } && writes.Runtime.VoiceCoachings.TryGetValue(recorded.Id, out var live), 409, "Private practice was removed or ended.");
+                return Jarvis.Orchestrator.Recordings.RecordedInterviewPractice.VoiceUpdate(writes.Runtime, writes.Runtime.VoiceCoachings[recorded.Id], currentSource, action, utteranceId, clock.GetUtcNow());
+            }, ct);
+            if (action == "stop") return new(completed.Id, completed.Status, null, null, null, null);
+            // Extraction/checklist/delivery work is a consistent read after commit,
+            // outside D2. Recheck the source so deletion cannot replay a stale result.
+            return await store.ReadAsync(s => {
+                Guard.Require(s.VoiceCoachings.TryGetValue(completed.Id, out var current), 409, "Private practice was removed.");
+                return Jarvis.Orchestrator.Recordings.RecordedInterviewPractice.VoiceView(s, current);
+            }, ct);
+        }
         var scenarioKey = action == "start" && exerciseId is not null && CoachingScenarios.Contains(exerciseId) ? exerciseId : selected?.ScenarioKey;
         Guard.Require(action != "start" || exerciseId is null || !CoachingScenarios.Exercises.Any(e => e.Id == exerciseId) || CoachingScenarios.Contains(exerciseId), 400, "Start a scenario at its first authored question.");
         DomainResolved? domain = null;

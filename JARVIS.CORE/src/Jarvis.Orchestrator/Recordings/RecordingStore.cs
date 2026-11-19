@@ -11,6 +11,7 @@ public sealed record RecordingChunk(Guid Id, Guid RecordingId, string Track, int
     Guid BlobId, long Epoch, long Bytes, DateTimeOffset At);
 public sealed class RecordingState
 {
+    [System.Text.Json.Serialization.JsonIgnore] public Func<Guid, Func<ConversationSession, ConversationSession>, Task<ConversationSession?>>? UpdateSession { get; set; }
     public long Epoch { get; set; }
     public Dictionary<Guid, RecordingSession> Sessions { get; set; } = [];
     public Dictionary<Guid, RecordingChunk> Chunks { get; set; } = [];
@@ -36,7 +37,7 @@ public interface IRecordingAudioFiles
     Task DeleteRecordingAsync(Guid recordingId, CancellationToken ct);
     Task EraseAsync(CancellationToken ct);
 }
-public sealed class MemoryRecordingStore(InMemoryRuntimeStore runtime, MemoryPrivacyBoundary boundary) : IRecordingStore
+public sealed class MemoryRecordingStore(InMemoryRuntimeStore runtime, MemoryPrivacyBoundary boundary, ICoreTransaction? transaction = null) : IRecordingStore
 {
     private static RecordingState Copy(RecordingState s) => JsonSerializer.Deserialize<RecordingState>(JsonSerializer.Serialize(s))!;
     public Task<T> ReadWithRuntimeAsync<T>(Func<RecordingState, RuntimeState, T> read, CancellationToken ct = default) => boundary.Run(() => {
@@ -47,7 +48,11 @@ public sealed class MemoryRecordingStore(InMemoryRuntimeStore runtime, MemoryPri
     });
     private Task<T> CommitAsync<T>(Func<RecordingState, RuntimeState, Task<T>> update, CancellationToken ct) => boundary.Run(async () => {
         var copy = Copy(boundary.Recordings); copy.Epoch = boundary.Status.Epoch; RecordingState? saved = null;
-        var result = await runtime.UpdateAsync(s => { var value = update(copy, s).GetAwaiter().GetResult(); saved = Copy(copy); return value; }, ct);
+        T result;
+        if (transaction is not null) result = await transaction.ExecuteAsync(async writes => {
+            copy.UpdateSession = writes.UpdateSessionAsync; var value = await update(copy, writes.Runtime); saved = Copy(copy); return value;
+        }, ct);
+        else result = await runtime.UpdateAsync(s => { var value = update(copy, s).GetAwaiter().GetResult(); saved = Copy(copy); return value; }, ct);
         boundary.Recordings = saved!; return result;
     });
     public async Task<T> UpdateAsync<T>(Func<RecordingState, RuntimeState, Task<T>> update, CancellationToken ct = default)

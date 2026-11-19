@@ -6,7 +6,7 @@ using Jarvis.Orchestrator.Workflows;
 
 namespace Jarvis.Orchestrator.Runtime;
 
-public sealed class ImportService(IRuntimeStore store, TimeProvider clock)
+public sealed class ImportService(IRuntimeStore store, TimeProvider clock, ICoreTransaction? transaction = null)
 {
     public Task<ImportedDocument> ImportAsync(ImportDocumentRequest request, CancellationToken ct = default)
     {
@@ -88,15 +88,22 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock)
         s.SourceClaims.Add(result.Id, result); return result;
     }, ct);
 
-    public Task<bool> DeleteAsync(Guid id, int revision, CancellationToken ct = default) => store.UpdateAsync(s =>
+    public Task<bool> DeleteAsync(Guid id, int revision, CancellationToken ct = default)
     {
+        async Task<bool> Delete(RuntimeState s, Func<Guid, Func<ConversationSession, ConversationSession>, Task<ConversationSession?>>? update) {
         Guard.Require(s.ImportedDocuments.TryGetValue(id, out var document) && document.DeletedAt is null, 404, "Import not found.");
         Guard.Require(document.Revision == revision, 409, "Import changed. Reload before deleting.");
+        var sessions = document.SourceRecordingId is { } recording ? s.VoiceCoachings.Values.Where(p => p.SourceRecordingId == recording).Select(p => p.SessionId).ToArray() : [];
+        await Jarvis.Orchestrator.Recordings.RecordedPracticePrivacy.RedactSessionsAsync(s, update, sessions, clock.GetUtcNow());
         Purge(s, document, clock.GetUtcNow()); return true;
-    }, ct);
+        }
+        return transaction is not null ? transaction.ExecuteAsync(w => Delete(w.Runtime, w.UpdateSessionAsync), ct)
+            : store.UpdateAsync(s => Delete(s, null).GetAwaiter().GetResult(), ct);
+    }
 
     public static void Purge(RuntimeState s, ImportedDocument document, DateTimeOffset at)
     {
+        if (document.SourceRecordingId is { } recording) Jarvis.Orchestrator.Recordings.RecordedPracticePrivacy.Purge(s, recording, at);
         AgentRuntime.InvalidateSource(s, "import", document.Id);
         foreach (var group in s.SourceClaims.Values.Where(x => x.DocumentId == document.Id).GroupBy(x => x.StoryId).ToList())
         {

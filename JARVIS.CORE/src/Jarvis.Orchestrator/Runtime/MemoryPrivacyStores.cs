@@ -218,6 +218,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var voice = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
             var kept = list.Where(x => !selection.Sessions.Contains(x.Id)).Select(session =>
             {
+                if (state.RetiredSessions.Contains(session.Id)) return RecordedPracticePrivacy.Redact(session, request.AsOf);
                 var messages = session.Messages ?? [];
                 var retained = messages.Where(message => !voice.Contains(message.RequestId)).ToArray();
                 return retained.Length == messages.Count ? session : session with { Messages = retained, VoiceSummary = null };

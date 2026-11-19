@@ -45,6 +45,12 @@ public static class CqrsRegistration
         Command<DeleteTravelRoute, bool, TravelCommands>(services);
         Command<SimulateTravel, TravelSimulationResult, TravelCommands>(services);
         services.AddSingleton<Jarvis.Orchestrator.Recordings.RecordingService>();
+        services.AddSingleton<Jarvis.Orchestrator.Recordings.RecordedInterviewPractice>();
+        services.AddSingleton<RecordedPracticeQueries>(); services.AddSingleton<RecordedPracticeCommands>();
+        Query<GetRecordedPractice, Jarvis.Orchestrator.Recordings.RecordedPracticePage, RecordedPracticeQueries>(services);
+        Query<GetRecordedClip, byte[], RecordedPracticeQueries>(services);
+        Command<BeginRecordedPractice, Jarvis.Orchestrator.Recordings.RecordedPracticeResult, RecordedPracticeCommands>(services);
+        Command<ApproveRecordedPracticeCard, LearningItem, RecordedPracticeCommands>(services);
         services.AddSingleton<Jarvis.Orchestrator.Recordings.RecordingTranscriptService>();
         services.AddSingleton<RecordingTranscriptQueries>(); services.AddSingleton<RecordingTranscriptCommands>();
         Query<GetRecordingTranscript, RecordingTranscriptProgress?, RecordingTranscriptQueries>(services);

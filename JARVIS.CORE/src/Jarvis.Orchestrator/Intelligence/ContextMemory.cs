@@ -56,7 +56,7 @@ public sealed class ContextMemoryService(IDomainRegistry domains, ICoreTransacti
                 var sourceId = request.SourceId!.Value; string original; string version;
                 if (request.SourceKind == "voice") {
                     Guard.Require(state.VoiceTurns.TryGetValue(sourceId, out var turn) && turn.Role == ChatRoles.User && !turn.Restricted &&
-                        !state.RetiredSessions.Contains(turn.SessionId), 409, "Restricted, retired or missing speech cannot become memory.");
+                        !state.RetiredSessions.Contains(turn.SessionId) && !Jarvis.Orchestrator.Recordings.RecordedPracticePrivacy.PrivateSession(state, turn.SessionId), 409, "Restricted, retired or private interview speech cannot become memory.");
                     original = turn.Text; version = PrivacyData.Hash(JsonSerializer.Serialize(turn)); session = turn.SessionId;
                 } else if (request.SourceKind == "import") {
                     Guard.Require(state.ImportedDocuments.TryGetValue(sourceId, out var document) && document.DeletedAt is null && document.Kind != "interview", 409, "Interview transcripts cannot become memory or domain knowledge.");

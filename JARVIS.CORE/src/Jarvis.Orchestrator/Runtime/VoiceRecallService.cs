@@ -36,7 +36,7 @@ public sealed class VoiceRecallService(IRuntimeStore store, ISessionReader sessi
             {
                 if (active is not null) return View(s, active);
                 Guard.Require(s.VoiceRecalls.Count < 1000, 409, "Voice recall history is full; apply retention before starting more.");
-                var card = s.Learning.Values.Where(c => c.DueAt <= now).OrderBy(c => c.DueAt).ThenBy(c => c.Id).FirstOrDefault();
+                var card = s.Learning.Values.Where(c => c.SourceRecordingId is null && c.DueAt <= now).OrderBy(c => c.DueAt).ThenBy(c => c.Id).FirstOrDefault();
                 if (card is null) return null;
                 var recall = new VoiceRecall(startId, sessionId, card.Id, Fingerprint(card), "Question", sourceId, now, now);
                 s.VoiceRecalls.Add(recall.Id, recall); return View(s, recall);

@@ -63,6 +63,7 @@ public sealed class PostgresRecordingStore(IDbContextFactory<SessionDbContext> f
         var state = await Snapshot(db, ct);
         var recordings = state.Sessions.ToDictionary(p => p.Key, p => JsonSerializer.Serialize(p.Value));
         var chunks = state.Chunks.ToDictionary(p => p.Key, p => JsonSerializer.Serialize(p.Value));
+        var chunkRecordings = state.Chunks.ToDictionary(p => p.Key, p => p.Value.RecordingId);
         if (plan is not null) {
             var row = await db.RuntimeDocuments.AsNoTracking().Where(r => r.Id == 1).Select(r => new RuntimeDocument { Id = r.Id, Fingerprint = r.Fingerprint }).SingleAsync(ct);
             var runtime = new RuntimeState(); await PostgresRuntimeHotState.LoadAsync(db, runtime, row.Fingerprint, ct, deferCold: true);
@@ -76,7 +77,9 @@ public sealed class PostgresRecordingStore(IDbContextFactory<SessionDbContext> f
             await prepare!(prepared, ct);
         }
         var at = System.Diagnostics.Stopwatch.GetTimestamp();
+        var sessions = new List<(Jarvis.Contracts.ConversationSession Before, Jarvis.Contracts.ConversationSession After)>();
         var result = await PostgresRuntimeStore.UpdateInTransactionAsync(db, async runtime => {
+            state.UpdateSession = new PostgresCoreTransaction.Writes(db, runtime, sessions, ct).UpdateSessionAsync;
             var value = await update(state, runtime, prepared);
             foreach (var id in recordings.Keys.Except(state.Sessions.Keys)) db.InterviewRecordings.Remove(new() { Id = id });
             foreach (var (id, session) in state.Sessions) {
@@ -84,7 +87,10 @@ public sealed class PostgresRecordingStore(IDbContextFactory<SessionDbContext> f
                 var row = new InterviewRecordingRow { Id = id, Json = json };
                 if (recordings.ContainsKey(id)) db.InterviewRecordings.Update(row); else db.InterviewRecordings.Add(row);
             }
-            foreach (var id in chunks.Keys.Except(state.Chunks.Keys)) db.RecordingChunks.Remove(new() { Id = id });
+            // Parent deletion already cascades in PostgreSQL. Do not also issue
+            // detached child deletes after that cascade (which would affect zero rows).
+            foreach (var id in chunks.Keys.Except(state.Chunks.Keys).Where(id => state.Sessions.ContainsKey(chunkRecordings[id])))
+                db.RecordingChunks.Remove(new() { Id = id, RecordingId = chunkRecordings[id] });
             foreach (var (id, chunk) in state.Chunks) {
                 var json = JsonSerializer.Serialize(chunk); if (chunks.GetValueOrDefault(id) == json) continue;
                 var row = new RecordingChunkRow { Id = id, RecordingId = chunk.RecordingId, Track = chunk.Track, Sequence = chunk.Sequence, Json = json };
@@ -93,7 +99,9 @@ public sealed class PostgresRecordingStore(IDbContextFactory<SessionDbContext> f
             return value;
         }, at, at, ct);
         committing = true; await tx.CommitAsync(ct); outcome = RecordingCommitOutcome.Committed;
-        audioChanges.LeaseChanged(result.Before, result.After); return result.Result;
+        audioChanges.LeaseChanged(result.Before, result.After);
+        foreach (var (before, after) in sessions) audioChanges.SessionChanged(before, after);
+        return result.Result;
         } catch {
             if (committing && outcome != RecordingCommitOutcome.Committed) outcome = RecordingCommitOutcome.Unknown;
             try { await tx.RollbackAsync(CancellationToken.None); } catch { }
