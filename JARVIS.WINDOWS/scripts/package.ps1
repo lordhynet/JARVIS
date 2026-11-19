@@ -29,7 +29,7 @@ try {
             $bitmap.Save((Join-Path $assets ($asset[0] + '.png')), [Drawing.Imaging.ImageFormat]::Png)
         } finally { $graphics.Dispose(); $bitmap.Dispose() }
     }
-    $package = Join-Path $artifacts 'Jarvis.Windows_0.1.0.0_x64_unsigned.msix'
+    $package = Join-Path $artifacts 'Jarvis.Windows_0.3.0.0_x64_unsigned.msix'
     $packLog = Join-Path $artifacts 'makeappx.log'
     & $MakeAppx pack /d $stage /p $package /o *> $packLog
     if ($LASTEXITCODE -ne 0) { Get-Content -LiteralPath $packLog -Tail 12; throw 'MSIX packaging or manifest validation failed.' }
