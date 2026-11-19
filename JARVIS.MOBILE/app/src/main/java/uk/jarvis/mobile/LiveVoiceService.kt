@@ -9,6 +9,8 @@ import android.media.*
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.*
 import android.view.KeyEvent
 import com.google.gson.Gson
@@ -125,9 +127,14 @@ class LiveVoiceService : Service() {
     private val routeChanged = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) { stopVoice("Audio route changed. Reconnect when your headphones are ready.") }
     }
+    // When Wi-Fi or mobile data returns, a waiting reconnect tries straight away instead of finishing its backoff.
+    private val networkReturned = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { if (lifecycle.active) transport.networkAvailable() }
+    }
     override fun onBind(intent: Intent?) = null
     override fun onCreate() {
         super.onCreate()
+        runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkReturned) }
         routes = AudioRouteController(this) { stopVoice("Audio focus was lost; live voice stopped.") }
         wakeController = WakeController(this, scope, lifecycle,
             onListening = {
@@ -421,6 +428,7 @@ class LiveVoiceService : Service() {
         routes.leaveLive(CompanionAudioPhase.Idle)
         scope.cancel()
         unregisterReceiver(routeChanged)
+        runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkReturned) }
         super.onDestroy()
     }
 }
