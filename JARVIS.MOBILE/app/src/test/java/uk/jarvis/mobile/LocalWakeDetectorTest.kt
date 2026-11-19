@@ -19,6 +19,14 @@ class LocalWakeDetectorTest {
         assertFalse(WakePhraseMatcher.matches("Hey Jarvision"))
     }
 
+    @Test fun accepts_common_on_device_mishearings_only_at_the_start() {
+        for (heard in listOf("Hey Jervis", "hey javis", "Hi Jarvis", "a Jarvis", "OK Jarvis", "Hey Jar vis", "hay Jarvas", "Hey Jarvis's"))
+            assertTrue(heard, WakePhraseMatcher.matches(heard))
+        for (heard in listOf("The TV said hey Jervis", "I told Jarvis hi", "Hey Jarvisworth", "Hey Travis", "hey Mavis", "Jervis"))
+            assertFalse(heard, WakePhraseMatcher.matches(heard))
+        assertTrue(WakePhraseMatcher.biasing.contains("Hey JARVIS"))
+    }
+
     @Test fun accepts_a_question_after_the_wake_phrase_without_requiring_a_pause() {
         assertTrue(WakePhraseMatcher.matches("Hey JARVIS, what's on today?"))
         assertTrue(WakePhraseMatcher.matches("Hey, Jarvis! Continue on my phone."))

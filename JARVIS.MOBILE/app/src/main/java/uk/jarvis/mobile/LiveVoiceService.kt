@@ -201,6 +201,8 @@ class LiveVoiceService : Service() {
             onUnavailable = { stopVoice(it, disableWake = true) },
             pausedBy = ::wakePauseReason,
             recordingActive = ::recordingActive,
+            // On-screen hint only (never logged, stored or sent): shows what the phone heard when it wasn't the wake phrase.
+            onHeard = { heard -> mutable.update { if (it.wakeListening && !it.active) it.copy(message = "LOCAL WAKE LISTENING · heard “$heard”") else it } },
             onPaused = { reason ->
                 // Release the earbud microphone route while paused; listening resumes on unlock, call end or saver off.
                 routes.transition(CompanionAudioPhase.Idle)
