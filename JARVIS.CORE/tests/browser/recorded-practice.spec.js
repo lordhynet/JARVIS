@@ -41,6 +41,8 @@ test('private timeline compares real answers, uses authenticated inline audio, a
   await expect(panel.getByRole('heading', { name: 'Thank-you note — draft only', exact: true })).toBeVisible(); await expect(panel.getByRole('button', { name: /send/i })).toHaveCount(0);
   expect(await page.evaluate(() => window.removedAudioUrls.length)).toBe(1);
   await panel.getByRole('button', { name: 'Load my answer audio', exact: true }).click();
+  // Wait for the second authenticated audio URL; hiding earlier tests the separate late-result path, not cleanup.
+  await expect(panel.locator('audio')).toHaveAttribute('src', /^blob:/);
   await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
   await expect(panel).not.toContainText('My captured replacement answer.'); await expect(panel.locator('audio')).toHaveCount(0); expect(await page.evaluate(() => window.removedAudioUrls.length)).toBe(2);
 });
