@@ -30,7 +30,7 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         return changed.Result;
     }
 
-    private sealed class Writes(SessionDbContext db, RuntimeState runtime,
+    internal sealed class Writes(SessionDbContext db, RuntimeState runtime,
         List<(ConversationSession Before, ConversationSession After)> sessions, CancellationToken ct) : ICoreTransactionWrites
     {
         public RuntimeState Runtime => runtime;

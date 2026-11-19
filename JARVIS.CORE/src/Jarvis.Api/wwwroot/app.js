@@ -43,11 +43,12 @@ async function elevateOwner() {
   })();
   try { return await elevationPending; } finally { if (generation === connectionGeneration) elevationPending = null; }
 }
-async function api(path, body, method) {
+async function api(path, body, method, binary = false) {
   const generation = connectionGeneration;
   const multipart = body instanceof FormData;
   const verb = method || (body === undefined ? 'GET' : 'POST');
   const ownerCall = verb === 'POST' && path === '/browser/enrollment' || verb === 'GET' && path === '/privacy/export' ||
+    verb === 'GET' && /^\/recordings\/[^/]+\/practice\/[^/]+\/audio\//.test(path) ||
     verb === 'POST' && path === '/intelligence/evaluations' ||
     verb === 'POST' && ['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply'].includes(path) ||
     ['POST', 'DELETE'].includes(verb) && /^\/devices\/[^/]+\/(verify|credential)$/.test(path) ||
@@ -71,7 +72,7 @@ async function api(path, body, method) {
   }
   if (generation !== connectionGeneration) throw new Error('The Core connection changed before this request.');
   const response = await fetch(`/api${path}`, { method: verb, headers: { 'X-Jarvis-Key': state.key, ...ownerHeaders, ...(!multipart && body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body) });
-  const data = await response.json().catch(() => ({}));
+  const data = binary && response.ok ? await response.blob() : await response.json().catch(() => ({}));
   if (generation !== connectionGeneration) throw new Error('This response belongs to a previous Core connection.');
   if (!response.ok) {
     if (browserAccess?.enrolled && response.status === 401) $('disconnect').click();
@@ -121,7 +122,10 @@ const notifications = initNotifications({ api, node, button, notice });
 const imports = initImports({ api, node, button, notice });
 const planning = initPlanning({ api, node, button, notice });
 const travel = initTravel({ api, node, button, notice });
-const recordings = initRecordings({ api, node, button, notice });
+const recordings = initRecordings({ api, node, button, notice, openPractice: async id => {
+  await openSession(id); document.querySelector('[data-tab="sessions"]').click();
+  notice('Private interview activity selected. Start Everyday voice with cloud consent, then ask JARVIS to resume coaching.');
+} });
 const privacy = initPrivacy({ api, node, button, notice, onErased: () => {
   connectionGeneration++;
   clearBrowserAccess(true);
@@ -294,7 +298,9 @@ for (const [id, action] of [['handoff-ready', 'ready'], ['handoff-complete', 'co
 async function loadLearning() {
   const cards = await api('/learning?due=true'); $('learning-list').replaceChildren();
   if (!cards.length) $('learning-list').append(node('p', 'All caught up. Add a card or come back when one is due.', 'muted'));
-  for (const card of cards) { const div = node('div', '', 'list-item'); const started = Date.now(); div.append(node('small', card.domain), node('p', card.prompt)); const answer = node('p', card.answer); answer.hidden = true; const ratings = node('div', '', 'row wrap'); ratings.hidden = true; for (const rating of ['Again', 'Hard', 'Good', 'Easy']) ratings.append(button(rating, async () => { await api(`/learning/${card.id}/reviews`, { requestId: crypto.randomUUID(), rating, responseSeconds: Math.min(3600, (Date.now() - started) / 1000) }); await loadLearning(); })); div.append(button('Reveal answer', () => { answer.hidden = false; ratings.hidden = false; }), answer, ratings); $('learning-list').append(div); }
+  for (const card of cards) { const div = node('div', '', 'list-item'); const started = Date.now(); div.append(node('small', card.domain), node('p', card.prompt));
+    if (card.sourceRecordingId) div.append(button('Open private interview practice', () => recordings.open(card.sourceRecordingId)));
+    const answer = node('p', card.answer); answer.hidden = true; const ratings = node('div', '', 'row wrap'); ratings.hidden = true; for (const rating of ['Again', 'Hard', 'Good', 'Easy']) ratings.append(button(rating, async () => { await api(`/learning/${card.id}/reviews`, { requestId: crypto.randomUUID(), rating, responseSeconds: Math.min(3600, (Date.now() - started) / 1000) }); await loadLearning(); })); div.append(button('Reveal answer', () => { answer.hidden = false; ratings.hidden = false; }), answer, ratings); $('learning-list').append(div); }
 }
 on('learning-form', 'submit', async () => { await api('/learning', { domain: $('learning-domain').value, prompt: $('learning-prompt').value, answer: $('learning-answer').value }); $('learning-prompt').value = ''; $('learning-answer').value = ''; await loadLearning(); notice('Learning card added.'); });
 on('refresh-learning', 'click', loadLearning);

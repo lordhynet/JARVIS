@@ -14,12 +14,12 @@ namespace Jarvis.Tests;
 internal sealed class RecordingFilesFake : IRecordingAudioFiles
 {
     public bool Ready { get; set; } = true; public bool FailErase; public long ExtraBytes; public int Writes; public Dictionary<Guid, byte[]> Blobs = [];
-    public Action? BeforeScan; public Func<CancellationToken, Task>? BeforeWrite;
+    public Action? BeforeScan; public Func<CancellationToken, Task>? BeforeWrite; public bool FailRecordingDelete;
     public long BytesOnDisk { get { BeforeScan?.Invoke(); return ExtraBytes + Blobs.Values.Sum(b => (long)b.Length + 32); } }
     public async Task WriteAsync(RecordingChunk c, ReadOnlyMemory<byte> data, CancellationToken ct) { if (BeforeWrite is not null) await BeforeWrite(ct); Blobs[c.BlobId] = data.ToArray(); Writes++; }
     public Task<byte[]> ReadAsync(RecordingChunk c, CancellationToken ct) => Task.FromResult(Blobs[c.BlobId].ToArray());
     public Task DeleteAsync(RecordingChunk c, CancellationToken ct) { Blobs.Remove(c.BlobId); return Task.CompletedTask; }
-    public Task DeleteRecordingAsync(Guid id, CancellationToken ct) { Blobs.Clear(); return Task.CompletedTask; }
+    public Task DeleteRecordingAsync(Guid id, CancellationToken ct) { if (FailRecordingDelete) throw new IOException("Fixture deletion failed"); Blobs.Clear(); return Task.CompletedTask; }
     public Task EraseAsync(CancellationToken ct) { if (FailErase) throw new IOException("Fixture deletion failed."); Blobs.Clear(); return Task.CompletedTask; }
 }
 internal sealed class RecordingRig

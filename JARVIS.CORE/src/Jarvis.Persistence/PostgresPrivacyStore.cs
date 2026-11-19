@@ -146,6 +146,11 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             if (session.Status == SessionStatus.Ended && session.UpdatedAt < request.AsOf.AddDays(-policy.SessionDays)) db.Sessions.Remove(session);
             else
             {
+                if (state.RetiredSessions.Contains(session.Id)) {
+                    session.Title = "Removed private interview practice"; session.Status = SessionStatus.Ended; session.ActiveDeviceId = null;
+                    session.CurrentTask = null; session.HandoffJson = null; session.MessagesJson = "[]"; session.PendingVoiceProjectionIdsJson = "[]"; session.VoiceSummaryJson = null;
+                    db.Checkpoints.RemoveRange(session.Checkpoints); session.Checkpoints.Clear(); continue;
+                }
                 var messages = JsonSerializer.Deserialize<List<ChatMessage>>(session.MessagesJson)!;
                 if (messages.Any(x => voiceIds.Contains(x.RequestId)))
                 {

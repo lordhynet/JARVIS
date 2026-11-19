@@ -167,12 +167,16 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         await db.Entry(row).Collection(s => s.Checkpoints).LoadAsync(ct);
         var current = row.ToContract();
         var updated = update(current);
+        foreach (var checkpoint in row.Checkpoints.Where(c => updated.Checkpoints.All(keep => keep.Id != c.Id)).ToArray()) {
+            row.Checkpoints.Remove(checkpoint); db.Checkpoints.Remove(checkpoint);
+        }
         foreach (var checkpoint in updated.Checkpoints.Where(c => row.Checkpoints.All(old => old.Id != c.Id)))
         {
             var added = CheckpointRow.FromContract(checkpoint);
             row.Checkpoints.Add(added);
             db.Checkpoints.Add(added);
         }
+        row.Title = updated.Title;
         row.CurrentTask = updated.CurrentTask;
         row.Status = updated.Status;
         row.ActiveDeviceId = updated.ActiveDeviceId;

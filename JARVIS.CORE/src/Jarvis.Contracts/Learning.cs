@@ -27,7 +27,9 @@ public sealed record LearningItem(
     DateTimeOffset CreatedAt,
     double? MasteryScore = null,
     int StrongStreak = 0,
-    string SchedulingRuleVersion = "manual-interval-v1", string MasterySource = "unknown");
+    string SchedulingRuleVersion = "manual-interval-v1", string MasterySource = "unknown",
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? SourceRecordingId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? RecordedQuestionId = null);
 
 /// <summary>How well a review went, on the standard 4-point scale used by FSRS/Anki.</summary>
 public enum ReviewRating

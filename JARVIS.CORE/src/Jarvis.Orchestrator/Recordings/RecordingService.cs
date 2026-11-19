@@ -170,9 +170,12 @@ public sealed class RecordingService(IRecordingStore store, IRecordingAudioFiles
     public Task<bool> DeleteAsync(Guid id, int revision, CancellationToken ct = default) => store.UpdateAsync(async (s, runtime) => {
         if (!s.Sessions.TryGetValue(id, out var session)) return false;
         Guard.Require(session.View.Revision == revision, 409, "Recording changed. Reload before deleting.");
+        var practiceSessions = runtime.VoiceCoachings.Values.Where(p => p.SourceRecordingId == id).Select(p => p.SessionId).ToArray();
+        await RecordedPracticePrivacy.RedactSessionsAsync(runtime, s.UpdateSession, practiceSessions, clock.GetUtcNow());
         await files.DeleteRecordingAsync(id, ct);
         foreach (var chunk in s.Chunks.Values.Where(c => c.RecordingId == id).ToArray()) { await files.DeleteAsync(chunk, ct); s.Chunks.Remove(chunk.Id); }
         if (session.View.TranscriptId is { } transcript && runtime.ImportedDocuments.TryGetValue(transcript, out var document) && document.DeletedAt is null) ImportService.Purge(runtime, document, clock.GetUtcNow());
+        RecordedPracticePrivacy.Purge(runtime, id, clock.GetUtcNow());
         ClearBlock(runtime, session.View); s.Sessions.Remove(id); return true;
     }, ct);
 }
