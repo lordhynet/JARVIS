@@ -234,6 +234,7 @@ builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis
 builder.Services.AddSingleton<HubTickets>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Coaching.VoiceCoachingService>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreHandoffVoiceTool>();
+builder.Services.AddSingleton<Jarvis.Api.Voice.VoiceBriefingService>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreVoiceTools>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreWindowsVoiceTool>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreHomeVoiceTool>();
