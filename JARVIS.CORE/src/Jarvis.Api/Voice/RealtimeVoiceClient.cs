@@ -16,6 +16,11 @@ internal sealed class RealtimeVoiceClient(WebSocket socket, CancellationToken di
 
     public WebSocketState State => socket.State;
     public bool LocalGreeting { get; set; }
+    // Stopwatch timestamp of ticket authentication. Window 1 reports ready latency from it; the first reply audio clears it.
+    private long authenticatedAt;
+    public void RecordAuthenticated(long timestamp) => Interlocked.Exchange(ref authenticatedAt, timestamp);
+    public long AuthenticatedAt => Interlocked.Read(ref authenticatedAt);
+    public long TakeAuthenticatedAt() => Interlocked.Exchange(ref authenticatedAt, 0);
     public bool StopRequested => Volatile.Read(ref stopRequested) != 0;
     public void RecordStop() => Volatile.Write(ref stopRequested, 1);
     public bool LockInterrupted => Volatile.Read(ref lockInterrupted) != 0;
