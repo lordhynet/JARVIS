@@ -77,6 +77,7 @@ public sealed class LockedVoiceBoundaryTests
     [InlineData("core_practice_start")]
     [InlineData("core_recall")]
     [InlineData("core_domain_propose")]
+    [InlineData("core_briefing")]
     public async Task Locked_personal_tool_calls_are_denied_in_Core_even_when_called_directly(string name)
     {
         using var host = new ProviderFactory(_ => throw new InvalidOperationException("No provider call"));
