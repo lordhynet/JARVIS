@@ -41,7 +41,7 @@ internal sealed class ConnectionForm : Form
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         buttons.Controls.Add(save); var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true }; buttons.Controls.Add(cancel); Row(buttons);
         Controls.Add(layout); AcceptButton = save; CancelButton = cancel;
-        origin.Text = current?.Origin.AbsoluteUri ?? "https://zero.tail8d9014.ts.net/";
+        origin.Text = current?.Origin.AbsoluteUri ?? "https://jarvis.your-tailnet.ts.net/";
         credential.Text = current?.Credential ?? ""; pin.Text = current?.CertificateSha256 ?? "";
         consent.Checked = current?.AllowCloudProcessing ?? false; startup.Checked = current?.ListenOnStartup ?? false;
         actions.Checked = current?.EnableGovernedActions ?? false;
