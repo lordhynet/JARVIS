@@ -9,6 +9,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.SystemClock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
 
@@ -16,6 +17,7 @@ internal class AudioRouteController(private val context: Context, private val on
     private val audio = context.getSystemService(AudioManager::class.java)
     private var focus: AudioFocusRequest? = null
     private var routeGeneration = 0L
+    @Volatile private var lastCommunicationSwitchMs: Long? = null
     @Volatile var phase = CompanionAudioPhase.Idle
         private set
 
@@ -37,7 +39,10 @@ internal class AudioRouteController(private val context: Context, private val on
             val headset = audio.availableCommunicationDevices.firstOrNull {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
             }
-            headset?.let { check(audio.setCommunicationDevice(it)) { "Android could not select the communication headset." } }
+            headset?.let {
+                lastCommunicationSwitchMs = SystemClock.elapsedRealtime()
+                check(audio.setCommunicationDevice(it)) { "Android could not select the communication headset." }
+            }
             return null
         }
         return routeGeneration.takeIf {
@@ -57,8 +62,12 @@ internal class AudioRouteController(private val context: Context, private val on
     @Synchronized fun transition(next: CompanionAudioPhase) {
         if (phase != next) routeGeneration++
         for (action in AudioRoutePolicy.transition(phase, next)) when (action) {
-            AudioRouteAction.EnterCommunicationRoute -> audio.mode = AudioManager.MODE_IN_COMMUNICATION
+            AudioRouteAction.EnterCommunicationRoute -> {
+                lastCommunicationSwitchMs = SystemClock.elapsedRealtime()
+                audio.mode = AudioManager.MODE_IN_COMMUNICATION
+            }
             AudioRouteAction.RestoreDefaultRoute -> {
+                lastCommunicationSwitchMs = null
                 if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
                 else runCatching { audio.isBluetoothScoOn = false; audio.stopBluetoothSco() }
                 audio.mode = AudioManager.MODE_NORMAL
@@ -66,6 +75,30 @@ internal class AudioRouteController(private val context: Context, private val on
         }
         phase = next
     }
+
+    @Suppress("DEPRECATION")
+    fun stopForNoisy(): Boolean {
+        fun headset(device: AudioDeviceInfo?) = device?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+            Build.VERSION.SDK_INT >= 31 && device?.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+        val selected: Boolean
+        val available: Boolean
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                selected = headset(audio.communicationDevice)
+                available = audio.availableCommunicationDevices.any(::headset)
+            } else {
+                selected = audio.isBluetoothScoOn
+                available = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any(::headset)
+            }
+        } catch (_: SecurityException) {
+            // An uncertain route must not keep recording after a potential unplug.
+            return phase == CompanionAudioPhase.LiveVoice
+        }
+        return AudioRoutePolicy.stopForNoisy(phase, SystemClock.elapsedRealtime(), lastCommunicationSwitchMs, selected, available)
+    }
+
+    fun noisyRecheckDelayMs(): Long? =
+        AudioRoutePolicy.noisyRecheckDelayMs(phase, SystemClock.elapsedRealtime(), lastCommunicationSwitchMs)
 
     @Suppress("DEPRECATION")
     private suspend fun selectLegacyHeadset(selection: Long, isCurrent: () -> Boolean) {
@@ -80,6 +113,7 @@ internal class AudioRouteController(private val context: Context, private val on
         try {
             synchronized(this) {
                 if (selection != routeGeneration || !isCurrent()) return
+                lastCommunicationSwitchMs = SystemClock.elapsedRealtime()
                 audio.startBluetoothSco()
             }
             withTimeout(8000) { connected.await() }

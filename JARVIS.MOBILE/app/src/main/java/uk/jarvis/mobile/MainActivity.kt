@@ -158,6 +158,11 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
     LaunchedEffect(voice.active) { if (voice.active) haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
     val voiceReady = state.verified && state.voice?.ready == true && !state.offline
     val canStart = consent && voiceReady && !state.busy && !state.audioStarting && !recordingActive
+    // A tap without cloud-voice consent explains what is needed instead of silently doing nothing.
+    var consentNudge by remember { mutableStateOf(false) }
+    LaunchedEffect(consent) { if (consent) consentNudge = false }
+    val needsConsent = !consent && voiceReady && !state.busy && !state.audioStarting && !recordingActive
+    val canCheckConnection = !voiceReady && !state.busy && !state.audioStarting && !recordingActive
     Scaffold(containerColor = JarvisColors.Ink, topBar = {
         Wordmark(state.connected, if (state.connected && !state.pairingOffered) voice.mode else null,
             if (state.connected && !state.pairingOffered) { { settings = !settings } } else null, settings)
@@ -230,14 +235,20 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
                     else -> OrbState.Unavailable
                 }
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    VoiceOrb(orb, enabled = voice.active || state.audioStarting || canStart) {
-                        if (voice.active || state.audioStarting) stop() else start(voice.canStartEveryday)
+                    VoiceOrb(orb, enabled = voice.active || state.audioStarting || canStart || needsConsent || canCheckConnection) {
+                        when {
+                            voice.active || state.audioStarting -> stop()
+                            canCheckConnection -> model.refresh()
+                            !consent -> consentNudge = true
+                            else -> start(voice.canStartEveryday)
+                        }
                     }
                 }
                 val hint = when {
                     voice.active && voice.message.isNotBlank() -> voice.message
                     voice.active -> "Say “thanks, JARVIS” to finish"
                     state.audioStarting -> "Starting… tap to cancel"
+                    consentNudge && !consent -> "Turn on Voice processing below, then tap the circle"
                     state.offline -> "Waiting for JARVIS"
                     !state.verified -> "Confirm your earbuds in Settings first"
                     state.voice?.ready != true -> state.voice?.detail ?: "Checking voice…"

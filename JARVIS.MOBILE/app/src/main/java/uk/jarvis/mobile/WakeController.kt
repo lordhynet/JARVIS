@@ -26,6 +26,7 @@ internal class WakeController(
     private val pausedBy: () -> String? = { null },
     private val onPaused: (String) -> Unit = {},
     private val recordingActive: () -> Boolean = { false },
+    private val onHeard: (String) -> Unit = {},
 ) {
     private val settings = context.getSharedPreferences("installation", 0)
     @Volatile var enabled = false
@@ -72,7 +73,7 @@ internal class WakeController(
         detector = LocalWakeDetector(context, { detected(current) }, { message ->
             val liveListener = synchronized(this) { current == detectorGeneration && enabled }
             if (liveListener) onUnavailable(message)
-        }).also { it.start() }
+        }, onHeard = { text -> if (synchronized(this) { current == detectorGeneration && enabled }) onHeard(text) }).also { it.start() }
         onListening()
     }
 

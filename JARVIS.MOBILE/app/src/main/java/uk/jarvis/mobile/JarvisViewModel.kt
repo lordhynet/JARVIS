@@ -33,6 +33,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private var preparationId: String? = null
     private var acceptedSession: String? = null
     private var handoffOperation: Pair<String, String>? = null
+    private var connectionRefreshNeeded = false
     private fun locked() = getApplication<Application>().getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked
     fun sendHandoff(target: CompanionHandoffTarget) = work { client ->
         check(!locked()) { "Unlock before moving a conversation." }
@@ -130,6 +131,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                     certificateTrust = CertificatePin.trustLabel(saved.certificateSha256),
                     verified = existing?.let { it.device.capabilitiesVerified && "audio-only" in it.device.registration.capabilities.extra } == true,
                     legacyDrafts = LegacyDraftRecovery.available(getApplication(), saved))
+                connectionRefreshNeeded = false
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (client != null && revoked(error)) revoke(client, CompanionAccessPolicy.eraseLegacyFor(error))
@@ -155,22 +157,32 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
     fun prepareLive(onReady: (String) -> Unit) = work { client ->
-        check(mutable.value.verified) { "Confirm your microphone and earbuds in connection settings first." }
-        check(mutable.value.voice?.ready == true) { mutable.value.voice?.detail ?: "Voice is not ready on Core." }
-        val id = preparationId ?: UUID.randomUUID().toString().also { preparationId = it }
-        client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
-        try {
-            val prepared = client.send(CoreCompanionRoutes.VOICE_PREPARE, CompanionVoiceRequest(id, deviceId, true, locked()), CompanionVoiceSession::class.java)
-            preparationId = null; val expected = acceptedSession; acceptedSession = null
-            HandoffTransfer.continuePrepared(expected, prepared.sessionId) { onReady(prepared.sessionId) }
-        } catch (error: CoreHttpException) { if (error.status in listOf(400, 409)) preparationId = null; throw error }
+        startWithConnectionCheck(start = {
+            check(mutable.value.verified) { "Confirm your microphone and earbuds in connection settings first." }
+            check(mutable.value.voice?.ready == true) { mutable.value.voice?.detail ?: "Voice is not ready on Core." }
+            val id = preparationId ?: UUID.randomUUID().toString().also { preparationId = it }
+            client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
+            try {
+                val prepared = client.send(CoreCompanionRoutes.VOICE_PREPARE, CompanionVoiceRequest(id, deviceId, true, locked()), CompanionVoiceSession::class.java)
+                preparationId = null; val expected = acceptedSession; acceptedSession = null
+                HandoffTransfer.continuePrepared(expected, prepared.sessionId) { onReady(prepared.sessionId) }
+            } catch (error: CoreHttpException) { if (error.status in listOf(400, 409)) preparationId = null; throw error }
+        }, check = { refreshConnection(client) }, accessRevoked = ::revoked)
     }
-    fun refresh() = work { client ->
+    private suspend fun refreshConnection(client: CoreApi): String {
         client.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java)
         client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
         val voice = client.get(CoreCompanionRoutes.VOICE_STATUS, AiCapabilityStatus::class.java)
         val device = client.list(CoreCompanionRoutes.DEVICES, DeviceView::class.java).firstOrNull { it.device.registration.deviceId == deviceId }
-        mutable.update { it.copy(voice = voice, verified = device?.device?.capabilitiesVerified == true, offline = false, notice = "Connected to Core.") }
+        check(api === client) { "Core connection changed. Try again on the current connection." }
+        val summary = if (voice.ready) "Connected to Core. Voice is ready." else "Connected to Core. ${voice.detail}"
+        mutable.update { it.copy(voice = voice, verified = device?.device?.let { enrolled -> enrolled.capabilitiesVerified && "audio-only" in enrolled.registration.capabilities.extra } == true, offline = false) }
+        connectionRefreshNeeded = false
+        return summary
+    }
+    fun refresh() = work { client ->
+        val summary = refreshConnection(client)
+        mutable.update { it.copy(notice = summary) }
     }
     fun verifyAudio() = work { client ->
         val device = client.list(CoreCompanionRoutes.DEVICES, DeviceView::class.java).firstOrNull { it.device.registration.deviceId == deviceId }
@@ -184,12 +196,16 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             client.get(CoreCompanionRoutes.PRIVACY_STATUS, PrivacyStatus::class.java)
             client.send(CoreCompanionRoutes.heartbeat(deviceId), emptyMap<String, String>(), JsonObject::class.java)
             val handoffs = client.send(CoreCompanionRoutes.VOICE_HANDOFF, CompanionHandoffRequest(deviceId, "poll", locked = locked()), CompanionHandoffView::class.java)
-            if (api === client) { mutable.update { it.copy(offline = false, handoffs = handoffs) }; HandoffNotifications.show(getApplication(), handoffs) }
+            val refreshed = if (connectionRefreshNeeded && api === client) refreshConnection(client) else null
+            if (api === client) { mutable.update { it.copy(offline = false, handoffs = handoffs, notice = refreshed ?: it.notice) }; HandoffNotifications.show(getApplication(), handoffs) }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             if (revoked(error)) revoke(client, CompanionAccessPolicy.eraseLegacyFor(error))
-            else if (api === client) mutable.update { it.copy(offline = true,
-                notice = CertificatePin.failureMessage(error) ?: "Core is unreachable. Voice requires a live connection.") }
+            else if (api === client) {
+                connectionRefreshNeeded = true
+                mutable.update { it.copy(offline = true,
+                    notice = CertificatePin.failureMessage(error) ?: "Core is unreachable. Voice requires a live connection.") }
+            }
         }
     }
     fun reportAudioIssue(message: String) { mutable.update { it.copy(notice = message, audioStarting = false) } }

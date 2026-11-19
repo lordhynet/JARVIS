@@ -23,8 +23,8 @@ internal class RecordingQueue private constructor(private val folder: File, priv
     private val gson = Gson()
     private val identity = "jarvis-recording-v1:${initial.binding}:${initial.recordingId}"
     private val stateFile get() = File(folder, "state.aes")
-    init { validate(initial); safeDirectory(folder) }
-    private fun chunkFile(sequence: Int): File { require(sequence in 0..179); safeDirectory(folder); return File(folder, "unknown-${sequence.toString().padStart(3, '0')}.aes") }
+    init { validate(initial); safeDirectory(folder.parentFile.parentFile, folder) }
+    private fun chunkFile(sequence: Int): File { require(sequence in 0..179); safeDirectory(folder.parentFile.parentFile, folder); return File(folder, "unknown-${sequence.toString().padStart(3, '0')}.aes") }
     private fun write(file: File, value: Any) {
         val plain = gson.toJson(value).toByteArray(Charsets.UTF_8)
         try {
@@ -67,7 +67,7 @@ internal class RecordingQueue private constructor(private val folder: File, priv
     }
     @Synchronized fun stop(discontinuous: Boolean) { state = state.copy(stopped = true, discontinuous = state.discontinuous || discontinuous); persist() }
     @Synchronized fun clear() {
-        safeDirectory(folder)
+        safeDirectory(folder.parentFile.parentFile, folder)
         for (sequence in 0..179) { val file = chunkFile(sequence); if (file.exists()) check(file.delete()); File(file.path + ".tmp").delete() }
         if (stateFile.exists()) check(stateFile.delete()); File(stateFile.path + ".tmp").delete()
         if (folder.listFiles()?.isEmpty() == true) check(folder.delete())
@@ -79,22 +79,32 @@ internal class RecordingQueue private constructor(private val folder: File, priv
             UUID.fromString(state.recordingId); require(state.epoch >= 0 && state.deviceId.length in 1..80 && Regex("[A-F0-9]{64}").matches(state.binding))
             require(state.counts.keys == setOf("unknown") && state.counts.getValue("unknown") in 0..180)
         }
-        private fun safeDirectory(folder: File) {
+        /**
+         * Rejects symbolic links from [folder] up to and including the app-owned recording [root]. Directories above the
+         * root belong to Android (for example /data/user/0, itself a system symlink on Samsung and many other devices).
+         */
+        internal fun safeDirectory(root: File, folder: File) {
+            val top = root.absoluteFile
             var current: File? = folder.absoluteFile
-            while (current != null) { check(!Files.isSymbolicLink(current.toPath())) { "Protected recording directories cannot be symbolic links." }; current = current.parentFile }
+            while (current != null) {
+                check(!Files.isSymbolicLink(current.toPath())) { "Protected recording directories cannot be symbolic links." }
+                if (current == top) return
+                current = current.parentFile
+            }
+            error("Protected recording folder is outside its recording root.")
         }
         fun create(root: File, key: SecretKey, state: RecordingQueueState): RecordingQueue {
-            validate(state); val folder = File(File(root, state.binding), state.recordingId); safeDirectory(folder)
+            validate(state); val folder = File(File(root, state.binding), state.recordingId); safeDirectory(root, folder)
             check(!File(folder, "state.aes").exists()); check(folder.mkdirs() || folder.isDirectory)
             return RecordingQueue(folder, key, state).also { it.persist() }
         }
         fun load(root: File, key: SecretKey): List<RecordingQueue> {
-            safeDirectory(root); if (!root.exists()) return emptyList()
+            safeDirectory(root, root); if (!root.exists()) return emptyList()
             val result = mutableListOf<RecordingQueue>()
             for (scope in root.listFiles().orEmpty().filter { it.isDirectory && Regex("[A-F0-9]{64}").matches(it.name) }) {
-                safeDirectory(scope)
+                safeDirectory(root, scope)
                 for (folder in scope.listFiles().orEmpty().filter { it.isDirectory }) {
-                    safeDirectory(folder); if (runCatching { UUID.fromString(folder.name) }.isFailure) continue
+                    safeDirectory(root, folder); if (runCatching { UUID.fromString(folder.name) }.isFailure) continue
                     val file = File(folder, "state.aes"); if (!file.exists()) continue
                     val identity = "jarvis-recording-v1:${scope.name}:${folder.name}"
                     check(file.length() <= 16384 && !Files.isSymbolicLink(file.toPath()))
