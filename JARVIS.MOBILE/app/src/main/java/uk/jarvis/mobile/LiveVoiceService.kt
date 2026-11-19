@@ -166,6 +166,18 @@ class LiveVoiceService : Service() {
     private val networkReturned = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { if (lifecycle.active) transport.networkAvailable(); if (lifecycle.active || mutable.value.wakeListening) monitorHandoffs() }
     }
+    // Local "Hey JARVIS" pauses while the phone is locked or dark, during calls, and with battery saver on.
+    private val wakeConditions = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) { if (::wakeController.isInitialized) wakeController.reevaluate() }
+    }
+    private var callModeChanged: Any? = null // AudioManager.OnModeChangedListener, created only on Android 12+
+    private fun wakePauseReason(): String? {
+        val power = getSystemService(PowerManager::class.java)
+        val audio = getSystemService(AudioManager::class.java)
+        val ownRoute = ::routes.isInitialized && routes.phase != CompanionAudioPhase.Idle
+        return WakePausePolicy.reason(power.isInteractive, getSystemService(KeyguardManager::class.java).isDeviceLocked,
+            WakePausePolicy.inCall(audio.mode, ownRoute), power.isPowerSaveMode)
+    }
     override fun onBind(intent: Intent?) = null
     override fun onCreate() {
         super.onCreate()
@@ -183,7 +195,22 @@ class LiveVoiceService : Service() {
                     .putExtra(WAKE_GENERATION, generation))
             },
             onRetry = { mutable.value = LiveVoiceState(message = it, wakeListening = true) },
-            onUnavailable = { stopVoice(it, disableWake = true) })
+            onUnavailable = { stopVoice(it, disableWake = true) },
+            pausedBy = ::wakePauseReason,
+            onPaused = { reason ->
+                // Release the earbud microphone route while paused; listening resumes on unlock, call end or saver off.
+                routes.transition(CompanionAudioPhase.Idle)
+                mutable.value = LiveVoiceState(message = reason, wakeListening = true)
+            })
+        val conditions = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_USER_PRESENT)
+            addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(wakeConditions, conditions, RECEIVER_NOT_EXPORTED) else registerReceiver(wakeConditions, conditions)
+        if (Build.VERSION.SDK_INT >= 31) runCatching {
+            val listener = AudioManager.OnModeChangedListener { if (::wakeController.isInitialized) wakeController.reevaluate() }
+            getSystemService(AudioManager::class.java).addOnModeChangedListener(mainExecutor, listener); callModeChanged = listener
+        }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(routeChanged, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), RECEIVER_NOT_EXPORTED)
         else registerReceiver(routeChanged, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("live-voice", "Active live voice", NotificationManager.IMPORTANCE_LOW))
@@ -477,6 +504,10 @@ class LiveVoiceService : Service() {
         routes.leaveLive(CompanionAudioPhase.Idle)
         scope.cancel()
         unregisterReceiver(routeChanged)
+        runCatching { unregisterReceiver(wakeConditions) }
+        if (Build.VERSION.SDK_INT >= 31) (callModeChanged as? AudioManager.OnModeChangedListener)?.let { listener ->
+            runCatching { getSystemService(AudioManager::class.java).removeOnModeChangedListener(listener) }
+        }
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkReturned) }
         super.onDestroy()
     }

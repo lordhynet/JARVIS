@@ -23,6 +23,8 @@ internal class WakeController(
     private val onTicket: (WakeCandidateResponse, Long) -> Unit,
     private val onRetry: (String) -> Unit,
     private val onUnavailable: (String) -> Unit,
+    private val pausedBy: () -> String? = { null },
+    private val onPaused: (String) -> Unit = {},
 ) {
     private val settings = context.getSharedPreferences("installation", 0)
     @Volatile var enabled = false
@@ -52,8 +54,18 @@ internal class WakeController(
         arbitration = null
     }
 
+    /** Re-checks lock, call and battery-saver state; pauses or resumes local listening as needed. */
+    @Synchronized fun reevaluate() {
+        if (!enabled || lifecycle.active) return
+        val reason = pausedBy()
+        if (reason != null) { if (detector != null || arbitration != null) suspendListening(); onPaused(reason) }
+        else if (detector == null && arbitration == null) listen()
+    }
+
     @Synchronized fun listen() {
-        if (!enabled || !lifecycle.listen()) return
+        if (!enabled) return
+        pausedBy()?.let { reason -> suspendListening(); onPaused(reason); return }
+        if (!lifecycle.listen()) return
         detector?.stop()
         val current = ++detectorGeneration
         detector = LocalWakeDetector(context, { detected(current) }, { message ->
