@@ -46,7 +46,7 @@ class CoreApi(rawUrl: String, private val token: String, certificateSha256: Stri
             // Exact trusted certificate pin; normal hostname verification remains enabled.
             if (connection is HttpsURLConnection && pinnedSockets != null) connection.sslSocketFactory = pinnedSockets
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 10_000; connection.readTimeout = 60_000; connection.requestMethod = method
+            connection.connectTimeout = 10_000; connection.readTimeout = if (path == CoreCompanionRoutes.VOICE_HANDOFF) 10_000 else 60_000; connection.requestMethod = method
             connection.setRequestProperty(CoreCompanionHeaders.API_KEY, token)
             connection.setRequestProperty("Accept", "application/json")
             if (!privacyStatus) connection.setRequestProperty(CoreCompanionHeaders.DATA_EPOCH, privacy.epoch.toString())

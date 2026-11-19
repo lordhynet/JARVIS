@@ -26,8 +26,8 @@ public sealed class CompanionVoiceService(ISessionStore sessions, DeviceService 
             ConversationSession? transferred = null;
             if (incoming.Count == 1)
             {
-                Guard.Require(!VoiceAccessRules.RequiresLockReport(device) || request.Locked == false,
-                    409, "Unlock the target Windows device before completing an incoming conversation handoff.");
+                Guard.Require(request.Locked == false,
+                    409, "Unlock the target device and report its unlocked state before accepting an incoming conversation handoff.");
                 var targetId = incoming[0].Id; var handoff = incoming[0].Handoff!;
                 if (handoff.State == HandoffState.Checkpointed)
                     handoff = (await lifecycle.AdvanceAsync(targetId, "ready", new(handoff.Id, deviceId), ct)).Handoff!;

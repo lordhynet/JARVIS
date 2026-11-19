@@ -45,6 +45,8 @@ public static class CqrsRegistration
         Command<DeleteTravelRoute, bool, TravelCommands>(services);
         Command<SimulateTravel, TravelSimulationResult, TravelCommands>(services);
         services.AddSingleton<Jarvis.Orchestrator.Recordings.RecordingService>();
+        services.AddSingleton<CompanionHandoffService>(); services.AddSingleton<CompanionHandoffCommands>();
+        Command<ControlCompanionHandoff, CompanionHandoffView, CompanionHandoffCommands>(services);
         services.AddSingleton<Jarvis.Orchestrator.Recordings.RecordedInterviewPractice>();
         services.AddSingleton<RecordedPracticeQueries>(); services.AddSingleton<RecordedPracticeCommands>();
         Query<GetRecordedPractice, Jarvis.Orchestrator.Recordings.RecordedPracticePage, RecordedPracticeQueries>(services);

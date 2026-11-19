@@ -9,7 +9,7 @@ var roots = new[]
 {
     typeof(RegisterDeviceRequest), typeof(DeviceView), typeof(PrivacyStatus), typeof(AiCapabilityStatus),
     typeof(CompanionVoiceRequest), typeof(CompanionVoiceSession), typeof(VoiceStartRequest), typeof(VoiceTicket),
-    typeof(WakeCandidateRequest), typeof(WakeCandidateResponse), typeof(RecordingCaptureRequest), typeof(RecordingCaptureResult)
+    typeof(WakeCandidateRequest), typeof(WakeCandidateResponse), typeof(RecordingCaptureRequest), typeof(RecordingCaptureResult), typeof(CompanionHandoffRequest), typeof(CompanionHandoffView)
 };
 var types = new HashSet<Type>();
 void Visit(Type type)
@@ -45,6 +45,7 @@ var routeNames = new Dictionary<string, string>(StringComparer.Ordinal)
     [CoreRoutes.Devices] = "DEVICES",
     [CoreRoutes.DeviceCapabilities] = "DEVICE_CAPABILITIES",
     [CoreRoutes.VoicePrepare] = "VOICE_PREPARE",
+    [CoreRoutes.VoiceHandoff] = "VOICE_HANDOFF",
     [CoreRoutes.VoiceWakeCandidates] = "VOICE_WAKE_CANDIDATES",
     [CoreRoutes.VoiceTickets] = "VOICE_TICKETS",
     [CoreRoutes.VoiceLocalRelease] = "VOICE_LOCAL_RELEASE",

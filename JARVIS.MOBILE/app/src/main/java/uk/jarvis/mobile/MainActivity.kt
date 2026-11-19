@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
         model = ViewModelProvider(this)[JarvisViewModel::class.java]
         readPairing(intent)
         resumeWakeFromNotification(intent)
-        lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { while (isActive) { delay(5000); model.poll() } } }
+        lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { while (isActive) { model.poll(); delay(2000) } } }
         setContent {
             JarvisTheme {
                 VoiceCompanion(model, ::requestVoice, ::requestLocalWake, ::stopVoice, ::openPermissions, ::testAudio,
@@ -166,6 +166,26 @@ private fun VoiceCompanion(model: JarvisViewModel, start: (Boolean) -> Unit, ena
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = JarvisColors.Mint, trackColor = JarvisColors.Line)
             if (state.notice.isNotBlank()) Text(state.notice, color = JarvisColors.Amber, fontSize = 14.sp)
+            if (state.connected && !recordingActive) {
+                for (offer in state.handoffs?.offers.orEmpty().filter { it.incoming }) {
+                    Text("Continue on phone?", color = JarvisColors.Mint)
+                    Text("Accepting continues this conversation with normal cloud voice processing.", color = JarvisColors.Muted)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = { model.acceptHandoff(offer) { start(true) } }, enabled = !state.busy && !voice.active) { Text("Accept and continue") }
+                        OutlinedButton(onClick = { model.declineHandoff(offer) }, enabled = !state.busy) { Text("Decline") }
+                    }
+                }
+                for (offer in state.handoffs?.offers.orEmpty().filter { !it.incoming }) {
+                    Text("Waiting for the other device. Source audio stops after acceptance.", color = JarvisColors.Muted)
+                    TextButton(onClick = { model.declineHandoff(offer) }, enabled = !state.busy) { Text("Cancel transfer") }
+                }
+                if (voice.active && state.handoffs?.offers.isNullOrEmpty()) {
+                    var destinations by remember { mutableStateOf(false) }
+                    TextButton(onClick = { destinations = !destinations }) { Text("Continue on another device") }
+                    if (destinations) for (target in state.handoffs?.targets.orEmpty())
+                        TextButton(onClick = { model.sendHandoff(target); destinations = false }, enabled = !state.busy) { Text(target.name) }
+                }
+            }
             if (state.connected || recordingActive) RecordingControls(stop)
             if (recordingActive) {
                 Text("Voice and connection changes are paused until recording stops.", color = JarvisColors.Muted)

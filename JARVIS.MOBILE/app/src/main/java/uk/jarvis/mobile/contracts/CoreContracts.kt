@@ -7,6 +7,7 @@ internal object CoreCompanionRoutes {
     const val DEVICES = "/api/devices"
     const val DEVICE_CAPABILITIES = "/api/device-capabilities"
     const val VOICE_PREPARE = "/api/voice/prepare"
+    const val VOICE_HANDOFF = "/api/voice/handoff"
     const val VOICE_WAKE_CANDIDATES = "/api/voice/wake-candidates"
     const val VOICE_TICKETS = "/api/voice/tickets"
     const val VOICE_LOCAL_RELEASE = "/api/voice/local/release"
@@ -14,7 +15,7 @@ internal object CoreCompanionRoutes {
     const val VOICE_STREAM = "/voice-stream"
     const val RECORDING_CAPTURE = "/api/recording-capture"
     val getPaths = setOf(PRIVACY_STATUS, VOICE_STATUS, DEVICES, DEVICE_CAPABILITIES)
-    val postPaths = setOf(DEVICES, VOICE_PREPARE, VOICE_WAKE_CANDIDATES, VOICE_TICKETS, VOICE_LOCAL_RELEASE, RECORDING_CAPTURE)
+    val postPaths = setOf(DEVICES, VOICE_PREPARE, VOICE_WAKE_CANDIDATES, VOICE_TICKETS, VOICE_LOCAL_RELEASE, RECORDING_CAPTURE, VOICE_HANDOFF)
     val heartbeatPattern = Regex(DEVICE_HEARTBEAT.replace("{id}", "[A-Za-z0-9_-]{1,80}"))
     fun heartbeat(deviceId: String) = DEVICE_HEARTBEAT.replace("{id}", deviceId)
 }
@@ -42,6 +43,40 @@ data class AudioLease(
     val expiresAt: String = "",
     val locked: Boolean = false,
     val reportedLocked: Boolean? = null,
+)
+
+data class CompanionHandoffItem(
+    val sessionId: String = "",
+    val handoffId: String = "",
+    val fromDeviceId: String = "",
+    val toDeviceId: String = "",
+    val state: HandoffState = HandoffState.Requested,
+    val expiresAt: String = "",
+    val incoming: Boolean = false,
+)
+
+data class CompanionHandoffRequest(
+    val deviceId: String = "",
+    val action: String = "",
+    val sessionId: String? = null,
+    val handoffId: String? = null,
+    val targetDeviceId: String? = null,
+    val requestId: String? = null,
+    val locked: Boolean? = null,
+    val audioStopped: Boolean = false,
+)
+
+data class CompanionHandoffTarget(
+    val deviceId: String = "",
+    val name: String = "",
+    val kind: DeviceKind = DeviceKind.WindowsAgent,
+    val browser: Boolean = false,
+)
+
+data class CompanionHandoffView(
+    val activeSessionId: String? = null,
+    val offers: List<CompanionHandoffItem> = emptyList(),
+    val targets: List<CompanionHandoffTarget> = emptyList(),
 )
 
 data class CompanionVoiceRequest(
@@ -78,6 +113,8 @@ data class DeviceView(
     val online: Boolean = false,
     val ownerDisplayName: String = "",
 )
+
+enum class HandoffState { Requested, Checkpointed, TargetReady, AudioTransferred, Completed, TimedOut, Failed }
 
 data class InterviewRecording(
     val id: String = "",

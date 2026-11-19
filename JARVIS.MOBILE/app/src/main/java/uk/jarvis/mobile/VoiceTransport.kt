@@ -411,10 +411,10 @@ internal class VoiceTransport(
     }
 
     class Release(private val client: CoreApi, private val lease: AudioLease) {
-        fun afterCapture(capture: Job?) {
+        fun afterCapture(capture: Job?): Job {
             // The service has stopped playback. Acknowledge once after capture exits.
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-            scope.launch {
+            return scope.launch {
                 try { withTimeout(3000) { capture?.join(); client.send(CoreCompanionRoutes.VOICE_LOCAL_RELEASE, lease, Boolean::class.javaObjectType) } }
                 catch (_: Exception) { /* Core retains the original drain expiry if acknowledgement is lost. */ }
                 finally { scope.cancel() }
