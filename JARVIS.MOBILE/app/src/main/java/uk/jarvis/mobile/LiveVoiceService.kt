@@ -56,6 +56,7 @@ class LiveVoiceService : Service() {
     private val gson = Gson()
     private val lifecycle = VoiceLifecycle()
     private lateinit var routes: AudioRouteController
+    private lateinit var noisyRouteRecheck: NoisyRouteRecheck
     private lateinit var wakeController: WakeController
     private var capture: AudioRecord? = null
     private var playback: AudioTrack? = null
@@ -164,8 +165,7 @@ class LiveVoiceService : Service() {
 
     private val routeChanged = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY && routes.stopForNoisy())
-                stopVoice("Audio route changed. Reconnect when your headphones are ready.")
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) noisyRouteRecheck.noisy()
         }
     }
     // When Wi-Fi or mobile data returns, a waiting reconnect tries straight away instead of finishing its backoff.
@@ -190,6 +190,9 @@ class LiveVoiceService : Service() {
         super.onCreate()
         runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkReturned) }
         routes = AudioRouteController(this) { stopVoice("Audio focus was lost; live voice stopped.") }
+        noisyRouteRecheck = NoisyRouteRecheck(CoroutineScope(scope.coroutineContext + Dispatchers.Main.immediate),
+            routes::noisyRecheckDelayMs, routes::stopForNoisy,
+            { stopVoice("Audio route changed. Reconnect when your headphones are ready.") })
         wakeController = WakeController(this, scope, lifecycle,
             onListening = {
                 routes.transition(CompanionAudioPhase.WakeListening)
@@ -297,6 +300,7 @@ class LiveVoiceService : Service() {
                 try { startForeground(43, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) }
                 catch (_: RuntimeException) { stopVoice("Android could not start the microphone foreground service."); return START_NOT_STICKY }
                 val current = lifecycle.beginLive() ?: return START_NOT_STICKY
+                noisyRouteRecheck.cancel()
                 soundQueue = Channel(64)
                 playbackBudget = VoicePlaybackBudget()
                 transport.start(sessionId, ticket, intent.getBooleanExtra(START_EVERYDAY_EXTRA, false))
@@ -493,6 +497,7 @@ class LiveVoiceService : Service() {
 
     private fun stopVoice(message: String, disableWake: Boolean = false, wakeStopReason: String? = null, canStartEveryday: Boolean = false,
         handoff: CompanionHandoffItem? = null, handoffClient: CoreApi? = null) {
+        if (::noisyRouteRecheck.isInitialized) noisyRouteRecheck.cancel()
         val stopWake = disableWake || recordingActive()
         if (stopWake) wakeController.disable() else wakeController.suspendListening()
         val keepWake = wakeController.enabled && !stopWake
@@ -538,6 +543,7 @@ class LiveVoiceService : Service() {
     }
 
     override fun onDestroy() {
+        if (::noisyRouteRecheck.isInitialized) noisyRouteRecheck.cancel()
         if (lifecycle.active) stopVoice("Android stopped the live session. Reconnect to resume.", disableWake = true)
         wakeController.disable(persist = false)
         routes.leaveLive(CompanionAudioPhase.Idle)

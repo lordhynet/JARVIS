@@ -7,11 +7,17 @@ internal enum class AudioRouteAction { EnterCommunicationRoute, RestoreDefaultRo
 internal object AudioRoutePolicy {
     const val SWITCH_GRACE_MS = 3000L
 
+    fun noisyRecheckDelayMs(phase: CompanionAudioPhase, nowMs: Long, lastSwitchMs: Long?): Long? {
+        if (phase != CompanionAudioPhase.LiveVoice || lastSwitchMs == null) return null
+        val elapsed = nowMs - lastSwitchMs
+        return if (elapsed in 0 until SWITCH_GRACE_MS) SWITCH_GRACE_MS - elapsed else null
+    }
+
     /** Android can report A2DP becoming noisy while our own SCO route is taking over. */
     fun stopForNoisy(phase: CompanionAudioPhase, nowMs: Long, lastSwitchMs: Long?,
         selectedCommunicationHeadset: Boolean, availableCommunicationHeadset: Boolean): Boolean {
         if (phase != CompanionAudioPhase.LiveVoice) return false
-        if (lastSwitchMs != null && nowMs - lastSwitchMs in 0 until SWITCH_GRACE_MS) return false
+        if (noisyRecheckDelayMs(phase, nowMs, lastSwitchMs) != null) return false
         return !selectedCommunicationHeadset && !availableCommunicationHeadset
     }
 

@@ -97,6 +97,9 @@ internal class AudioRouteController(private val context: Context, private val on
         return AudioRoutePolicy.stopForNoisy(phase, SystemClock.elapsedRealtime(), lastCommunicationSwitchMs, selected, available)
     }
 
+    fun noisyRecheckDelayMs(): Long? =
+        AudioRoutePolicy.noisyRecheckDelayMs(phase, SystemClock.elapsedRealtime(), lastCommunicationSwitchMs)
+
     @Suppress("DEPRECATION")
     private suspend fun selectLegacyHeadset(selection: Long, isCurrent: () -> Boolean) {
         val connected = CompletableDeferred<Unit>()
