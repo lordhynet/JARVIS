@@ -109,7 +109,7 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
     public async Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
         // Split query: a joined include repeats the whole MessagesJson once per checkpoint, and voice preparation
         // appends a checkpoint every time, so long-lived sessions grew slower with each conversation.
@@ -121,7 +121,7 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
     public async Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
         var rows = await db.Sessions.AsNoTracking().Include(s => s.Checkpoints).AsSplitQuery()
             .OrderByDescending(s => s.UpdatedAt).ThenBy(s => s.Id).ToListAsync(ct);
