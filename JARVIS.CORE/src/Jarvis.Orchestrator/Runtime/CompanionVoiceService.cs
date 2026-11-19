@@ -10,7 +10,20 @@ public sealed class CompanionVoiceService(ISessionStore sessions, DeviceService 
     SessionLifecycleService lifecycle, IRuntimeReader runtime, TimeProvider clock)
 {
     private readonly SemaphoreSlim preparation = new(1, 1);
-    public async Task<CompanionVoiceSession> PrepareAsync(CompanionVoiceRequest request, CancellationToken ct)
+    public Task<CompanionVoiceSession> PrepareAsync(CompanionVoiceRequest request, CancellationToken ct) =>
+        PrepareAndAdmitAsync(request, (prepared, _) => Task.FromResult(prepared), ct);
+
+    // Keep wake preparation and ticket admission in the same critical section. Releasing
+    // preparation before StartAsync lets another device create a session before either
+    // caller has acquired the global audio lease.
+    internal Task<WakeCandidateResponse> PrepareWakeAsync(CompanionVoiceRequest request, AudioOwnership ownership,
+        int windowSeconds, CancellationToken ct) => PrepareAndAdmitAsync(request, async (prepared, token) => {
+            var ticket = await ownership.StartAsync(new(prepared.SessionId, request.DeviceId, true, request.Locked), token, windowSeconds);
+            return new WakeCandidateResponse(prepared.SessionId, ticket);
+        }, ct);
+
+    private async Task<T> PrepareAndAdmitAsync<T>(CompanionVoiceRequest request,
+        Func<CompanionVoiceSession, CancellationToken, Task<T>> admit, CancellationToken ct)
     {
         Guard.Require(request.RequestId != Guid.Empty && request.AllowCloudProcessing, 400, "An explicit, consented voice start is required.");
         var deviceId = Guard.Text(request.DeviceId, "DeviceId", 80);
@@ -75,7 +88,7 @@ public sealed class CompanionVoiceService(ISessionStore sessions, DeviceService 
                 return current with { Checkpoints = [..current.Checkpoints, new(id, current.Id, current.Checkpoints.Count + 1,
                     "Audio companion connection prepared", current.CurrentTask, clock.GetUtcNow())] };
             }, ct);
-            return new(claimed.Id);
+            return await admit(new(claimed.Id), ct);
         }
         finally { preparation.Release(); }
     }
