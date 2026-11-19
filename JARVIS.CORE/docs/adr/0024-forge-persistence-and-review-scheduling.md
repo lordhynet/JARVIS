@@ -1,22 +1,31 @@
 # Forge persistence and review scheduling
 
-Status: proposed (F0).
+Status: proposed (F0, revised after the gap analysis).
 
-Forge state goes in **dedicated additive PostgreSQL tables**: programmes, check-ins, capacity, skills, attempts, review states, language profiles, plan items, opportunities and evidence metadata. One migration per slice, as listed in `docs/forge/F0_INVENTORY.md` §4. **Forge adds nothing to `RuntimeDocuments`.** That document already carries Programmes, Learning, Training and Stories, and ADR 0012 records its cold-write cost. Each table:
-- is owner-scoped;
-- has a `Revision` for optimistic concurrency and UTC `timestamptz`;
-- puts a unique idempotency key on anything a client can retry (attempts, check-ins);
-- participates in the existing privacy export, erasure and backup.
+**Forge reuses JARVIS's existing single-product models.** It adds no parallel copies (master requirements, Single-Product Principle):
+- Goals are `PersonalGoal`, with a division/skill tag, so they keep driving agent triggers.
+- Review state is `LearningItem`. It already has stability, difficulty, `DueAt`, mastery score and source, and a scheduling-rule version.
+- Attempts are the existing training and coaching attempts. They gain optional `Locale`, `Assistance`, `Independence` and `Retention` fields.
+- Weaknesses come from the existing weakness model.
+- An earlier F0 draft proposed `ForgeGoals`, `ForgeReviewStates` and `ForgeAttempts` tables; that was rejected as duplication.
 
-Writes use the existing transaction boundary and the outbox. Events: ForgePlanChanged, PracticeCompleted, ReviewDue, EvidenceVerified, InterviewApproaching and BudgetThresholdReached. **No second store or orchestration engine.**
+**New additive tables only for concepts with no existing home:**
+- `ForgeProgrammes`, `ForgeCheckIns` and `ForgeCapacity` (F1);
+- `ForgeSkills` (F2; the skill graph is mapped onto `QuestionBank` and `LearningItem` ids);
+- `LanguageProfiles` (F4) and `ForgePlanItems` (F6);
+- later, `ForgeOpportunities` and `ForgeEvidence` (metadata only).
 
-Review scheduling is one pure, deterministic function: `next(state, outcome, now) -> state`. It starts with the 1/3/7/14/30-day ladder.
-- A failed recall shortens the interval to the previous step, or to 1 day.
-- A failure in one skill never blocks unrelated skills.
-- Review state is kept per skill and per locale, so French and English never share history.
+Each table is owner-scoped, has a `Revision` for optimistic concurrency and UTC `timestamptz`, puts a unique idempotency key on anything a client can retry, and joins privacy export, erasure and backup. Writes use the existing transaction boundary and outbox.
 
-**Mastery needs both an independent demonstration and a successful delayed recall.** Finishing a lesson never counts. Attempts record accuracy, fluency, independence and retention separately, each with a confidence level and rubric version. A missing observation stays null. An AI-produced rubric score is labelled as such and never presented as an accredited assessment.
+**`Learning`, `Goals`, `Programmes` and `Training*` currently live in the hot `RuntimeDocuments` JSON** (ADR 0012 records its cold-write cost). Forge would add volume to `Learning` and `Goals`. So a prerequisite slice (FG-00), owned by **all of JARVIS** rather than Forge, moves `LearningItem` (and `PersonalGoal` if measurements show it hot) into dedicated rows. It uses a lossless backfill and a down migration that rebuilds the JSON, following the ADR 0012 procedure. Until FG-00 lands, Forge creates learning items only at the pace of real practice, never in bulk.
 
-The existing `Learning` cards and `TrainingMode.SpacedReview` keep their current behaviour. Forge reuses `TrainingDrillService` and `QuestionBank` for content and calls the new scheduler for Forge skills only. Moving existing cards onto the new scheduler is a separate, owner-approved change.
+**Review scheduling.** It adds the scheduling rule `forge-ladder-v1` beside the existing `manual-interval-v1`. It's a pure function, `next(item, outcome, now)`.
+- The ladder is 1, 3, 7, 14, 30 days.
+- A failed recall steps back one interval, to a minimum of 1 day.
+- A failure never blocks unrelated skills.
+- Existing items keep their rule unless the owner moves them.
+- Language review state is separated by locale, which is part of the item's domain/skill key.
 
-Rollback: every Forge migration only creates tables, so going down drops them after a verified backup. Nothing else references them.
+**Mastery needs both an independent demonstration and a successful delayed recall.** Missing observations stay null, and AI rubric scores keep `MasterySource` showing they are AI-assessed, never accredited.
+
+Rollback: new tables are dropped after a verified backup. Added nullable columns are dropped, and existing rows are unaffected. FG-00 follows its own down migration.

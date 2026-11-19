@@ -1,6 +1,6 @@
 # Project Forge F0: repository inventory, mapping, migration plan and backlog
 
-Status: proposal for review. Docs only; no feature code.
+Status: proposal for review (revised after the gap analysis, claude-review/JARVIS_FORGE_GAP_ANALYSIS_2026-11-19.md). Docs only; no feature code.
 Base: `development` at `edaa3c7` (release 0.3.1 tree `a953a825`).
 Requirements: the owner's `JARVIS_PROJECT_FORGE_MASTER_ADDENDUM_V2.md`. It stays separate from the master requirements until the owner approves merging (addendum §14).
 Plan: `claude-review/JARVIS_FORGE_INTEGRATED_PLAN_2026-11-19.md`.
@@ -66,7 +66,8 @@ Clients: `JARVIS.MOBILE` (Kotlin/Compose), `JARVIS.WINDOWS` (tray companion, loc
 | Slice | Migration | Tables | Backfill | Down |
 |---|---|---|---|---|
 | F1 | `ForgeProgrammes` | `ForgeProgrammes` (Id, OwnerScope, Version, LocalStartDate, LocalGraduationDate, TimeZone, Status, Revision, CreatedAt, DeletedAt), `ForgeCheckIns` (Id, ProgrammeId, Division, LocalDate, Kind, ValueJson, IdempotencyKey unique, CreatedAt), `ForgeCapacity` (ProgrammeId, WeeklyMinutes, QuietHoursJson, SleepWindowJson, Revision) | None | Drop tables. No other table references them. |
-| F2 | `ForgeSkillsAndReviews` | `ForgeSkills` (Key, Division, Version, PrerequisitesJson, RubricVersion, EvidenceType), `ForgeAttempts` (Id, SkillKey, Mode, Locale null, Assistance, DurationSeconds, Accuracy/Fluency/Independence/Retention nullable, Confidence, RubricVersion, IdempotencyKey unique, At), `ForgeReviewStates` (SkillKey, Locale, DueAt, IntervalDays, LastOutcome, Revision) | None. Existing `Learning` cards are untouched. | Drop tables. |
+| F0b (all JARVIS) | `LearningAndGoalRows` (FG-00) | Move `Learning` (`LearningItem`) and, if measured hot, `Goals` (`PersonalGoal`) out of `RuntimeDocuments` into dedicated rows. **This is not Forge-only;** it's the one learning history and goal model. | Lossless backfill from the JSON | Rebuild the JSON from rows, then drop. Same procedure as ADR 0012. |
+| F2 | `ForgeSkills` | `ForgeSkills` (Key, Division, Version, PrerequisitesJson, RubricVersion, EvidenceType), mapped onto existing `QuestionBank` and `LearningItem` ids. **No Forge attempt or review table:** attempts reuse training and coaching attempts (with an optional `Locale`, `Assistance`, `Independence` and `Retention`), and review state reuses `LearningItem` with the `forge-ladder-v1` scheduling rule. | None | Drop the table, and the added nullable columns, after a backup. |
 | F4 | `ForgeLanguageProfiles` | `LanguageProfiles` (Locale, SkillBandsJson, CorrectionMode, Revision) | None | Drop. |
 | F6 | `ForgePlans` | `ForgePlanItems` (Id, ProgrammeId, GoalKey, WindowStart, WindowEnd, Minutes, Status, Reason, Revision) | None | Drop. |
 | F8 | `ForgeRegisters` | `ForgeOpportunities`, `ForgeEvidence` (metadata only) | None | Drop. Back up first, because the owner enters data. |
