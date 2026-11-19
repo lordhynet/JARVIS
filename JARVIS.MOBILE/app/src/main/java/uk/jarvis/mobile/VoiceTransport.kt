@@ -60,6 +60,11 @@ internal class VoiceTransport(
     private var sequence = 0L
     private var renewWanted = false
     private var reconnectJob: Job? = null
+    // Conflated: any number of "network is back" signals wake at most one waiting retry.
+    private val networkBack = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+    /** Called when Android reports a usable default network; skips the rest of the current backoff wait. */
+    fun networkAvailable() { networkBack.trySend(Unit) }
 
     @Synchronized fun start(session: String, ticket: VoiceTicket?, everyday: Boolean = false) {
         sessionId = session
@@ -183,7 +188,7 @@ internal class VoiceTransport(
             socket = websocket
             websocket
         }
-        try { withTimeout(55000) { established.await() } }
+        try { withTimeout(retry.attemptBudgetMillis(55000)) { established.await() } }
         catch (error: Exception) { window.cancel(); throw error }
     }
 
@@ -329,16 +334,17 @@ internal class VoiceTransport(
         var wait = initialDelay
         while (lifecycle.isLive(current)) {
             if (wait) {
-                val backoff = retry.nextDelayMillis() ?: error("Connection recovery exhausted. Start voice again when your network is ready.")
-                listener.reconnecting("Reconnecting to Core in ${backoff / 1000}s. Microphone is off.")
-                delay(backoff)
+                val backoff = retry.nextDelayMillis() ?: error(VoiceRecovery.EXHAUSTED)
+                listener.reconnecting(VoiceRecovery.waiting((backoff + 999) / 1000))
+                while (networkBack.tryReceive().isSuccess) Unit // Only a signal that arrives during this wait counts.
+                withTimeoutOrNull(backoff) { networkBack.receive() }
             }
             if (!lifecycle.isLive(current)) return
             try { connectWindow(saved, current); return }
-            catch (e: CoreHttpException) { throw e }
             catch (e: CancellationException) { if (e !is TimeoutCancellationException) throw e; wait = true }
             catch (error: IOException) {
-                if (CertificatePin.failureMessage(error) != null) throw error
+                // Gateway hiccups and dropped networks retry; revoked keys, owner refusals and certificate changes stop.
+                if (!VoiceRecovery.retryable(error)) throw error
                 wait = true
             }
             // A missing ready frame can leave a live lease on Core.
