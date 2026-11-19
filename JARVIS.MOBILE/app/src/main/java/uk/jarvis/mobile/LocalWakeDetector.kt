@@ -16,12 +16,13 @@ internal object WakePhraseMatcher {
 
     // Start-anchored only, so a phrase quoted mid-sentence (for example by a TV) never wakes.
     // Accepts the common on-device mishearings of the unusual word "Jarvis".
-    private val phrase = Regex(
-        "^(hey|hay|hei|hi|a|ok|okay)\\s+(jarvis|jarviss|jarvas|jarves|jarvi|jarvy|jarvys|javis|jervis|jar\\s+vis)\\b",
-        RegexOption.IGNORE_CASE)
+    private const val NAME = "(jarvis|jarviss|jarvas|jarves|jarvi|jarvy|jarvys|jarbis|javis|jabes|jervis)"
+    private val phrase = Regex("^(hey|hay|hei|hi|hello|hallo|a|ok|okay)\\s+($NAME|jar\\s+vis)\\b", RegexOption.IGNORE_CASE)
+    // The whole utterance run together into one word, e.g. "Ajabes" or "Heyjarvis" (observed on the S24's recognizer).
+    private val joined = Regex("^(a|ah|hey|hay|he|hi)$NAME$", RegexOption.IGNORE_CASE)
 
     fun normalise(text: String): String = text.replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
-    fun matches(text: String): Boolean = phrase.containsMatchIn(normalise(text))
+    fun matches(text: String): Boolean = normalise(text).let { phrase.containsMatchIn(it) || joined.matches(it) }
 }
 
 /** Uses Android's on-device speech service only; there is no cloud recognizer fallback. */

@@ -8,7 +8,7 @@ val signing = Properties().apply { val file = rootProject.file(".signing/signing
 android {
     namespace = "uk.jarvis.mobile"
     compileSdk = 35
-    defaultConfig { applicationId = "uk.jarvis.mobile"; minSdk = 29; targetSdk = 35; versionCode = 16; versionName = "0.11.1" }
+    defaultConfig { applicationId = "uk.jarvis.mobile"; minSdk = 29; targetSdk = 35; versionCode = 17; versionName = "0.11.2" }
     signingConfigs {
         create("personalTest") {
             if (signing.isNotEmpty()) {

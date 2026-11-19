@@ -69,3 +69,26 @@ class RecordingTests {
         }
     }
 }
+
+class RecordingDirectorySafetyTest {
+    @Test fun system_symlinks_above_the_recording_root_are_allowed_but_links_inside_it_are_not() {
+        val base = Files.createTempDirectory("jarvis-rec").toFile()
+        try {
+            val real = java.io.File(base, "real").apply { mkdirs() }
+            val alias = java.io.File(base, "user0")
+            val linked = runCatching { Files.createSymbolicLink(alias.toPath(), real.toPath()) }.isSuccess
+            org.junit.Assume.assumeTrue("Symbolic links unavailable on this host", linked)
+            // Like /data/user/0 -> /data/data on Samsung: the link sits above the app-owned root.
+            val root = java.io.File(alias, "files/recordings").apply { mkdirs() }
+            val folder = java.io.File(root, "A".repeat(64) + "/" + UUID.randomUUID()).apply { mkdirs() }
+            RecordingQueue.safeDirectory(root, folder)
+            RecordingQueue.safeDirectory(root, root)
+            // A link inside the recording root is still rejected.
+            val outside = java.io.File(base, "outside").apply { mkdirs() }
+            val inner = java.io.File(root, "B".repeat(64))
+            Files.createSymbolicLink(inner.toPath(), outside.toPath())
+            assertThrows(IllegalStateException::class.java) { RecordingQueue.safeDirectory(root, java.io.File(inner, UUID.randomUUID().toString())) }
+            assertThrows(IllegalStateException::class.java) { RecordingQueue.safeDirectory(root, base) }
+        } finally { base.deleteRecursively() }
+    }
+}

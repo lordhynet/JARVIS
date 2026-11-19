@@ -27,6 +27,13 @@ class LocalWakeDetectorTest {
         assertTrue(WakePhraseMatcher.biasing.contains("Hey JARVIS"))
     }
 
+    @Test fun accepts_what_the_s24_actually_heard() {
+        for (heard in listOf("Hello Jarvis", "Ajabes", "Heyjarvis", "ajarvis", "Hello, Jarvis! What's on today?"))
+            assertTrue(heard, WakePhraseMatcher.matches(heard))
+        for (heard in listOf("How are you today Jarvis", "Jabes", "Ajabesworth", "Hello Marvin"))
+            assertFalse(heard, WakePhraseMatcher.matches(heard))
+    }
+
     @Test fun accepts_a_question_after_the_wake_phrase_without_requiring_a_pause() {
         assertTrue(WakePhraseMatcher.matches("Hey JARVIS, what's on today?"))
         assertTrue(WakePhraseMatcher.matches("Hey, Jarvis! Continue on my phone."))
