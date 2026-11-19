@@ -28,6 +28,40 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
   const saveAnswer = el('button', 'Save & review text', answerForm, 'primary');
   const feedback = el('div', '', coaching, 'list'); const history = el('div', '', coaching, 'list');
   const reportBox = el('div', '', coaching, 'list');
+  const deliveryBox = el('div', '', coaching, 'card');
+  const scenarioBox = el('div', '', coaching, 'card');
+  async function loadScenarios() {
+    const entries = await api('/coaching/scenarios'); scenarioBox.replaceChildren(); el('h3', 'Coaching scenarios', scenarioBox);
+    el('p', 'Use Everyday voice to start a panel interview, recruiter screen, presentation or hostile Q&A. JARVIS asks one authored question and waits for your answer. Phone and browser use the same audio flow.', scenarioBox);
+    for (const entry of entries) { const scenario = entry.scenario; const row = el('details', '', scenarioBox, 'list-item');
+      el('summary', scenario.title + (entry.active ? ' · Everyday voice' : ' · Disabled or unavailable'), row);
+      el('p', 'Personas: ' + scenario.personas.map(p => p.name + ' (' + p.style + ')').join('; '), row);
+      el('p', scenario.turns.length + ' questions · ' + scenario.rubric.map(r => r.dimension).join(', '), row);
+      el('p', 'Say “Start ' + scenario.title + '”. No independent competence grade is implied by checklist coverage.', row);
+    }
+    const session = selectedSession(); if (!session) return;
+    for (const debrief of await api('/coaching/sessions/' + session.id + '/scenario-debriefs')) {
+      const row = el('details', '', scenarioBox, 'list-item'); el('summary', debrief.title + ' · ' + debrief.status + ' · ' + debrief.answers + ' answers', row);
+      el('p', debrief.assessmentKind, row);
+      debrief.scores.forEach(s => el('p', s.dimension + ': ' + s.score + '/' + s.maximum + ' · ' + s.basis, row));
+      debrief.followUps.forEach(f => el('p', 'Next: ' + f, row));
+      debrief.evidence.forEach(e => { const item = el('small', 'Saved answer ' + e.attemptId + ' · revision ' + e.revision + (e.voiceTurnId ? ' · captured speech linked' : ' · speech timing unavailable'), row); item.style.overflowWrap = 'anywhere'; });
+      for (const delivery of debrief.delivery) el('p', 'Answer pace: ' + (delivery.wordsPerMinute == null ? 'unavailable' : delivery.wordsPerMinute + ' words/min') + ' · fillers ' + delivery.fillers + ' · I ' + delivery.firstPersonSingular + ' / we ' + delivery.firstPersonPlural, row);
+    }
+  }
+  async function loadDelivery() {
+    const sessions = await api('/coaching/delivery'); deliveryBox.replaceChildren(); el('h3', 'Speech delivery', deliveryBox);
+    el('p', 'Unrestricted user speech only. Pace uses captured duration. Fillers and the point-first opening score (0–2) are English text heuristics. Pause ratio uses quiet intervals within captured speech, not time between speakers.', deliveryBox, 'muted');
+    if (!sessions.length) el('p', 'No eligible voice turns yet. Timing is never inferred for typed answers.', deliveryBox);
+    for (const session of sessions) {
+      const entry = el('details', '', deliveryBox, 'list-item');
+      el('summary', 'Session ' + session.sessionId.slice(0, 8) + ' · ' + session.turns + ' turns · ' + session.words + ' words', entry);
+      el('p', 'Pace: ' + (session.wordsPerMinute == null ? 'unavailable' : session.wordsPerMinute + ' words/min') + ' · Filler candidates: ' + session.fillers + ' · I: ' + session.firstPersonSingular + ' · We: ' + session.firstPersonPlural, entry);
+      el('p', 'Pause ratio: ' + (session.pauseRatio == null ? 'unavailable' : Math.round(session.pauseRatio * 100) + '% (quiet-audio heuristic)') + ' · Opening score: ' + session.openingScore + '/2', entry);
+      const trend = el('ol', '', entry);
+      for (const turn of session.trend) el('li', new Date(turn.at).toLocaleTimeString() + ' · ' + turn.words + ' words · ' + (turn.wordsPerMinute == null ? 'pace unavailable' : turn.wordsPerMinute + ' words/min') + ' · fillers ' + turn.fillers + ' · opening ' + turn.openingScore + '/2', trend);
+    }
+  }
   action(coaching, 'Review current session', async () => {
     const session = selectedSession(); if (!session) throw Error('Open a conversation or coaching prompt first.');
     report = await api(`/sessions/${session.id}/review`); reportBox.replaceChildren();
@@ -298,8 +332,41 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
   const workBody = el('div', '', workflows, 'list');
   action(workflows, 'Refresh workflows', loadWorkflows);
   async function loadWorkflows() {
-    const [paid, runs] = await Promise.all([api('/workflows/paid-ai'), api('/workflows')]); workBody.replaceChildren();
+    const [paid, runs, budget, voice] = await Promise.all([
+      api('/workflows/paid-ai'), api('/workflows'), api('/budget/status').catch(() => null),
+      api('/voice/modes').catch(() => null)
+    ]); workBody.replaceChildren();
     el('p', paid.detail, workBody); el('p', `Today committed: $${paid.todayCommittedUsd} / $${paid.dailyLimitUsd}`, workBody);
+    if (voice || budget?.voiceUsage?.length) {
+      const money = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
+      const card = el('div', '', workBody, 'list-item');
+      el('h3', 'Live voice budget', card);
+      for (const mode of voice?.modes ?? []) {
+        const cap = mode.dailyCapGbp == null ? '' : ` · ${money.format(mode.dailyCapGbp)} daily cap`;
+        const description = mode.pricingReady
+          ? `${mode.model} · up to ${money.format(mode.maximumGbpForTenMinutes)} reserved for ten minutes`
+          : mode.detail;
+        el('p', `${mode.mode} · ${description}${cap}`, card);
+      }
+      for (const entry of budget?.voiceUsage ?? []) {
+        const amount = entry.accountedGbp == null
+          ? `${money.format(entry.reservedGbp)} reserved` : `${money.format(entry.accountedGbp)} accounted`;
+        el('p', `${entry.mode} · ${entry.model} · ${amount}`, card);
+      }
+    }
+    const exchange = el('div', '', workBody, 'list-item');
+    el('h3', 'Budget exchange rate', exchange);
+    if (budget) {
+      const refresh = budget.conversionBasis?.fxStatus;
+      const quote = budget.conversionBasis?.fx ?? refresh?.lastAcceptedQuote;
+      el('p', budget.detail, exchange);
+      if (quote) {
+        const hours = Math.max(0, Math.floor((Date.now() - Date.parse(quote.observedAt)) / 3600000));
+        el('p', `${quote.source} · observed ${hours} h ago`, exchange);
+      }
+      if (refresh?.lastError) el('p', `Last automatic refresh failed. ${refresh.lastError}`, exchange);
+      if (refresh?.manualQuoteIgnored) el('p', 'Core ignored the malformed manual exchange rate.', exchange);
+    } else el('p', 'Budget exchange rate is unavailable.', exchange);
     action(workBody, 'Build unpaid practice plan', async () => { const body = { notBefore: null }; await api('/workflows/practice-plans', request('practice-plan', body)); notice('Plan accepted. Refresh to check its status.'); await loadWorkflows(); pending.delete('practice-plan' + JSON.stringify(body)); });
     const consent = field(workBody, 'I allow Claude to process selected saved story facts and due-card prompts for this brief.', 'input', { type: 'checkbox' });
     const generate = action(workBody, 'Generate paid interview brief', async () => { if (!consent.checked) throw Error('Approve cloud processing for this brief first.'); const body = { allowCloudProcessing: true }; await api('/workflows/interview-briefs', request('paid-brief', body)); notice('Brief accepted. Refresh to check its status before creating another.'); await loadWorkflows(); pending.delete('paid-brief' + JSON.stringify(body)); }); generate.disabled = !paid.ready;
@@ -329,14 +396,14 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
       guideEpoch++; guided = null; guideBody.replaceChildren(); guideHistory.replaceChildren();
       answer.value = saved?.answer || ''; seconds.value = saved?.seconds || ''; drillAnswer.value = saved?.drillAnswer || '';
       renderPrompt(); renderFeedback(); if (!drill || questions.some(x => x.id === drill.questionId)) renderDrill();
-      history.replaceChildren(); reportBox.replaceChildren(); report = null;
+      history.replaceChildren(); reportBox.replaceChildren(); scenarioBox.replaceChildren(); report = null;
     },
     async load(tab) {
-      if (tab === 'coaching') { [exercises, stories] = await Promise.all([api('/coaching/exercises'), api('/stories')]); const old = exerciseInput.value; exerciseInput.replaceChildren(); exercises.forEach(x => option(exerciseInput, `${x.area} · ${x.title}`, x.id)); if (exercises.some(x => x.id === old)) exerciseInput.value = old; sourceSelection(); await loadHistory(); }
+      if (tab === 'coaching') { [exercises, stories] = await Promise.all([api('/coaching/exercises'), api('/stories')]); const old = exerciseInput.value; exerciseInput.replaceChildren(); exercises.forEach(x => option(exerciseInput, `${x.area} · ${x.title}`, x.id)); if (exercises.some(x => x.id === old)) exerciseInput.value = old; sourceSelection(); await loadHistory(); await loadDelivery(); await loadScenarios(); }
       if (tab === 'stories') await loadStories();
       if (tab === 'training') { questions = await api('/training/questions'); const old = questionInput.value; questionInput.replaceChildren(); questions.forEach(x => option(questionInput, `${x.domain} · ${x.title}`, x.id)); if (questions.some(x => x.id === old)) questionInput.value = old; questionBox.textContent = questions.find(x => x.id === questionInput.value)?.prompt || ''; modeCatalog = await api('/training/modes'); const selectedMode = guideMode.value; guideMode.replaceChildren(); modeCatalog.forEach(x => option(guideMode, x.title, x.mode)); if (modeCatalog.some(x => x.mode === selectedMode)) guideMode.value = selectedMode; guideDescription.textContent = modeCatalog.find(x => x.mode === guideMode.value)?.description || ''; await loadGuidedHistory(); }
       if (tab === 'programme') await loadProgramme(); if (tab === 'workflows') await loadWorkflows(); if (tab === 'modules') await loadModules();
     },
-    clear() { guideEpoch++; guided = null; guideDrafts.clear(); guideBody.replaceChildren(); guideHistory.replaceChildren(); guideMode.replaceChildren(); modeCatalog = []; guideDescription.textContent = ""; pending.clear(); drafts.clear(); contextId = null; exercises = []; stories = []; questions = []; prompt = coach = drill = report = programme = editStory = null; coachingForm.reset(); answerForm.reset(); storyForm.reset(); drillForm.reset(); [exerciseInput, storyInput, claimInput, questionInput, promptBox, feedback, history, reportBox, storyList, questionBox, drillResult, programmeBody, workBody, moduleList].forEach(x => x.replaceChildren()); promptBox.hidden = answerForm.hidden = true; }
+    clear() { guideEpoch++; guided = null; guideDrafts.clear(); guideBody.replaceChildren(); guideHistory.replaceChildren(); guideMode.replaceChildren(); modeCatalog = []; guideDescription.textContent = ""; pending.clear(); drafts.clear(); contextId = null; exercises = []; stories = []; questions = []; prompt = coach = drill = report = programme = editStory = null; coachingForm.reset(); answerForm.reset(); storyForm.reset(); drillForm.reset(); [exerciseInput, storyInput, claimInput, questionInput, promptBox, feedback, history, reportBox, deliveryBox, scenarioBox, storyList, questionBox, drillResult, programmeBody, workBody, moduleList].forEach(x => x.replaceChildren()); promptBox.hidden = answerForm.hidden = true; }
   };
 }

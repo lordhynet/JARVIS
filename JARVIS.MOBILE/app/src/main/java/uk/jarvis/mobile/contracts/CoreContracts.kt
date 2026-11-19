@@ -7,15 +7,21 @@ internal object CoreCompanionRoutes {
     const val DEVICES = "/api/devices"
     const val DEVICE_CAPABILITIES = "/api/device-capabilities"
     const val VOICE_PREPARE = "/api/voice/prepare"
+    const val VOICE_HANDOFF = "/api/voice/handoff"
     const val VOICE_WAKE_CANDIDATES = "/api/voice/wake-candidates"
     const val VOICE_TICKETS = "/api/voice/tickets"
     const val VOICE_LOCAL_RELEASE = "/api/voice/local/release"
     const val DEVICE_HEARTBEAT = "/api/devices/{id}/heartbeat"
     const val VOICE_STREAM = "/voice-stream"
+    const val RECORDING_CAPTURE = "/api/recording-capture"
     val getPaths = setOf(PRIVACY_STATUS, VOICE_STATUS, DEVICES, DEVICE_CAPABILITIES)
-    val postPaths = setOf(DEVICES, VOICE_PREPARE, VOICE_WAKE_CANDIDATES, VOICE_TICKETS, VOICE_LOCAL_RELEASE)
+    val postPaths = setOf(DEVICES, VOICE_PREPARE, VOICE_WAKE_CANDIDATES, VOICE_TICKETS, VOICE_LOCAL_RELEASE, RECORDING_CAPTURE, VOICE_HANDOFF)
     val heartbeatPattern = Regex(DEVICE_HEARTBEAT.replace("{id}", "[A-Za-z0-9_-]{1,80}"))
     fun heartbeat(deviceId: String) = DEVICE_HEARTBEAT.replace("{id}", deviceId)
+}
+
+internal object CoreRecordingProtocol {
+    const val CONSENT = "I have told the interviewer, or I am otherwise entitled to record this conversation, and it is for my own practice only."
 }
 
 internal object CoreCompanionHeaders {
@@ -27,6 +33,7 @@ data class AiCapabilityStatus(
     val ready: Boolean = false,
     val model: String = "",
     val detail: String = "",
+    val voiceProtocolVersion: Int = 0,
 )
 
 data class AudioLease(
@@ -34,12 +41,49 @@ data class AudioLease(
     val deviceId: String = "",
     val fence: Long = 0L,
     val expiresAt: String = "",
+    val locked: Boolean = false,
+    val reportedLocked: Boolean? = null,
+)
+
+data class CompanionHandoffItem(
+    val sessionId: String = "",
+    val handoffId: String = "",
+    val fromDeviceId: String = "",
+    val toDeviceId: String = "",
+    val state: HandoffState = HandoffState.Requested,
+    val expiresAt: String = "",
+    val incoming: Boolean = false,
+)
+
+data class CompanionHandoffRequest(
+    val deviceId: String = "",
+    val action: String = "",
+    val sessionId: String? = null,
+    val handoffId: String? = null,
+    val targetDeviceId: String? = null,
+    val requestId: String? = null,
+    val locked: Boolean? = null,
+    val audioStopped: Boolean = false,
+)
+
+data class CompanionHandoffTarget(
+    val deviceId: String = "",
+    val name: String = "",
+    val kind: DeviceKind = DeviceKind.WindowsAgent,
+    val browser: Boolean = false,
+)
+
+data class CompanionHandoffView(
+    val activeSessionId: String? = null,
+    val offers: List<CompanionHandoffItem> = emptyList(),
+    val targets: List<CompanionHandoffTarget> = emptyList(),
 )
 
 data class CompanionVoiceRequest(
     val requestId: String = "",
     val deviceId: String = "",
     val allowCloudProcessing: Boolean = false,
+    val locked: Boolean? = null,
 )
 
 data class CompanionVoiceSession(
@@ -67,6 +111,32 @@ data class DeviceRegistration(
 data class DeviceView(
     val device: RegisteredDevice = RegisteredDevice(),
     val online: Boolean = false,
+    val ownerDisplayName: String = "",
+)
+
+enum class HandoffState { Requested, Checkpointed, TargetReady, AudioTransferred, Completed, TimedOut, Failed }
+
+data class InterviewRecording(
+    val id: String = "",
+    val deviceId: String = "",
+    val title: String = "",
+    val status: String = "",
+    val tracks: List<String> = emptyList(),
+    val preparedAt: String = "",
+    val offerExpiresAt: String = "",
+    val startedAt: String? = null,
+    val stoppedAt: String? = null,
+    val consentAt: String? = null,
+    val audioRetainUntil: String? = null,
+    val deleteAudioAfterTranscription: Boolean = false,
+    val durationSamples: Int = 0,
+    val audioBytes: Long = 0L,
+    val audioDeleted: Boolean = false,
+    val transcriptId: String? = null,
+    val revision: Int = 0,
+    val confirmStorageConsent: Boolean = false,
+    val confirmRecordingAuthorised: Boolean = false,
+    val consentVersion: String? = null,
 )
 
 data class PrivacyStatus(
@@ -75,6 +145,48 @@ data class PrivacyStatus(
     val erased: Boolean = false,
     val erasedAt: String? = null,
     val erasureRequestId: String? = null,
+)
+
+data class RecordingAudioBlock(
+    val recordingId: String = "",
+    val until: String = "",
+)
+
+data class RecordingCaptureOffer(
+    val id: String = "",
+    val status: String = "",
+    val tracks: List<String> = emptyList(),
+    val expiresAt: String = "",
+    val chunkSeconds: Int = 0,
+    val maximumSeconds: Int = 0,
+)
+
+data class RecordingCaptureRequest(
+    val action: String = "",
+    val deviceId: String = "",
+    val recordingId: String? = null,
+    val locked: Boolean? = null,
+    val confirmStorageConsent: Boolean = false,
+    val confirmRecordingAuthorised: Boolean = false,
+    val track: String? = null,
+    val sequence: Int? = null,
+    val sha256: String? = null,
+    val audioBase64: String? = null,
+    val finalCounts: Map<String, Int>? = null,
+    val discontinuous: Boolean = false,
+)
+
+data class RecordingCaptureResult(
+    val ready: Boolean = false,
+    val offers: List<RecordingCaptureOffer> = emptyList(),
+    val recording: InterviewRecording? = null,
+    val acknowledged: List<RecordingChunkAck>? = null,
+)
+
+data class RecordingChunkAck(
+    val track: String = "",
+    val sequence: Int = 0,
+    val sha256: String = "",
 )
 
 data class RegisterDeviceRequest(
@@ -88,12 +200,14 @@ data class RegisteredDevice(
     val registration: DeviceRegistration = DeviceRegistration(),
     val lastSeenAt: String = "",
     val capabilitiesVerified: Boolean = false,
+    val recording: RecordingAudioBlock? = null,
 )
 
 data class VoiceStartRequest(
     val sessionId: String = "",
     val deviceId: String = "",
     val allowCloudProcessing: Boolean = false,
+    val locked: Boolean? = null,
 )
 
 data class VoiceTicket(
@@ -107,6 +221,7 @@ data class WakeCandidateRequest(
     val requestId: String = "",
     val deviceId: String = "",
     val allowCloudProcessing: Boolean = false,
+    val locked: Boolean? = null,
 )
 
 data class WakeCandidateResponse(

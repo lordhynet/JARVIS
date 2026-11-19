@@ -15,7 +15,7 @@ public sealed class OpenAiProvider(ProviderGateway gateway, ManagedAi ai, IAudio
         => await ReplyAsync(session, text, Guid.NewGuid(), ct);
     public async Task<string> ReplyAsync(ConversationSession session, string text, Guid requestId, CancellationToken ct)
     {
-        var input = (session.Messages ?? []).TakeLast(20)
+        var input = (session.Messages ?? []).Where(m => !m.Restricted).TakeLast(20)
             .Select(m => new { role = m.Role, content = m.Text }).ToList();
         input.Add(new { role = ChatRoles.User, content = text });
         var instructions = "You are JARVIS, a practical personal assistant. Be concise. You have no direct tool access. " +
@@ -51,19 +51,57 @@ public sealed class OpenAiProvider(ProviderGateway gateway, ManagedAi ai, IAudio
 
         var reservation = await budget.ReserveAsync(Guid.NewGuid(), Guid.Empty, transcription.Model,
             (decimal)Math.Ceiling(seconds) / 60m * rate * 2m, ai.Limits, ct, UsageLane.Interactive, ProviderIds.OpenAi);
-        using var request = Request("audio/transcriptions", transcription.ApiKey);
-        using var form = new MultipartFormDataContent();
-        form.Add(new StringContent(transcription.Model), "model");
         await using var upload = File.OpenRead(preparedPath);
-        form.Add(new StreamContent(upload), "file", "audio.wav");
+        return await RequestTranscriptAsync(upload, transcription.Model, transcription.ApiKey, ct);
+        }
+        finally { if (preparedPath is not null && preparedPath != path && File.Exists(preparedPath)) File.Delete(preparedPath); if (File.Exists(path)) File.Delete(path); }
+    }
+
+    internal async Task<string> TranscribeVoiceConsentAsync(byte[] pcm, Guid sessionId, Func<CancellationToken, Task<bool>> current,
+        CancellationToken ct)
+    {
+        var transcription = ai.TranscriptionRates();
+        var seconds = (decimal)pcm.Length / VoiceWindowLimits.BytesPerSecond;
+        var reservation = await budget.ReserveAsync(Guid.NewGuid(), sessionId, transcription.Model,
+            decimal.Ceiling(seconds) / 60m * transcription.PerMinute * 2m, ai.Limits, ct, UsageLane.Voice, ProviderIds.OpenAi);
+        try
+        {
+            Guard.Require(await current(ct), 409, "Audio ownership changed before verifying your answer.");
+        }
+        catch
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await budget.SettleAsync(reservation.Id, 0, 0, 0, cleanup.Token);
+            throw;
+        }
+        using var audio = new MemoryStream();
+        AudioDurationProbe.WriteWave(audio, pcm, VoiceWindowLimits.SampleRate);
+        audio.Position = 0;
+        return await RequestTranscriptAsync(audio, transcription.Model, transcription.ApiKey, ct);
+    }
+
+    private async Task<string> RequestTranscriptAsync(Stream audio, string model, string key, CancellationToken ct)
+    {
+        using var request = Request("audio/transcriptions", key);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(model), "model");
+        form.Add(new StreamContent(audio), "file", "audio.wav");
         request.Content = form;
         var result = await gateway.JsonAsync(request, ct);
-        // The full conservative reservation remains committed when granular usage is absent.
+        // Keep the conservative reservation when the provider supplies no granular usage.
         Guard.Require(result.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String,
             502, "Transcription provider returned no text.");
         return text.GetString()!;
-        }
-        finally { if (preparedPath is not null && preparedPath != path && File.Exists(preparedPath)) File.Delete(preparedPath); if (File.Exists(path)) File.Delete(path); }
+    }
+
+    internal async Task<string> TranscribeRecordingPieceAsync(byte[] canonicalWave, Jarvis.Orchestrator.Recordings.RecordingTranscriptionPrice price, CancellationToken ct)
+    {
+        var rate = ai.TranscriptionRates();
+        Guard.Require(rate.Model == price.Model && rate.PerMinute == price.PerMinute, 409, "Reviewed transcription pricing changed before dispatch.");
+        var samples = Jarvis.Orchestrator.Recordings.RecordingAudio.Samples(canonicalWave);
+        Guard.Require(canonicalWave.Length <= 10_000_000 && samples <= 180 * Jarvis.Contracts.RecordingProtocol.SampleRate, 400, "Recording piece exceeds the existing transcription bound.");
+        using var audio = new MemoryStream(canonicalWave, writable: false);
+        return await RequestTranscriptAsync(audio, rate.Model, rate.ApiKey, ct);
     }
 
     private HttpRequestMessage Request(string path, string apiKey)

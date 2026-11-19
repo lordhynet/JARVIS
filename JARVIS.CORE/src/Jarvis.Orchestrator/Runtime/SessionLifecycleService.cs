@@ -34,18 +34,24 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
     public async Task<ConversationSession> StartAsync(Guid id, StartHandoffRequest request, CancellationToken ct)
     {
         var summary = Guard.Text(request.Summary, "Summary", 4000);
+        Guard.Require(request.RequestId is null || request.RequestId != Guid.Empty, 400, "Use a nonempty handoff operation ID.");
+        var hash = PrivacyData.Hash(System.Text.Json.JsonSerializer.Serialize(new { request.FromDeviceId, request.ToDeviceId, summary }));
         Guard.Require(request.FromDeviceId != request.ToDeviceId, 400, "Choose a different target device.");
         return await Change(id, s =>
         {
+            if (request.RequestId is { } operation && s.Handoff?.Id == operation) {
+                Guard.Require(s.Handoff.RequestHash == hash, 409, "Handoff operation ID was reused."); return s;
+            }
             Guard.Require(s.Status == SessionStatus.Active && s.ActiveDeviceId == request.FromDeviceId,
                 409, "Only the active device can start a handoff.");
             Guard.Require(!Pending(s.Handoff), 409, "A handoff is already pending.");
+            Guard.Require(s.Checkpoints.Count < 2000, 409, "Conversation checkpoint capacity reached.");
             var now = clock.GetUtcNow();
             return s with
             {
                 Checkpoints = [.. s.Checkpoints, new(Guid.NewGuid(), id, s.Checkpoints.Count + 1, summary, s.CurrentTask, now)],
-                Handoff = new(Guid.NewGuid(), request.FromDeviceId, request.ToDeviceId,
-                    HandoffState.Checkpointed, now, now.AddSeconds(30))
+                Handoff = new(request.RequestId ?? Guid.NewGuid(), request.FromDeviceId, request.ToDeviceId,
+                    HandoffState.Checkpointed, now, now.AddSeconds(30), request.RequestId is null ? null : hash)
             };
         }, "handoff.checkpointed", ct, state =>
         {
@@ -65,6 +71,7 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
             if (action == "cancel")
             {
                 Guard.Require(request.DeviceId == h.FromDeviceId || request.DeviceId == h.ToDeviceId, 403, "Device is not part of this handoff.");
+                if (h.State == HandoffState.Failed) return s;
                 Guard.Require(Pending(h), 409, "Handoff is already finished.");
                 return s with { Handoff = h with { State = HandoffState.Failed } };
             }
@@ -77,6 +84,7 @@ public sealed class SessionLifecycleService(ISessionStore store, DeviceService d
             };
             Guard.Require(request.DeviceId == device, 403, "Wrong device for this handoff action.");
             if (h.State == next) return s; // Retrying an acknowledged step is harmless.
+            if (h.State == HandoffState.Completed && action is "ready" or "release" || h.State == HandoffState.AudioTransferred && action == "ready") return s;
             Guard.Require(h.State == expected, 409, "Handoff steps must run in order.");
             return s with
             {

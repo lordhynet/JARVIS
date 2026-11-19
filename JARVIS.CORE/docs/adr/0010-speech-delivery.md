@@ -1,0 +1,11 @@
+# Core speech delivery metrics
+
+SpeechDelivery reuses TextCoach's lexical counts for unrestricted canonical user VoiceTurns. It computes duration-weighted words/minute, filler candidates, I/we counts and a simple English point-first opening heuristic. Per-turn and per-session trends are private owner queries. Assistant, restricted and retired-session turns are excluded. Typed answers or missing durations never receive invented timing.
+
+Realtime speech_started/speech_stopped supply an interval within the provider's input PCM timeline. Core keeps a window-local bounded copy of accepted 24 kHz mono s16le input, analyses that range locally, and clears the buffer on shutdown. No raw audio is persisted or exported. Incomplete/out-of-range capture, all-quiet input or an unavailable interval yields no pause metric. Locked windows are not measured.
+
+The interval mapping follows the [official Realtime server-events reference](https://developers.openai.com/api/reference/resources/realtime/server-events): speech-start offsets refer to audio written during the session and include configured prefix padding. Quiet-frame trimming handles padding conservatively. No live provider was queried to verify it.
+
+The quiet-audio heuristic uses 20 ms RMS frames below a fixed normalized 0.012 threshold. Only internal quiet runs of at least 13 frames (260 ms) count; leading/trailing quiet frames do not. Pause ratio is those quiet seconds divided by the captured range duration. This is a reproducible signal heuristic, not a diagnosis, emotional/confidence inference or independently verified acoustic speech segmentation. The dashboard states its limits. Inter-speaker/session timestamp gaps are never used as pauses.
+
+Optional immutable timing metadata follows the canonical ChatMessage/VoiceTurn within D2, shares its source hash, retention and erasure, and rejects conflicting replay or invalid/nonfinite ranges. Null metadata is omitted individually so existing canonical bytes and source hashes remain compatible. Old turns still have lexical/duration metrics with pause timing unavailable. No provider/model/price change, new dependency or extra cloud call is introduced. Fixed PCM/transcript tests are synthetic; hardware accuracy is unclaimed.

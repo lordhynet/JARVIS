@@ -24,6 +24,38 @@ async function connect(page) {
   await page.goto('/'); await page.getByLabel('API key', { exact: true }).fill(key); await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
   await page.getByRole('button', { name: 'Connect', exact: true }).click(); await expect(page.locator('#workspace')).toBeVisible();
 }
+test('AI workflows show voice mode estimates and actual model usage', async ({ page }) => {
+  await page.route('**/api/voice/modes', route => route.fulfill({ json: { modes: [
+    { mode: 'Everyday', pricingReady: true, model: 'gpt-realtime-2.1-mini', maximumGbpForTenMinutes: 1.12 },
+    { mode: 'Serious', pricingReady: false, detail: 'Serious voice is disabled.' }
+  ] } }));
+  await page.route('**/api/budget/status', route => route.fulfill({ json: { voiceUsage: [
+    { mode: 'Everyday', model: 'gpt-realtime-2.1-mini', reservedGbp: 0.60, accountedGbp: 0.03 }
+  ] } }));
+  await connect(page);
+  await page.getByRole('button', { name: 'AI workflows', exact: true }).click();
+  const card = page.locator('[data-panel=workflows] .list-item').filter({ has: page.getByRole('heading', { name: 'Live voice budget' }) });
+  await expect(card).toContainText('Everyday · gpt-realtime-2.1-mini · up to £1.12 reserved for ten minutes');
+  await expect(card).toContainText('Serious voice is disabled.');
+  await expect(card).toContainText('Everyday · gpt-realtime-2.1-mini · £0.03 accounted');
+});
+test('shows the last FX quote and refresh failure in AI workflows', async ({ page }) => {
+  await page.route('**/api/budget/status', route => route.fulfill({ json: {
+    detail: 'A current quote is required.',
+    conversionBasis: { fxStatus: {
+      lastAcceptedQuote: { source: 'ECB reference fixture', observedAt: new Date(Date.now() - 25 * 3600000).toISOString() },
+      manualQuoteIgnored: true,
+      lastError: 'The ECB feed did not return a successful response.'
+    } }
+  } }));
+  await connect(page);
+  await page.getByRole('button', { name: 'AI workflows', exact: true }).click();
+  const rate = page.locator('[data-panel=workflows] .list-item').filter({ has: page.getByRole('heading', { name: 'Budget exchange rate' }) });
+  await expect(rate).toContainText('ECB reference fixture · observed 25 h ago');
+  await expect(rate).toContainText('Last automatic refresh failed.');
+  await expect(rate).toContainText('A current quote is required.');
+  await expect(rate).toContainText('Core ignored the malformed manual exchange rate.');
+});
 test('coaching saves, corrects and reviews a canonical session without a provider key', async ({ page }) => {
   await connect(page); await page.getByRole('button', { name: 'Coaching', exact: true }).click();
   const panel = page.locator('[data-panel=coaching]'); await panel.getByLabel('Exercise', { exact: true }).selectOption('point-first');
@@ -70,7 +102,9 @@ test('programme check-ins are explicit self reports and module status does not i
   if (await check.isVisible()) { await panel.getByLabel('Weekly reflection · optional').fill('Practised one concrete answer.'); await check.click(); }
   await expect(panel).toContainText('1 weekly self check-ins');
   await page.getByRole('button', { name: 'All modules', exact: true }).click(); const modules = page.locator('[data-panel=modules]');
-  await modules.getByText('Research & review specialists · Incremental', { exact: true }).click(); await expect(modules).toContainText('Pending: Claim-level source evidence');
+  await modules.getByText('Research & review specialists · Incremental', { exact: true }).click();
+  await expect(modules).toContainText('Available: Claim-level source mappings and citation coverage validation');
+  await expect(modules).toContainText('Pending: Independent source verification');
   await page.getByRole('button', { name: 'Connections', exact: true }).click(); await page.getByRole('button', { name: 'Disconnect this tab' }).click();
   await expect(page.locator('#workspace')).toBeHidden(); expect(await page.evaluate(() => document.body.textContent.includes('Practised one concrete answer.'))).toBeFalsy();
 });

@@ -109,9 +109,11 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
     public async Task<ConversationSession?> GetAsync(Guid id, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
-        var row = await db.Sessions.AsNoTracking().Include(s => s.Checkpoints)
+        // Split query: a joined include repeats the whole MessagesJson once per checkpoint, and voice preparation
+        // appends a checkpoint every time, so long-lived sessions grew slower with each conversation.
+        var row = await db.Sessions.AsNoTracking().Include(s => s.Checkpoints).AsSplitQuery()
             .SingleOrDefaultAsync(s => s.Id == id, ct);
         var result = row?.ToContract(); await tx.CommitAsync(ct); return result;
     }
@@ -119,9 +121,9 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
     public async Task<IReadOnlyList<ConversationSession>> ListAsync(CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
-        var rows = await db.Sessions.AsNoTracking().Include(s => s.Checkpoints)
+        var rows = await db.Sessions.AsNoTracking().Include(s => s.Checkpoints).AsSplitQuery()
             .OrderByDescending(s => s.UpdatedAt).ThenBy(s => s.Id).ToListAsync(ct);
         var result = rows.Select(s => s.ToContract()).ToList(); await tx.CommitAsync(ct); return result;
     }
@@ -165,18 +167,23 @@ public sealed class PostgresSessionStore(IDbContextFactory<SessionDbContext> fac
         await db.Entry(row).Collection(s => s.Checkpoints).LoadAsync(ct);
         var current = row.ToContract();
         var updated = update(current);
+        foreach (var checkpoint in row.Checkpoints.Where(c => updated.Checkpoints.All(keep => keep.Id != c.Id)).ToArray()) {
+            row.Checkpoints.Remove(checkpoint); db.Checkpoints.Remove(checkpoint);
+        }
         foreach (var checkpoint in updated.Checkpoints.Where(c => row.Checkpoints.All(old => old.Id != c.Id)))
         {
             var added = CheckpointRow.FromContract(checkpoint);
             row.Checkpoints.Add(added);
             db.Checkpoints.Add(added);
         }
+        row.Title = updated.Title;
         row.CurrentTask = updated.CurrentTask;
         row.Status = updated.Status;
         row.ActiveDeviceId = updated.ActiveDeviceId;
         row.HandoffJson = updated.Handoff is null ? null : JsonSerializer.Serialize(updated.Handoff);
         row.MessagesJson = JsonSerializer.Serialize(updated.Messages ?? []);
         row.PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(updated.PendingVoiceProjectionIds ?? []);
+        row.VoiceSummaryJson = updated.VoiceSummary is null ? null : JsonSerializer.Serialize(updated.VoiceSummary);
         row.UpdatedAt = SessionRow.DatabaseTimestamp(updated.UpdatedAt);
         await db.SaveChangesAsync(ct);
         return (current, row.ToContract());

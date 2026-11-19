@@ -184,6 +184,7 @@ The fixed realtime tool `core_recall` accepts `{ action, utterance_id, rating }`
 ## GBP budget API (additive)
 
 - `GET /api/budget/status`: Core-authenticated GBP readiness, scope/environment/month, ceiling, committed amount, unclassified legacy count, policy/conversion hashes, revision, approvals and public conversion basis. USD daily/month/lane checks remain additional restrictions. These are conservative normalized GBP amounts, not a claim of verified final card/invoice FX charges.
+- The conversion basis includes the effective FX quote and automatic refresh status. `fxStatus` reports whether refresh is enabled, whether the automatic quote is in use, the last accepted automatic quote and the last attempt or error. ECB quotes include their publication date.
 - `POST /api/budget/approvals`: owner-only `BudgetApprovalRequest { requestId, policyHash, month, ceilingGbp, expiresAt, expectedRevision, confirmation }`; exact confirmation `APPROVE MONTHLY AI CEILING`. Preview current status first. Approval is a total ceiling, not an increment; only current production month, >£100 and ≤£200.
 - `POST /api/budget/approvals/{id}/revoke`: owner-only `{ requestId, expectedRevision, confirmation: "REVOKE AI CEILING APPROVAL" }`. Revocation blocks further authority but never refunds committed charges.
 - `GET /api/budget/legacy/{id}/preview`: owner-only read of original USD amount, proposed frozen GBP commitment and conversion hash; does not assign or forgive any charge.
@@ -222,3 +223,38 @@ Sensitive routes now additionally require `X-Jarvis-Owner-Key`: privacy export/e
 New owner routes: `POST /api/devices/{id}/credential` issues/rotates a companion secret for an existing registration; `DELETE` revokes it. The POST returns `{ deviceId, secret }` once per issuance. Rotation/revocation invalidate the device's active lease and pending tickets. Enrolled active registrations cannot be overwritten; revoke before changing their capabilities.
 
 A companion sends its secret using the existing `X-Jarvis-Key` header. It can only read `/api/privacy/status`, `/api/voice/status`, and its filtered `/api/devices`; send its own heartbeat; prepare its own voice conversation and obtain its own voice tickets. Every other API/hub route is denied, even when a companion supplies an owner header. Request-body device identity must match the authenticated device. No arbitrary grants or roles can be supplied by a client. Existing voice WebSocket tickets remain short-lived and single-use.
+
+## Windows locked voice boundary (Item 15a)
+
+Voice ticket and wake-candidate admission accept optional `locked: true|false`. Native Windows registrations (`WindowsAgent`) without a lock report are restricted. Historical desktop browsers also use that kind; their existing Core registration must have both `hasDisplay: true` and the `browser-companion` tag to retain the browser default. This exemption cannot be asserted in a heartbeat. Existing Android clients retain their supported default. The request's device ID must still match the authenticated companion and the existing audio claim.
+
+WebSocket heartbeat example: `{ "type": "heartbeat", "sequence": 1, "locked": true }`. Windows clients must report lock state on each heartbeat. Missing state is restricted; non-boolean values are refused. A lease now also returns optional-compatible `locked` and nullable `reportedLocked` metadata. These fields are server-owned. Echoing a different value in an old lease cannot relax policy or bypass its session/device/fence checks.
+
+An unlock report is applied only when Core activates the next window. A newly reported lock during a window that already received personal context ends the connection with code/reason `device_locked`; the client stops audio and returns to local listening. A later consented claim starts a restricted stream. Core does not replay the previous paid request.
+
+Locked windows receive no saved conversation/task/practice context or private persona. Personal tools are neither advertised nor executable. The installed home tool uses only effective grants explicitly carrying `allowWhenLocked: true`. This flag is optional/default false on grant requests and views, is audited with the existing grant, and cannot be changed by reusing a grant request ID. It does not replace pre-approval or sensitive-action owner confirmation. Existing grants remain false after migration.
+
+Terminal budget failures retain their error detail and emit a specific ended reason: `serious_daily_cap` or `gbp_budget_ceiling`. A successful retry after the previous window settles remains permitted by the existing accounting rules.
+
+See [the locked voice ADR](adr/0004-locked-voice-boundary.md). See the Windows companion sources and ADRs 0014/0015 for the implemented public travel tool and bounded alerts.
+
+## Saved London routes and public travel
+
+All /api/travel endpoints require the existing Owner policy. Native companion credentials cannot edit routes or invoke simulation.
+
+| Method | Route | Result |
+|---|---|---|
+| GET | /api/travel/routes | Saved route records and revisions |
+| GET | /api/travel/lines | Daily-cached public TfL line catalogue |
+| POST | /api/travel/routes | Create using SaveTravelRouteRequest; requestId is also the stable new route ID |
+| PUT | /api/travel/routes/{id} | Update with expectedRevision and a fresh requestId |
+| DELETE | /api/travel/routes/{id}?revision=1 | Delete the matching revision and expire its outstanding travel notices |
+| POST | /api/travel/simulate | Explicit non-Production owner simulation only |
+
+SaveTravelRouteRequest carries requestId, expectedRevision (null for create), name, lineIds, optional stopIds, windows, enabled and timeZone=Europe/London. Each window has days (weekday names), start and end in HH:mm. Start weekdays own overnight windows. Limits are ten routes, twelve lines/stops per route and eight windows. Retrying unchanged input with the same requestId is idempotent; different input or a stale revision returns 409. Public line/stop metadata is validated upstream without exposing the private route name.
+
+Simulation body: { "requestId": "a fresh UUID", "lineId": "jubilee", "state": "severe" }. Allowed states are good, minor, severe and suspended. The saved line must currently be inside its route window. Two distinct requests are required to confirm a new state; exact replay is not a second observation. Results contain replayed and notificationIds. Fixed synthetic summaries are labelled Simulation. Travel:AllowSimulation must be true and Production always returns 403. Do not use simulation as a Production smoke test.
+
+The code-owned core_travel voice tool supports read-only status and arrivals. It accepts route/line/stop selectors, hides saved route names while locked, and caps saved-stop arrivals at five. It cannot edit, book or send arbitrary URLs. Browser editing is in Daily briefing; native Android remains audio-only. See ADRs 0014 and 0015 and the draft 0.3 release notes for monitoring, privacy, freshness and rollback.
+
+Round-3 privacy correction: while locked, core_travel accepts status only for a public line explicitly named by the speaker. It refuses saved route selectors, implicit saved-route status and all saved-stop arrivals, and locked windows receive no saved-route alert context.

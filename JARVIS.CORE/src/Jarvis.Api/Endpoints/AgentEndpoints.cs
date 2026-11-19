@@ -11,6 +11,10 @@ public static class AgentEndpoints
     public static void MapAgentEndpoints(this WebApplication app)
     {
         var api = app.MapGroup("/api").RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);
+        app.MapPost(CoreRoutes.IntelligenceEvaluations, (Jarvis.Orchestrator.Intelligence.RunIntelligenceEvaluationRequest request, HttpContext context,
+            Jarvis.Api.Security.OwnerAuthorization owner, ICommandHandler<RunIntelligenceEvaluation, Jarvis.Orchestrator.Intelligence.IntelligenceEvaluationReport> handler, CancellationToken ct) =>
+            handler.HandleAsync(new(request, owner.Require(context, Jarvis.Orchestrator.Intelligence.IntelligenceEvaluation.ManageScope)), ct))
+            .RequireAuthorization(Jarvis.Api.Security.CorePolicies.IntelligenceEvaluate);
         api.MapPost("/agents/calendar/sync", (CalendarTriggerSync sync, CancellationToken ct) => sync.SyncAsync(ct));
         api.MapGet("/goals", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.Goals.Values.Where(g => g.Status != GoalStatus.Deleted).OrderBy(g => g.NextReviewAt).ToList(), ct));
         api.MapPost("/goals", (SaveGoalRequest request, ICommandHandler<SaveAgentGoal, PersonalGoal> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));
@@ -25,6 +29,23 @@ public static class AgentEndpoints
         api.MapGet("/agents/catalog", async (Jarvis.Orchestrator.Domains.IWorkflowCatalog catalog, CancellationToken ct) =>
             (await catalog.ListAsync(ct)).Select(x => new { x.Key, x.RequiresCloud, x.UsesPersonalContext, x.Deterministic, x.DomainKey, x.DomainVersion }).ToArray());
         api.MapGet("/agents/controls", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.AgentControls, ct));
+        api.MapGet("/agents/specialists", (AgentSpecialistCatalog catalog) => catalog.Installed);
+        api.MapGet("/agents/actions", (AgentActionService actions, CancellationToken ct) => actions.ListAsync(ct));
+        api.MapGet("/agents/tool-grants", (IRuntimeReader store, CancellationToken ct) => store.ReadAsync(s => s.AgentToolGrants.Values.ToArray(), ct));
+        api.MapPost("/agents/runs/{id:guid}/tool-grants", (Guid id, GrantAgentToolRequest request, HttpContext context,
+            Jarvis.Api.Security.OwnerAuthorization owner, AgentToolGateway gateway, CancellationToken ct) => gateway.GrantAsync(request.RequestId, id,
+                request.CapabilityId, request.MaximumUsd, request.MaximumCalls, request.PreApproved, owner.Require(context, AgentToolGateway.ManageScope), ct))
+            .RequireAuthorization("CoreOwnerStepUp:" + AgentToolGateway.ManageScope);
+        api.MapDelete("/agents/tool-grants/{id:guid}", (Guid id, HttpContext context, Jarvis.Api.Security.OwnerAuthorization owner,
+            AgentToolGateway gateway, CancellationToken ct) => gateway.RevokeAsync(id, owner.Require(context, AgentToolGateway.ManageScope), ct))
+            .RequireAuthorization("CoreOwnerStepUp:" + AgentToolGateway.ManageScope);
+        api.MapPost("/agents/actions/{id:guid}/approve", async (Guid id, ConfirmAgentActionRequest request, HttpContext context,
+            Jarvis.Api.Security.OwnerAuthorization owner, AgentActionService actions, CancellationToken ct) => {
+                await actions.ApproveAsync(id, request.ArgumentsHash, owner.Require(context, AgentToolGateway.ManageScope), ct); return Results.NoContent();
+            }).RequireAuthorization("CoreOwnerStepUp:" + AgentToolGateway.ManageScope);
+        api.MapPost("/agents/runs/{id:guid}/retry", (Guid id, RetryAgentRunRequest request, AgentRuntime runtime, CancellationToken ct) => runtime.RetryAsync(id, request, ct));
+        api.MapPost("/agents/runs/{id:guid}/release", (Guid id, HttpContext context, Jarvis.Api.Security.OwnerAuthorization owner, AgentRuntime runtime, CancellationToken ct) =>
+            runtime.ReleaseSetupAsync(id, owner.Require(context, AgentToolGateway.ManageScope), ct)).RequireAuthorization("CoreOwnerStepUp:" + AgentToolGateway.ManageScope);
         api.MapPut("/agents/controls", (AgentControls request, ICommandHandler<UpdateAgentControls, AgentControls> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));
         api.MapGet("/agents/schedules", (IRuntimeReader s, CancellationToken ct) => s.ReadAsync(x => x.AgentSchedules.Values.OrderBy(y => y.CreatedAt).ToList(), ct));
         api.MapPost("/agents/schedules", (SaveAgentScheduleRequest request, ICommandHandler<SaveAgentSchedule, AgentSchedule> handler, CancellationToken ct) => handler.HandleAsync(new(request), ct));

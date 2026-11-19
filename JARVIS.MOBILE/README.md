@@ -1,10 +1,12 @@
 # JARVIS audio-only Android companion
 
-Version 0.10.2 continues the earbuds-first audio interface with bounded transport recovery. Core owns conversations, memory, practice, CVs, goals, stories and tools. Android handles secure connection, microphone/playback, permissions and start/stop; there are no native feature dashboards or editors.
+Version 0.10.3 supports system-trusted HTTPS for pairing links that name a DNS host. Core owns conversations, memory, practice, CVs, goals, stories and tools. Android handles secure connection, microphone, playback, permissions and start/stop.
 
-Build with JDK 17 and `./build.ps1 -Clean`. This builds, runs JVM tests/lint and verifies the signed `../artifacts/JARVIS-Android-0.10.2.apk`. Pinned tools are in `../.tools`.
+Build with JDK 17 and `./build.ps1 -Clean`. This builds, runs JVM tests and lint, and verifies the signed `../artifacts/JARVIS-Android-0.10.3.apk`. Pinned tools are in `../.tools`.
 
 Install through authorized ADB: `adb -s <serial> install -r <apk>`. From Core use `./scripts/connect-android.ps1 -Device <serial>`, then accept Connect to my Core. Provider credentials stay on Core.
+
+Pairing links for a DNS host can use the Android system certificate store. Links for IP addresses and localhost require a certificate fingerprint. A pinned connection is confirmed against its saved certificate and asks you to re-pair if the fingerprint changes.
 
 Physically check microphone and earbuds, confirm the check in settings, grant permissions and consent to provider processing before starting. Core prepares/resumes its canonical conversation. Headset Pause/Stop ends voice; Next interrupts the reply. Start is an explicit screen gesture.
 
@@ -15,3 +17,8 @@ Earlier rich-client source is archived outside the build in `legacy-rich-client-
 Transport recovery uses a fresh Core ticket, bounded delays of 1/2/4/8/8 seconds, and no replay of microphone audio. An unacknowledged old lease drains before retry. Permission, ownership, credential, consent and budget rejections stop recovery. Capture closes between windows, and playback queues at most twenty seconds of PCM. API29/30 Bluetooth SCO is explicitly selected when a Bluetooth output is present. Real network-toggle, screen-off, incoming-call and earbud acceptance remains unverified; automated tests do not establish it.
 
 Core participates in an incoming handoff when you explicitly start voice on the target phone. It marks the target ready, waits for the source to acknowledge stopped audio, and completes the transfer using the existing conversation. If the source does not release, Core refuses the start; the phone does not steal the session.
+## Conversation transfers
+
+With a matching Core, use **Continue on another device** during live voice to choose an online peer. To receive a move, open **Continue on phone?**, unlock, and tap **Accept and continue** (normal cloud voice consent), or **Decline**. The source stops audio before Core lets this phone speak. The phone keeps transport IDs only; conversation state stays in Core.
+
+Offers are polled while the connected app is visible or owner-enabled local wake/live voice is already running. A fully stopped background app must be reopened; this is not a new push or background microphone service. Permissions, Core budgets, the existing 30-second handoff expiry and recording exclusions still apply. Hardware acceptance is pending; unsigned builds are not installation approval.

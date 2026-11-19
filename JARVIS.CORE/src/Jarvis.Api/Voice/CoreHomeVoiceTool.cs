@@ -37,7 +37,8 @@ public sealed class CoreHomeVoiceTool(IRuntimeReader runtime, DeviceGrantService
             }, token);
             var spoken = turn is null ? null : HomeVoiceRequest.Parse(turn.Text, action);
             var deviceId = await adapter.VoiceExecutorIdAsync(token);
-            var targets = await TargetsAsync(deviceId, capability, token);
+            var locked = await runtime.ReadAsync(s => VoiceAccessRules.ToolRestricted(s, sessionId), token);
+            var targets = await TargetsAsync(deviceId, capability, locked, token);
             if (turn is null || spoken is null)
                 return new
                 {
@@ -62,14 +63,16 @@ public sealed class CoreHomeVoiceTool(IRuntimeReader runtime, DeviceGrantService
             Guard.Require(grant is not null, 403, "The requested setting is outside the owner's Home Assistant grant.");
             var expires = turn.At.AddMinutes(2);
             if (grant.ExpiresAt < expires) expires = grant.ExpiresAt;
-            Guard.Require(currentAudio is not null && await currentAudio(token), 409, "The voice window no longer owns audio.");
+            async Task<bool> AuthorizedAudio(CancellationToken check) => currentAudio is not null && await currentAudio(check) &&
+                await runtime.ReadAsync(s => !VoiceAccessRules.ToolRestricted(s, sessionId) || grant.AllowWhenLocked, check);
+            Guard.Require(await AuthorizedAudio(token), 409, "The voice window no longer owns permitted audio.");
             var proposal = await commands.ProposeAsync(deviceId, new(id, grant.Id, arguments, expires), token);
             if (proposal.Status == DeviceCommandStatus.AwaitingConfirmation)
                 return new { status = "awaiting_confirmation", commandId = id, name = target.Label,
                     detail = "The owner can review the exact request in the Core dashboard's Tools tab." };
 
             if (proposal.Status == DeviceCommandStatus.Pending && !BuiltInDeviceCapabilities.IsSensitiveHomeAssistant(spoken.Capability))
-                await adapter.ExecuteVoiceCommandAsync(id, currentAudio, token);
+                await adapter.ExecuteVoiceCommandAsync(id, AuthorizedAudio, token);
             var stored = await commandReader.GetAsync(id, token);
             var recorded = await receipts.ListAsync(id, token);
             if (stored?.Status == DeviceCommandStatus.Succeeded && recorded.Any(x => x.Kind == DeviceReceiptKind.Succeeded && !x.Late))
@@ -82,13 +85,13 @@ public sealed class CoreHomeVoiceTool(IRuntimeReader runtime, DeviceGrantService
         { throw new DomainException(502, "Home Assistant did not confirm the result. Check the device before trying again."); }
     }
 
-    private async Task<Target[]> TargetsAsync(string deviceId, string? capability, CancellationToken ct)
+    private async Task<Target[]> TargetsAsync(string deviceId, string? capability, bool locked, CancellationToken ct)
     {
         var allowed = config.GetSection("HomeAssistant:AllowedEntities").Get<string[]>() ?? [];
         var aliases = config.GetSection("HomeAssistant:Aliases").GetChildren().ToArray();
         var rows = await grants.ListAsync(deviceId, ct);
         var entities = new Dictionary<string, List<DeviceCapabilityGrantView>>(StringComparer.Ordinal);
-        foreach (var grant in rows.Where(g => g.Effective && BuiltInDeviceCapabilities.IsHomeAssistant(g.CapabilityId, g.CapabilityVersion) &&
+        foreach (var grant in rows.Where(g => g.Effective && (!locked || g.AllowWhenLocked) && BuiltInDeviceCapabilities.IsHomeAssistant(g.CapabilityId, g.CapabilityVersion) &&
             (capability is null || g.CapabilityId == capability))
             .OrderByDescending(g => g.PreApproved).ThenByDescending(g => g.ExpiresAt).ThenBy(g => g.Id))
         {

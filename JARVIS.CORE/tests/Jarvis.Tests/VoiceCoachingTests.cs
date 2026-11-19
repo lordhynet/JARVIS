@@ -93,6 +93,7 @@ public sealed class VoiceCoachingTests
     {
         var id = Guid.NewGuid(); var now = DateTimeOffset.UtcNow;
         await services.GetRequiredService<ISessionStore>().AddAsync(new(id, ActivityType.General, "Coaching fixture", SessionStatus.Active, null, null, now, now, []));
+        await VoiceToolFixture.OpenAsync(services, id);
         return id;
     }
     private static async Task<Guid> Say(IServiceProvider services, Guid session, string text, string role = "user")
@@ -169,7 +170,7 @@ public sealed class VoiceCoachingTests
         await Run(service, session, "stop", answer);
         await store.UpdateAsync(s => {
             Assert.Empty(PrivacyData.EmptyAfterErase(s).VoiceCoachings);
-            PrivacyData.RetainRuntime(s, new(), now.AddDays(31), new([], [], [], [], [], [], [], []));
+            PrivacyData.RetainRuntime(s, new(), now.AddDays(31), new([], [], [], [], [], [], [], [], []));
             return true;
         });
         Assert.Empty(await store.ReadAsync(s => s.VoiceCoachings));

@@ -1,46 +1,80 @@
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Intelligence;
 
 namespace Jarvis.Orchestrator.Runtime;
 
 public static class VoiceTranscriptRules
 {
-    public static void Validate(VoiceTurn turn) => Guard.Require(turn.Id != Guid.Empty && turn.SessionId != Guid.Empty &&
+    public static void Validate(VoiceTurn turn) {
+        Guard.Require(turn.Id != Guid.Empty && turn.SessionId != Guid.Empty &&
         turn.Role is ChatRoles.User or ChatRoles.Assistant && turn.Text is { Length: > 0 and <= 8000 } &&
         (turn.SpeechSeconds is null || double.IsFinite(turn.SpeechSeconds.Value) && turn.SpeechSeconds is >= 0 and <= 180), 400, "Invalid bounded voice transcript.");
+        Guard.Require(turn.Timing is null || turn.Role == ChatRoles.User, 400, "Only captured user audio has delivery timing.");
+        Jarvis.Orchestrator.Coaching.SpeechDelivery.ValidateTiming(turn.Timing, turn.SpeechSeconds);
+    }
     public static void Publish(RuntimeState state, VoiceTurn turn)
     {
         Validate(turn); Guard.Require(!state.RetiredSessions.Contains(turn.SessionId), 409, "Session was retired.");
         if (state.VoiceTurns.TryGetValue(turn.Id, out var previous)) {
-            Guard.Require(previous.SessionId == turn.SessionId && previous.Role == turn.Role && previous.Text == turn.Text && previous.SpeechSeconds == turn.SpeechSeconds,
+            Guard.Require(previous.SessionId == turn.SessionId && previous.Role == turn.Role && previous.Text == turn.Text && previous.SpeechSeconds == turn.SpeechSeconds && previous.Restricted == turn.Restricted && previous.Timing == turn.Timing,
                 409, "Voice transcript ID was reused."); return;
         }
         state.VoiceTurns.Add(turn.Id, turn);
     }
-    public static VoiceTurn Turn(Guid sessionId, ChatMessage message) => new(message.RequestId, sessionId, message.Role, message.Text, message.SpeechSeconds, message.At);
+    public static VoiceTurn Turn(Guid sessionId, ChatMessage message) => new(message.RequestId, sessionId, message.Role, message.Text, message.SpeechSeconds, message.At, message.Restricted, message.Timing);
 }
 
 public sealed class VoiceTranscriptService(ICoreTransaction transaction, TimeProvider clock)
 {
-    public async Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, CancellationToken ct)
+    public Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, CancellationToken ct, bool restricted = false, SpeechTiming? timing = null) =>
+        RecordAsync(sessionId, id, role, text, speechSeconds, clock.GetUtcNow(), null, restricted, timing, ct);
+
+    public Task RecordFallbackAsync(AudioLease lease, Guid captureId, DateTimeOffset promptedAt, DateTimeOffset capturedAt,
+        string text, CancellationToken ct)
     {
-        var now = clock.GetUtcNow(); now = new(now.UtcTicks - now.UtcTicks % 10, TimeSpan.Zero);
-        var turn = new VoiceTurn(id, sessionId, role, text, speechSeconds, now); VoiceTranscriptRules.Validate(turn);
+        Guard.Require(capturedAt > promptedAt && capturedAt <= clock.GetUtcNow() && VoiceModePolicy.ConfirmsEveryday(text),
+            409, "A fresh spoken yes is required to continue in Everyday voice.");
+        return RecordAsync(lease.SessionId, captureId, ChatRoles.User, text, null, capturedAt, lease, lease.Locked, null, ct);
+    }
+
+    private async Task RecordAsync(Guid sessionId, Guid id, string role, string text, double? speechSeconds, DateTimeOffset at,
+        AudioLease? fallbackLease, bool sourceRestricted, SpeechTiming? timing, CancellationToken ct)
+    {
+        at = new(at.UtcTicks - at.UtcTicks % 10, TimeSpan.Zero);
+        var turn = new VoiceTurn(id, sessionId, role, text, speechSeconds, at, Timing: timing);
+        VoiceTranscriptRules.Validate(turn);
         await transaction.ExecuteAsync(async writes =>
         {
+            var restricted = sourceRestricted || VoiceAccessRules.Restricted(writes.Runtime, sessionId);
+            if (fallbackLease is not null)
+            {
+                var state = writes.Runtime;
+                Guard.Require(AudioFenceChanges.Matches(fallbackLease, state.AudioLease) && state.AudioLease!.ExpiresAt > clock.GetUtcNow() &&
+                    !state.AgentControls.EffectivePaidAiPaused, 409, "Audio ownership changed before confirming Everyday voice.");
+                Guard.Require(!state.VoiceTurns.ContainsKey(id), 409, "This spoken confirmation was already used.");
+            }
             var session = await writes.UpdateSessionAsync(sessionId, current =>
             {
+                if (fallbackLease is not null)
+                    Guard.Require(current.Status == SessionStatus.Active && current.ActiveDeviceId == fallbackLease.DeviceId,
+                        409, "Session audio ownership changed.");
                 var previous = current.Messages?.SingleOrDefault(m => m.RequestId == id);
                 if (previous is not null)
                 {
-                    Guard.Require(previous.Role == role && previous.Text == text && (!previous.IsVoice || previous.SpeechSeconds == speechSeconds),
+                    Guard.Require(fallbackLease is null, 409, "This spoken confirmation was already used.");
+                    Guard.Require(previous.Role == role && previous.Text == text && (!previous.IsVoice || previous.SpeechSeconds == speechSeconds && previous.Restricted == restricted && previous.Timing == timing),
                         409, "Transcript ID was reused.");
-                    return previous.IsVoice ? current : current with
+                    return previous.IsVoice ? current : VoiceConversationMemory.RefreshSummary(current with
                     {
-                        Messages = current.Messages!.Select(m => m.RequestId == id ? m with { IsVoice = true, SpeechSeconds = speechSeconds } : m).ToArray()
-                    };
+                        Messages = current.Messages!.Select(m => m.RequestId == id ? m with { IsVoice = true, SpeechSeconds = speechSeconds, Restricted = restricted, Timing = timing } : m).ToArray()
+                    });
                 }
                 Guard.Require((current.Messages?.Count ?? 0) < 2000, 409, "Session transcript is full.");
-                return current with { UpdatedAt = now, Messages = [.. current.Messages ?? [], new(id, role, text, now, true, speechSeconds)] };
+                return VoiceConversationMemory.RefreshSummary(current with
+                {
+                    UpdatedAt = current.UpdatedAt > at ? current.UpdatedAt : at,
+                    Messages = [.. current.Messages ?? [], new(id, role, text, at, true, speechSeconds, restricted, timing)]
+                });
             });
             Guard.Require(session is not null, 404, "Session not found.");
             var canonical = VoiceTranscriptRules.Turn(sessionId, session.Messages!.Single(m => m.RequestId == id));

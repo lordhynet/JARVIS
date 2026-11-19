@@ -9,7 +9,7 @@ using Jarvis.Orchestrator.Cqrs.Integrations;
 
 namespace Jarvis.Api.Integrations;
 
-public sealed partial class ProviderGateway(IHttpClientFactory clients, IConfiguration config) : IHomeControl, IIntegrationReader
+public sealed partial class ProviderGateway(IHttpClientFactory clients, IConfiguration config, Jarvis.Orchestrator.Travel.TravelService? travel = null) : IHomeControl, IIntegrationReader
 {
     public IReadOnlyList<IntegrationStatus> Status() =>
     [
@@ -24,9 +24,10 @@ public sealed partial class ProviderGateway(IHttpClientFactory clients, IConfigu
     private bool Has(string key) => !string.IsNullOrWhiteSpace(config[key]);
     public string Required(string key) => Has(key) ? config[key]! : throw new DomainException(503, $"Configure {key} to use this integration.");
 
-    public async Task<JsonElement> JsonAsync(HttpRequestMessage request, CancellationToken ct)
+    public Task<JsonElement> JsonAsync(HttpRequestMessage request, CancellationToken ct) => ReadJsonAsync(request, "providers", ct);
+    private async Task<JsonElement> ReadJsonAsync(HttpRequestMessage request, string clientName, CancellationToken ct)
     {
-        using var response = await clients.CreateClient("providers").SendAsync(request, ct);
+        using var response = await clients.CreateClient(clientName).SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
             throw new DomainException(502, $"Provider returned HTTP {(int)response.StatusCode}. Check credentials and provider availability.");
         try { return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct); }
@@ -35,12 +36,13 @@ public sealed partial class ProviderGateway(IHttpClientFactory clients, IConfigu
 
     public async Task<IReadOnlyList<TransitLine>> TransitAsync(string? lines, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(lines) && travel is not null) return await travel.BriefingAsync(ct);
         lines = string.IsNullOrWhiteSpace(lines) ? "elizabeth,jubilee,northern" : lines;
         Guard.Require(lines.Length <= 250 && Regex.IsMatch(lines, "^[a-z-]+(,[a-z-]+)*$"), 400, "Invalid TfL line IDs.");
         var key = config["TfL:AppKey"];
         using var request = new HttpRequestMessage(HttpMethod.Get,
             "https://api.tfl.gov.uk/Line/" + lines + "/Status" + (string.IsNullOrWhiteSpace(key) ? "" : "?app_key=" + Uri.EscapeDataString(key)));
-        var json = await JsonAsync(request, ct);
+        var json = await ReadJsonAsync(request, TflTravelSource.ClientName, ct);
         return json.EnumerateArray().Select(line => new TransitLine(
             line.GetProperty("id").GetString()!, line.GetProperty("name").GetString()!,
             line.GetProperty("lineStatuses").EnumerateArray().Select(s =>

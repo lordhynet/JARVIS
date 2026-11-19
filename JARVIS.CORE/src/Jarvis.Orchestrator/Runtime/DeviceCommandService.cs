@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Workflows;
 
 namespace Jarvis.Orchestrator.Runtime;
 
@@ -129,6 +130,27 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
 
     public Task<DeliveredDeviceCommand?> ClaimAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default) =>
         ClaimAsync(request, homeAssistantOnly: false, ct);
+
+    internal Task<bool> ConfirmGovernedAgentAsync(Guid id, CancellationToken ct) => transaction.ExecuteAsync(async writes => {
+        var s = writes.Runtime;
+        var p = s.AgentActions.GetValueOrDefault(id); var invocation = s.AgentToolInvocations.GetValueOrDefault(id);
+        Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.Agent && AgentToolExecutionScope.Contains(id, id) &&
+            p is not null && AgentActionAuthority.Current(s, p, clock.GetUtcNow()) &&
+            invocation is not null && invocation.Status == AgentToolStatus.Executing && invocation.TaskId == id &&
+            invocation.GrantId == p.GrantId && invocation.CapabilityId == p.CapabilityId, 403, "Gateway action authorization is required.");
+        var command = await writes.ReadDeviceCommandAsync(id);
+        Guard.Require(command is not null && command.Status == DeviceCommandStatus.AwaitingConfirmation && command.Origin == InvocationOrigin.Agent &&
+            command.GrantId == p.DeviceGrantId && command.DeviceId == p.DeviceId && command.ArgumentsJson == p.ArgumentsJson &&
+            command.ArgumentHash == PrivacyData.Hash(p.ArgumentsJson), 409, "Device proposal changed.");
+        var grant = await writes.ReadDeviceGrantAsync(p.DeviceGrantId);
+        Guard.Require(HasActiveGrant(s, grant, p.DeviceId, command.ExpiresAt, clock.GetUtcNow()) && MatchesGrantedArguments(command, grant), 403, "Device grant changed.");
+        var descriptor = capabilities.Get(command.CapabilityId, command.CapabilityVersion);
+        var preapproved = descriptor.Risk == DeviceCapabilityRisk.Reversible && grant.PreApproved && s.AgentToolGrants[p.GrantId].PreApproved && !p.RequiresOwnerApproval;
+        Guard.Require(preapproved || invocation.ApprovedBy is not null && invocation.ApprovedHash == invocation.ArgumentsHash,
+            403, "Exact owner approval is required before action dispatch.");
+        await writes.SaveDeviceCommandAsync(command with { Status = DeviceCommandStatus.Pending,
+            ConfirmedAt = Timestamp(clock.GetUtcNow()), ConfirmedBy = invocation.ApprovedBy ?? "core:preapproved-agent-goal" }); return true;
+    }, ct);
 
     public Task<DeliveredDeviceCommand?> ClaimHomeAssistantAsync(ClaimDeviceCommandRequest request, CancellationToken ct = default) =>
         ClaimAsync(request, homeAssistantOnly: true, ct);
@@ -281,12 +303,24 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
         }, ct);
     }
 
-    private async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
+    internal async Task<DeviceCapabilityDescriptor?> ReadDeliveryCapabilityAsync(ICoreTransactionWrites writes, DeviceCommand command)
     {
+        if (command.Origin == InvocationOrigin.Agent &&
+            (!writes.Runtime.AgentActions.TryGetValue(command.Id, out var action) || !AgentActionAuthority.Current(writes.Runtime, action, clock.GetUtcNow()) ||
+             writes.Runtime.AgentToolInvocations.GetValueOrDefault(command.Id)?.Status is not (AgentToolStatus.Succeeded or AgentToolStatus.Executing))) return null;
         if (IsHomeAssistant(command) && AutomaticOrigin(command.Origin) && writes.Runtime.AgentControls.EffectivePaidAiPaused)
             return null;
         var grant = await writes.ReadDeviceGrantAsync(command.GrantId);
         var now = clock.GetUtcNow();
+        if (WindowsDeviceCapabilities.Installed(command.CapabilityId, command.CapabilityVersion) && command.Origin == InvocationOrigin.Voice) {
+            var state = writes.Runtime;
+            if (!state.DeviceVoiceAuthorities.TryGetValue(command.Id, out var authority) || authority.ExpiresAt <= now ||
+                state.RetiredSessions.Contains(authority.SessionId) || state.AudioLease is not { } audio || audio.SessionId != authority.SessionId ||
+                audio.Fence != authority.AudioFence || audio.ExpiresAt <= now ||
+                audio.Locked && (grant?.AllowWhenLocked != true || !WindowsCommandProtocol.AllowedLocked(command.CapabilityId)) ||
+                !state.VoiceTurns.TryGetValue(authority.SourceId, out var turn) || turn.SessionId != authority.SessionId || turn.Role != ChatRoles.User ||
+                turn.Restricted && (!WindowsCommandProtocol.AllowedLocked(command.CapabilityId) || grant?.AllowWhenLocked != true)) return null;
+        }
         if (command.ExpiresAt <= now || !HasActiveGrant(writes.Runtime, grant, command.DeviceId, command.ExpiresAt, now) ||
             !MatchesGrantedArguments(command, grant) || PrivacyData.Hash(command.ArgumentsJson) != command.ArgumentHash)
             return null;
@@ -307,9 +341,14 @@ public sealed class DeviceCommandService(IDeviceCapabilityCatalog capabilities, 
     private static DeviceCommand Dispatch(DeviceCommand command, Guid requestId, DateTimeOffset now) =>
         command with { Status = DeviceCommandStatus.Dispatched, DispatchRequestId = requestId, DispatchedAt = Timestamp(now) };
 
-    private static DeliveredDeviceCommand Delivery(DeviceCommand command) =>
-        new(command.Id, command.CapabilityId, command.CapabilityVersion, command.ArgumentsJson, command.ArgumentHash,
+    private static DeliveredDeviceCommand Delivery(DeviceCommand command)
+    {
+        var delivery = new DeliveredDeviceCommand(command.Id, command.CapabilityId, command.CapabilityVersion, command.ArgumentsJson, command.ArgumentHash,
             command.ExpiresAt, command.DispatchedAt!.Value, command.DispatchRequestId!.Value);
+        if (!WindowsDeviceCapabilities.Installed(command.CapabilityId, command.CapabilityVersion)) return delivery;
+        delivery = delivery with { TargetDeviceId = command.DeviceId };
+        return delivery with { CoreSignature = DeviceCommandProof.Sign(delivery, command.CredentialHash) };
+    }
 
     private bool MatchesGrantedArguments(DeviceCommand command, DeviceGrant grant) =>
         grant.CredentialHash == command.CredentialHash && grant.CapabilityId == command.CapabilityId &&

@@ -164,7 +164,9 @@ The executor sends at most one action per dispatch. It can check state for up to
 
 The new code requires an explicit `Budget` section before any paid dispatch. The example settings deliberately leave it disabled, with no FX quote or billing multipliers. The private root settings and provider credentials are not automatically changed. Existing USD settings remain additional restrictions; `/api/budget/status` explains this and is the authoritative GBP status.
 
-Trusted fields: `Enabled`, opaque stable `ScopeId`, `Environment` (`Development` or `Production`), `Version`, explicit `TaxMultiplier` and `SafetyMultiplier` (each at least 1), and `Fx { Source, UsdToGbp, ObservedAt, ExpiresAt }`. Source must be a public/non-secret evidence identifier. Quotes must be positive, observed no later than now, unexpired, and valid for at most 24 hours. No live rate or tax assumption is supplied by JARVIS. Do not put API keys or credential-bearing URLs in FX evidence. Unknown budget fields are rejected; numeric monthly-limit overrides cannot raise the £10 development, £100 normal production or £200 maximum production authority.
+Trusted fields include `Enabled`, an opaque stable `ScopeId`, `Environment` (`Development` or `Production`), `Version`, explicit `TaxMultiplier` and `SafetyMultiplier` (each at least 1), and `Fx { Source, UsdToGbp, ObservedAt, ExpiresAt }`. Use a public source identifier. Quotes must be positive, observed no later than now, unexpired and valid for at most 24 hours. The £10 development, £100 normal production and £200 maximum production ceilings are enforced by Core.
+
+`Budget:FxAuto:Enabled` defaults to false. Enable it to fetch [ECB euro reference rates](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html) at Core startup and every `RefreshHours` (default 6, allowed 1 through 23). Core divides GBP per EUR by USD per EUR and applies `MarginPercent` (default 2). `MaxPublicationAgeDays` defaults to 4 so the latest publication can cover weekends. A valid configured quote takes precedence. An automatic quote lasts 24 hours from the last accepted fetch. A rejected refresh leaves the previously accepted quote available until it expires. The budget status endpoint and AI workflows show the source, age and latest refresh error.
 
 Budget months use UTC. Scope is pinned in durable accounting state after first assignment/dispatch; changing ScopeId cannot reset the allowance. Production increases require an explicit month/policy-bound owner approval, total ceiling above £100 and at most £200, with expiry before the next UTC month. Development cannot receive a production increase. Billing reconciliation is a separate owner operation, not spend approval.
 
@@ -190,7 +192,9 @@ The legacy Core key remains a broad browser credential for compatibility. Signal
 
 ### Reviewed media and model profiles
 
-Each `AI:{profile}` requires its own `RateCardDate` (not future and no more than 90 days old) and `RateCardModel` equal to its selected `Model`. Text profiles accept `MaxOutputTokens` from 1 to 32768; defaults are 1500 for Chat and 2048 for other text profiles. Legacy Anthropic briefs use `PaidAI:MaxOutputTokens`, default 2048. The reservation uses the requested output cap.
+Each `AI:{profile}` requires its own `RateCardDate` (not future and no more than 90 days old) and `RateCardModel` equal to its selected `Model`. Text profiles accept `MaxOutputTokens` from 1 to 32768. OpenAI defaults remain 1500 for Chat and 2048 for other text profiles. Anthropic defaults are 8192 for Chat/Coach and 16384 for other profiles, including `PaidAI:MaxOutputTokens` for LegacyInterview. Thinking consumes this output allowance. An explicitly configured smaller cap is respected. The reservation follows the selected cap, including every configured fallback attempt.
+
+The Release 0.2 example selects `gpt-6-luna` for Chat and Coach. To activate it, set each profile's model and its matching reviewed rate-card model, date and rates. For an OpenAI Chat profile, keep `OpenAI:Model` equal to `AI:Chat:Model`. OpenAI lists Luna as the successor to the deprecated GPT-4.1 mini snapshot. [OpenAI deprecations](https://developers.openai.com/api/docs/deprecations)
 
 Voice requires explicit `AudioInputUsdPerMillion`, `TextInputUsdPerMillion`, `CachedAudioInputUsdPerMillion`, `CachedTextInputUsdPerMillion`, `AudioOutputUsdPerMillion`, `TextOutputUsdPerMillion`, `TranscriptionUsdPerMinute`, `TranscriptionModel` and matching `TranscriptionRateCardModel`. Audio rates cannot be lower than the corresponding text rate; cached rates must be positive and no greater than uncached rates. No live rates are supplied by this remediation. Keep profiles stable while calls are active; immutable cross-provider attempt routing remains unfinished.
 
@@ -221,6 +225,45 @@ Every text attempt enters a shared durable reservation before adapter dispatch. 
 
 Source deletion fences subsequent publication, clears cached text and removes the attempt's content fingerprint. The content-free route/charge record remains alongside the existing financial ledger. Full Core erasure removes attempt records while retaining the separately defined financial commitments. Attempt fingerprints also expire with the seven-day disposable-cache policy. Hardware, private configuration and paid-provider acceptance remain separate operator steps.
 
+### Anthropic adaptive output, caching and refusal fallback
+
+The LegacyInterview example now selects `claude-sonnet-5-5`; its prices and review date are unset until reviewed for that model. Existing private settings are never rewritten. Routing Coach to Sonnet or deep tasks to Opus remains an owner configuration decision, with explicit `AllowedDataClasses` for each new destination. Research and realtime voice keep their existing codecs.
+
+Under `AI:{profile}` (or `PaidAI` for LegacyInterview), `PromptCachingEnabled` defaults to false. Enabling it requires positive, reviewed `CacheWriteUsdPerMillion` and `CacheReadUsdPerMillion` alongside the ordinary rates. Only the stable system instruction prefix receives an explicit five-minute cache breakpoint. User messages receive none. Short prompts may not meet the provider's cache threshold. Ordinary input, cache creation, cache reads and output are charged separately; thinking output is included. An unexpected one-hour write is held for reconciliation because its price has not been reviewed. [Anthropic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+
+`Fallbacks` defaults to an empty array. To opt in, add up to three entries, each with `Model`, matching `RateCardModel`, recent `RateCardDate`, `InputUsdPerMillion`, `OutputUsdPerMillion`, and both cache rates when caching is enabled. Each entry's model must be distinct from the primary and the other entries, and must be an allowed fallback target for the primary according to Anthropic's Models API. Configure exact model IDs as listed by the Models API, including a resolved or dated ID where applicable. If any returned model ID differs from its reviewed configured ID, JARVIS holds the reservation, discards the response and pauses further paid work until reconciled. Each entry inherits the profile's output cap and approved data classes. Haiku 5.5 does not support a server-side fallback list; leave its list empty. The sanitized shape below intentionally cannot dispatch until its null values are reviewed and filled:
+
+```json
+{
+  "Provider": "anthropic",
+  "Model": "claude-sonnet-5-5",
+  "RateCardModel": "claude-sonnet-5-5",
+  "RateCardDate": "",
+  "InputUsdPerMillion": null,
+  "OutputUsdPerMillion": null,
+  "MaxOutputTokens": 8192,
+  "AllowedDataClasses": ["Personal"],
+  "PromptCachingEnabled": false,
+  "CacheWriteUsdPerMillion": null,
+  "CacheReadUsdPerMillion": null,
+  "Fallbacks": [{
+    "Model": "claude-sonnet-5",
+    "RateCardModel": "claude-sonnet-5",
+    "RateCardDate": "",
+    "InputUsdPerMillion": null,
+    "OutputUsdPerMillion": null,
+    "CacheWriteUsdPerMillion": null,
+    "CacheReadUsdPerMillion": null
+  }]
+}
+```
+
+Configured fallback uses one HTTP request with an explicit `fallbacks` list and beta header `server-side-fallback-2026-07-01`. This bounds possible destinations and costs. No client retry is sent for a refusal, error, timeout or overload. The adapter prices `usage.iterations` at each model's captured rates, without also charging the final top-level usage. Known zero-output, non-billable refusal categories cost zero; unknown categories require reconciliation. `ProviderAttempts.Route` retains the requested route, `ServedRoute` records the returned model, and `ModelUsage` records each model's token classes and charge. Cached completion returns the same served route. [Anthropic refusal and fallback accounting](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback)
+
+The refusal billing category schedule was last reviewed on **2026-11-17** alongside this adapter's text rate-card handling. Recheck [How refusals are billed](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#how-refusals-are-billed) whenever reviewing the configured prices; Anthropic may change which categories are billed before output.
+
+The request uses API version `2026-10-21` and omits removed sampling parameters. Thinking stays at the model default. `max_tokens` and `refusal` stops settle known usage but discard partial output and cannot be replayed automatically. Unknown models, missing fallback accounting or unpriced token classes retain the conservative reservation and block new paid work pending reconciliation. [Anthropic version guidance](https://platform.claude.com/docs/en/api/versioning)
+
 Home Assistant now requires HTTPS outside loopback unless `HomeAssistant:AllowInsecureLan=true` is explicitly set by the operator. The public example defaults this exception to false. This does not encrypt an insecure LAN link; TLS is preferred.
 
 Legacy draft migration precaution: before replacing a phone's existing connection credential, explicitly export any legacy encrypted drafts using the current trusted connection. Legacy cache discovery is keyed by the old URL/credential identity; changing the credential does not delete those files, but the new connection will not automatically discover them. Do not replay or upload them during pairing. This remediation did not alter existing encrypted draft files or their keys.
@@ -230,3 +273,19 @@ Draft-preservation follow-up: ordinary 401 credential revocation and malformed/m
 ## Independent pause controls
 
 `AgentControls` adds nullable `PaidAiPaused` and `AgentsPaused`. Missing new values inherit the historical `Paused` flag, so existing persisted settings/old requests keep their meaning. A management write normalizes both new flags and clears the legacy flag. Paid admission/approval uses the paid flag; scheduling, claims, completion and notification delivery use the agent flag. The dashboard exposes separate controls. Neither flag revokes an existing audio lease or blocks unpaid local audio. Already reserved voice windows keep their bounded lease; the next paid reservation is refused while paid AI is paused. Explicit audio Stop, handoff, device revocation and privacy erasure retain their fences. Erasure keeps both work types paused on reopen.
+
+## Locked-room home authority
+
+Item 15a adds `AllowWhenLocked` to the owner-managed Home Assistant capability grant, with default **false**. Set the request's `allowWhenLocked` field only when every entity in that grant is intended to be callable by anyone near a locked voice companion. The flag does not grant another capability, bypass entity/action constraints, pre-approve an action or remove owner confirmation for covers, locks and alarms. Revoke and issue a new audited grant to change this authority; reusing a grant request ID with a different flag returns conflict.
+
+No private appsettings key enables locked personal access. Core enforces the device's lock report through the existing fenced voice protocol. Windows clients must send current lock state on admission and every heartbeat. Unknown Windows state is restricted, and unlocking takes effect at the next window activation. Windows companion implementation and packaging are documented in the sibling JARVIS.WINDOWS project; installation and hardware checks remain owner actions.
+
+## Travel and enrolled browser rollout
+
+The example configuration adds Travel:NotifyWhenAgentsPaused=true and Travel:AllowSimulation=false. The existing TfL:AppKey and Push:Enabled, Subject, PublicKey and PrivateKey remain the only provider/push keys for this feature. Fill private root appsettings.json through the owner/operator process; preserve all existing secrets. Source examples contain no credential values.
+
+Travel can bypass quiet hours only during opted-in saved-route windows. Set NotifyWhenAgentsPaused=false to stop travel push while agents are paused. Simulation is available only to a manual owner in an explicitly enabled non-Production environment; Production always refuses it. It performs no TfL HTTP request and uses the same debounced transition and outbox. Public line summaries may appear on the lock screen. Other categories keep the generic private-inbox message. Physical Chrome/Android delivery needs owner verification at the trusted Tailscale HTTPS address.
+
+Authentication:RequireEnrolledBrowser defaults false. Enroll the owner browser and verify reconnect, audio and five-minute scoped owner elevation before enabling it. Native kind/tags never confer owner-browser identity. See ADR 0013 for revocation, erasure, Core-key rotation and recovery; changing the flag is a separate operator rollout, not part of local implementation.
+
+An invalid Authentication:RequireEnrolledBrowser value fails Core startup. Invalid values introduced by configuration reload return 503 until corrected to true/false; this remains fail-closed. Browser enrollment refuses reuse of a non-browser registration ID, including a native identity with a revoked credential. Choose a new browser ID instead.

@@ -1,6 +1,6 @@
 export function initNotifications({ api, node, button, notice }) {
   const panel = document.querySelector('[data-panel=settings]'); const card = node('div', '', 'card');
-  card.append(node('h2', 'Private browser notifications'), node('p', 'Opt in to generic notifications when a workflow is ready. Personal results stay in your authenticated inbox. Delivery follows quiet hours and expiry. Browser and operating-system background delivery must be tested on your device.'));
+  card.append(node('h2', 'Browser notifications'), node('p', 'Opt in to generic notifications when a workflow is ready. Personal results stay in your authenticated inbox. Travel alerts show public line updates on your lock screen during your chosen route windows, including quiet hours. Travel can continue while agents are paused when enabled by your server settings. Browser and operating-system background delivery must be tested on your device.'));
   panel.append(card); let generation = 0;
   function supported() { if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) throw Error('This browser needs a trusted HTTPS connection and Web Push support.'); }
   function bytes(value) { const raw = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)); return Uint8Array.from(raw, c => c.charCodeAt(0)); }

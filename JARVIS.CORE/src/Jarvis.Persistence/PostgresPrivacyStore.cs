@@ -3,10 +3,11 @@ using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.EntityFrameworkCore;
+using Jarvis.Orchestrator.Recordings;
 
 namespace Jarvis.Persistence;
 
-public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges audioChanges) : IPrivacyStore
+public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges audioChanges, IRecordingAudioFiles? recordingFiles = null) : IPrivacyStore
 {
     public async Task<PrivacyStatus> StatusAsync(CancellationToken ct = default)
     {
@@ -17,24 +18,30 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         409, "This request predates data erasure. Reconnect before continuing.");
     private static async Task<PrivacyControlRow> Exclusive(SessionDbContext db, CancellationToken ct) =>
         (await db.PrivacyControls.FromSqlRaw("SELECT * FROM \"PrivacyControls\" WHERE \"Id\"=1 FOR UPDATE").ToListAsync(ct)).Single();
-    private static async Task<(RuntimeDocument Row, RuntimeState State)> Runtime(SessionDbContext db, CancellationToken ct)
+    private static async Task<(RuntimeDocument Row, RuntimeState State, PostgresRuntimeHotState Hot)> Runtime(SessionDbContext db, CancellationToken ct)
     {
-        var row = await db.RuntimeDocuments.SingleAsync(x => x.Id == 1, ct); return (row, JsonSerializer.Deserialize<RuntimeState>(row.Json)!);
+        var row = await db.RuntimeDocuments.SingleAsync(x => x.Id == 1, ct);
+        var state = JsonSerializer.Deserialize<RuntimeState>(row.Json)!;
+        var hot = await PostgresRuntimeHotState.LoadAsync(db, state, row.Fingerprint, ct); return (row, state, hot);
     }
     private static PrivacyCounts AllCounts(RuntimeState state, int sessions, IReadOnlyList<WorkflowRun> workflows) => new(sessions,
         state.TrainingAttempts.Values.Count(x => x.DeletedAt is null), state.CoachingAttempts.Values.Count(x => x.DeletedAt is null),
-        state.VoiceTurns.Count, state.ProviderResults.Count, workflows.Count(x => x.DeletedAt is null), state.AgentRuns.Values.Count(x => x.DeletedAt is null));
+        state.VoiceTurns.Count, state.ProviderResults.Count, workflows.Count(x => x.DeletedAt is null), state.AgentRuns.Values.Count(x => x.DeletedAt is null), ContextMemories: state.ContextMemories.Count);
     public async Task<CoreDataExport> ExportAsync(DateTimeOffset now, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
         var control = await db.PrivacyControls.AsNoTracking().SingleAsync(x => x.Id == 1, ct); RequireEpoch(control);
-        var (_, state) = await Runtime(db, ct);
+        var (_, state, _) = await Runtime(db, ct);
         var sessions = (await db.Sessions.AsNoTracking().Include(x => x.Checkpoints).OrderBy(x => x.Id).ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var events = await db.WorkflowEvents.AsNoTracking().OrderBy(x => x.OccurredAt).Select(x => new WorkflowEvent(x.EventId, x.RunId, x.Revision, x.Status, x.OccurredAt)).ToListAsync(ct);
         var jobs = (await db.PrivacyJobs.AsNoTracking().ToListAsync(ct)).Select(x => x.Contract()).ToList();
-        var export = PrivacyData.Export(control.Status(), state, sessions, runs, events, jobs, now, (await PostgresDomainRegistryStore.Snapshot(db, ct)).Export()); await tx.CommitAsync(ct); return export;
+        var travel = await PostgresTravelStore.Snapshot(db, ct);
+        var recordings = await PostgresRecordingStore.Snapshot(db, ct);
+        var export = PrivacyData.Export(control.Status(), state, sessions, runs, events, jobs, now, (await PostgresDomainRegistryStore.Snapshot(db, ct)).Export()) with {
+            TravelRoutes = travel.Routes.Values.ToArray(), TravelLineStates = travel.Lines.Values.ToArray(), InterviewRecordings = recordings.Sessions.Values.Select(r => r.View).ToArray() };
+        await tx.CommitAsync(ct); return export;
     }
     public async Task<RetentionPreview> PreviewAsync(RetentionPolicy policy, DateTimeOffset asOf, CancellationToken ct = default)
     {
@@ -43,7 +50,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
         var control = await db.PrivacyControls.AsNoTracking().SingleAsync(x => x.Id == 1, ct); RequireEpoch(control);
-        var (_, state) = await Runtime(db, ct);
+        var (_, state, _) = await Runtime(db, ct);
         var sessions = (await db.Sessions.AsNoTracking().Include(x => x.Checkpoints).ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var commands = PostgresDeviceCommandStore.Prunable(db, policy, asOf);
@@ -52,6 +59,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             DeviceCommands = await commands.CountAsync(ct),
             DeviceReceipts = await db.DeviceReceipts.CountAsync(x => commands.Any(command => command.Id == x.CommandId), ct)
         };
+        counts = RecordingRetention.Counts(await PostgresRecordingStore.Snapshot(db, ct), counts, asOf);
         var result = new RetentionPreview(asOf, PrivacyData.PolicyHash(policy), policy, counts);
         await tx.CommitAsync(ct); return result;
     }
@@ -72,7 +80,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var control = await Exclusive(db, ct);
         if (control.Erased && control.ErasureRequestId == request.RequestId) return control.Status();
         RequireEpoch(control); Guard.Require(!control.Erased && control.Revision == request.ExpectedRevision, 409, "Privacy state changed. Reload before erasing.");
-        var (row, state) = await Runtime(db, ct);
+        var (row, state, hot) = await Runtime(db, ct);
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var counts = AllCounts(state, await db.Sessions.CountAsync(ct), runs) with
         {
@@ -80,9 +88,16 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             DeviceCommands = await db.DeviceCommands.CountAsync(ct),
             DeviceReceipts = await db.DeviceReceipts.CountAsync(ct)
         };
-        row.Json = JsonSerializer.Serialize(PrivacyData.EmptyAfterErase(state));
+        counts = RecordingRetention.Counts(await PostgresRecordingStore.Snapshot(db, ct), counts);
+        // The exclusive privacy gate also excludes a file publisher holding the shared D2 gate.
+        // Do not report erasure success if ciphertext deletion fails.
+        if (recordingFiles is not null) await recordingFiles.EraseAsync(ct);
+        await db.InterviewRecordings.ExecuteDeleteAsync(ct);
+        hot.Apply(row, PrivacyData.EmptyAfterErase(state));
         await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
         await db.DomainDefinitions.ExecuteDeleteAsync(ct);
+        await db.TravelRoutes.ExecuteDeleteAsync(ct); await db.TravelLineStates.ExecuteDeleteAsync(ct);
+        await db.TravelMonitorState.ExecuteUpdateAsync(x => x.SetProperty(t => t.Json, "{}"), ct);
         await db.Sessions.ExecuteDeleteAsync(ct); await db.WorkflowRuns.ExecuteDeleteAsync(ct); await db.DeviceGrants.ExecuteDeleteAsync(ct); await db.PrivacyJobs.ExecuteDeleteAsync(ct);
         await db.DeviceCommands.ExecuteDeleteAsync(ct);
         control.Epoch = checked(control.Epoch + 1); control.Revision++; control.Erased = true; control.ErasedAt = now;
@@ -114,11 +129,16 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var prior = await db.PrivacyJobs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == request.RequestId, ct);
         if (prior is not null) { Guard.Require(prior.Kind == "retention" && prior.Fingerprint == fingerprint, 409, "Privacy job ID was reused for different input."); return prior.Contract(); }
         Guard.Require(request.AsOf <= now && request.AsOf >= now.AddDays(-1), 400, "Retention preview is stale. Reload it before applying.");
-        var (row, state) = await Runtime(db, ct);
+        var (row, state, hot) = await Runtime(db, ct);
         var sessionRows = await db.Sessions.Include(x => x.Checkpoints).ToListAsync(ct);
         var workflowRows = await db.WorkflowRuns.ToListAsync(ct);
         var runs = workflowRows.Select(x => x.ToContract()).ToList();
         var counts = PrivacyData.Counts(state, sessionRows.Select(x => x.ToContract()).ToList(), runs, policy, request.AsOf);
+        var recordingState = await PostgresRecordingStore.Snapshot(db, ct);
+        counts = RecordingRetention.Counts(recordingState, counts, request.AsOf);
+        await RecordingRetention.ApplyAsync(recordingState, state, recordingFiles, request.AsOf, ct);
+        foreach (var recording in db.InterviewRecordings.Local) recording.Json = JsonSerializer.Serialize(recordingState.Sessions[recording.Id]);
+        foreach (var chunk in db.RecordingChunks.Local.ToArray()) if (!recordingState.Chunks.ContainsKey(chunk.Id)) db.RecordingChunks.Remove(chunk);
         var selection = PrivacyData.Select(state, sessionRows.Select(x => x.ToContract()).ToList(), runs, policy, request.AsOf);
         var voiceIds = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
         foreach (var session in sessionRows)
@@ -126,8 +146,17 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
             if (session.Status == SessionStatus.Ended && session.UpdatedAt < request.AsOf.AddDays(-policy.SessionDays)) db.Sessions.Remove(session);
             else
             {
+                if (state.RetiredSessions.Contains(session.Id)) {
+                    session.Title = "Removed private interview practice"; session.Status = SessionStatus.Ended; session.ActiveDeviceId = null;
+                    session.CurrentTask = null; session.HandoffJson = null; session.MessagesJson = "[]"; session.PendingVoiceProjectionIdsJson = "[]"; session.VoiceSummaryJson = null;
+                    db.Checkpoints.RemoveRange(session.Checkpoints); session.Checkpoints.Clear(); continue;
+                }
                 var messages = JsonSerializer.Deserialize<List<ChatMessage>>(session.MessagesJson)!;
-                if (messages.Any(x => voiceIds.Contains(x.RequestId))) session.MessagesJson = JsonSerializer.Serialize(messages.Where(x => !voiceIds.Contains(x.RequestId)));
+                if (messages.Any(x => voiceIds.Contains(x.RequestId)))
+                {
+                    session.MessagesJson = JsonSerializer.Serialize(messages.Where(x => !voiceIds.Contains(x.RequestId)));
+                    session.VoiceSummaryJson = null;
+                }
             }
         }
         foreach (var workflow in workflowRows)
@@ -143,7 +172,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var commands = PostgresDeviceCommandStore.Prunable(db, policy, request.AsOf);
         var receiptsPruned = await db.DeviceReceipts.CountAsync(x => commands.Any(command => command.Id == x.CommandId), ct);
         var commandsPruned = await commands.ExecuteDeleteAsync(ct);
-        row.Json = JsonSerializer.Serialize(state);
+        hot.Apply(row, state);
         counts = counts with { DeviceGrants = grantsPruned, DeviceCommands = commandsPruned, DeviceReceipts = receiptsPruned };
         var job = new PrivacyJobRow { Id = request.RequestId, Kind = "retention", Fingerprint = fingerprint, CompletedAt = now, CountsJson = JsonSerializer.Serialize(counts) };
         db.PrivacyJobs.Add(job); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return job.Contract();

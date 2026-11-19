@@ -11,7 +11,7 @@ public sealed record ContextCard(Guid Id, LearningDomain Domain, string Prompt, 
 public sealed record SelectedContext(IReadOnlyList<ContextStory> Stories, IReadOnlyList<ContextCard> Due, int Bytes);
 
 /// <summary>Deterministic lexical retrieval. Source text is data; no model call, answer disclosure or new memory store.</summary>
-public static class ContextSelector
+public static partial class ContextSelector
 {
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
         { "the", "a", "an", "my", "me", "i", "to", "for", "with", "and", "of", "please", "story", "practise", "practice" };
@@ -43,7 +43,7 @@ public static class ContextSelector
                 Clip(x.Content.TechnicalDecisions), Clip(x.Content.TradeOffs), Clip(x.Content.Result), Clip(x.Content.Metrics)));
             if (Size() > maxBytes) chosenStories.RemoveAt(chosenStories.Count - 1);
         }
-        foreach (var x in cards.Where(x => x.DueAt <= now).Select(x => new { Card = x, Score = Score(x.Prompt + " " + x.Domain, terms) })
+        foreach (var x in cards.Where(x => x.SourceRecordingId is null && x.DueAt <= now).Select(x => new { Card = x, Score = Score(x.Prompt + " " + x.Domain, terms) })
             .OrderByDescending(x => x.Score).ThenBy(x => x.Card.MasteryScore ?? 0).ThenBy(x => x.Card.DueAt).ThenBy(x => x.Card.Id))
         {
             if (chosenCards.Count >= maxCards) break;

@@ -25,6 +25,7 @@ public sealed class PaidAiTests
         using var root = new PaidFactory(_ => { Interlocked.Increment(ref calls); return Task.FromResult(Response(source)); });
         using var host = root.WithWebHostBuilder(builder => builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(clock)));
         var first = await Prepare(host, source); var provider = host.Services.GetRequiredService<PaidAiProvider>();
+        using var origin = CoreInvocationContext.Enter(InvocationOrigin.Agent);
         var original = await provider.GenerateAsync(first, default);
         clock.Now = clock.Now.Add(WorkflowService.LeaseDuration).AddSeconds(1);
         var recovered = (await host.Services.GetRequiredService<WorkflowService>().ClaimAsync("replacement-worker"))!;
@@ -94,7 +95,7 @@ public sealed class PaidAiTests
             Interlocked.Increment(ref requests);
             Assert.Equal("https://api.anthropic.com/v1/messages", request.RequestUri!.AbsoluteUri);
             Assert.Equal("fixture-anthropic-key", Assert.Single(request.Headers.GetValues("x-api-key")));
-            Assert.Equal("2023-06-01", Assert.Single(request.Headers.GetValues("anthropic-version")));
+            Assert.Equal(AnthropicMessagesAdapter.ApiVersion, Assert.Single(request.Headers.GetValues("anthropic-version")));
             var body = await request.Content!.ReadFromJsonAsync<JsonElement>();
             Assert.False(body.TryGetProperty("tools", out _));
             Assert.Equal(2048, body.GetProperty("max_tokens").GetInt32());
@@ -220,6 +221,7 @@ public sealed class PaidAiTests
             builder.UseSetting("PaidAI:MonthlyLimitUsd", "50"); builder.UseSetting("PaidAI:BackgroundLimitUsd", "15");
             builder.UseSetting("PaidAI:InputUsdPerMillion", "3"); builder.UseSetting("PaidAI:OutputUsdPerMillion", "15");
             builder.UseSetting("PaidAI:RateCardModel", "test-model");
+            builder.UseSetting("PaidAI:MaxOutputTokens", "2048");
             builder.UseSetting("PaidAI:RateCardDate", DateTime.UtcNow.ToString("yyyy-MM-dd"));
             builder.ConfigureServices(s => s.AddHttpClient("providers").ConfigurePrimaryHttpMessageHandler(() => new StubHttpHandler(handle)));
         }

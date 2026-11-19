@@ -6,7 +6,7 @@ Preserve the existing USD reservation IDs, provider accounting, public routes, p
 
 The budget environment and stable accounting scope come from canonical server configuration. UTC calendar months apply. Development has a £10 monthly ceiling. Production has a £100 ceiling unless a valid owner approval sets a total monthly ceiling above £100 and no higher than £200. No caller, provider adapter or domain manifest supplies an increased ceiling.
 
-GBP conversions retain their immutable FX, tax/safety and policy basis. Missing/expired rates or unclassified legacy charges block paid dispatch. No live conversion rate or tax assumption is supplied automatically. Outstanding charges remain committed. Erasure retains minimal financial accounting, invalidates approvals and prevents replay after reopening.
+GBP conversions retain their immutable FX, tax/safety and policy basis. Missing or expired rates and unclassified legacy charges block paid dispatch. Operators can opt in to an ECB reference quote fallback. Tax and safety multipliers remain explicit settings. Outstanding charges remain committed. Erasure retains minimal financial accounting, invalidates approvals and prevents replay after reopening.
 
 Owner budget management uses a separate configured credential and explicit scope. Legacy Core keys do not confer this privilege. This is a personal-server compatibility foundation, not OIDC or complete device identity. New remote device control remains outside these slices.
 

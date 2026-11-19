@@ -47,17 +47,42 @@ public static class DomainPolicy
         var prompts = manifest.PracticePrompts.Select(p => Guard.Text(p, "Practice prompt", 300)).ToArray();
         var configuration = manifest.Configuration ?? new Dictionary<string, string>();
         Guard.Require(configuration.Count <= 8 && configuration.All(p => !ReservedConfiguration.Contains(p.Key) && Regex.IsMatch(p.Key, "^[a-zA-Z][a-zA-Z0-9_-]{0,39}$") && p.Value is { Length: <= 100 }), 400, "Domain configuration must contain small scalar values and cannot declare privileges or executable instructions.");
+        if (configuration.TryGetValue("coachingExerciseId", out var exerciseId)) Guard.Require(
+            Jarvis.Orchestrator.Coaching.CoachingCatalog.Exercises.Any(e => e.Id == exerciseId && !e.RequiresStory && !e.RequiresClaim),
+            400, "Choose an installed standalone coaching exercise for a reusable domain template.");
+        if (configuration.TryGetValue("coachingScenarioId", out var scenarioId)) Guard.Require(
+            Jarvis.Orchestrator.Coaching.CoachingScenarios.Contains(scenarioId), 400, "Coaching scenarios must reference installed authored code.");
         Guard.Require(manifest.ParentKey is null || manifest.ParentKey.Length <= 60 && Regex.IsMatch(manifest.ParentKey, "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$") && manifest.ParentKey != manifest.Key, 400, "Invalid parent domain.");
+        var guidance = string.IsNullOrWhiteSpace(manifest.StudyGuidance) ? null : Guard.Text(manifest.StudyGuidance, "Domain study guidance", 3000);
+        var sources = ValidateKnowledge(manifest.KnowledgeSources);
         return manifest with { DisplayName = name, Description = description, Aliases = Array.AsReadOnly(aliases), Roles = Array.AsReadOnly(manifest.Roles.ToArray()),
             Capabilities = Array.AsReadOnly(capabilities), PracticePrompts = Array.AsReadOnly(prompts),
-            Configuration = configuration.OrderBy(p => p.Key, StringComparer.Ordinal).ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal) };
+            Configuration = configuration.OrderBy(p => p.Key, StringComparer.Ordinal).ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal),
+            StudyGuidance = guidance, KnowledgeSources = sources.Count == 0 ? null : sources };
+    }
+    public static IReadOnlyList<DomainKnowledgeReference> ValidateKnowledge(IReadOnlyList<DomainKnowledgeReference>? references)
+    {
+        var result = new List<DomainKnowledgeReference>();
+        Guard.Require(references is null || references.Count <= 6, 400, "A domain supports up to six owner knowledge references.");
+        foreach (var source in references ?? []) {
+            Guard.Require(source is not null && source.Reference is { Length: > 0 and <= 1000 } && source.Kind is "url" or "import", 400, "Knowledge references must be URLs or existing import IDs.");
+            if (source.Kind == "import") {
+                Guard.Require(Guid.TryParse(source.Reference, out var id) && id != Guid.Empty, 400, "Knowledge import ID is invalid."); result.Add(new("import", id.ToString("D")));
+            } else {
+                Guard.Require(Uri.TryCreate(source.Reference, UriKind.Absolute, out var url) && url.Scheme == "https" && url.UserInfo.Length == 0 && url.Query.Length == 0 && !url.IsLoopback,
+                    400, "Use a clean HTTPS knowledge reference without credentials or query parameters.");
+                result.Add(new("url", url.AbsoluteUri));
+            }
+        }
+        Guard.Require(result.Distinct().Count() == result.Count, 400, "Duplicate knowledge references are forbidden.");
+        return Array.AsReadOnly(result.OrderBy(s => s.Kind, StringComparer.Ordinal).ThenBy(s => s.Reference, StringComparer.Ordinal).ToArray());
     }
     public static string Serialize(DomainManifest manifest) => JsonSerializer.Serialize(Validate(manifest), Json);
     public static string Hash(DomainManifest manifest) => PrivacyData.Hash(Serialize(manifest));
     public static IReadOnlySet<string> Names(DomainManifest manifest) => new[] { manifest.Key, manifest.DisplayName }.Concat(manifest.Aliases).Select(Slug).ToHashSet(StringComparer.Ordinal);
     public static DomainRiskClass Risk(DomainManifest manifest)
     {
-        var text = string.Join(" ", new[] { manifest.Key, manifest.DisplayName, manifest.Description }.Concat(manifest.Aliases).Concat((manifest.Configuration ?? new Dictionary<string, string>()).Values));
+        var text = string.Join(" ", new[] { manifest.Key, manifest.DisplayName, manifest.Description, manifest.StudyGuidance ?? "" }.Concat(manifest.Aliases).Concat((manifest.Configuration ?? new Dictionary<string, string>()).Values));
         if (Regex.IsMatch(text, @"\b(law|legal|court|litigation|solicitor|jurisdiction)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return DomainRiskClass.Law;
         if (Regex.IsMatch(text, @"\b(health|medical|clinical|diagnosis|treatment|medicine)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return DomainRiskClass.Health;
         if (Regex.IsMatch(text, @"\b(finance|financial|investment|trading|stocks|tax|banking)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return DomainRiskClass.Finance;
@@ -87,8 +112,17 @@ public static class DomainPolicy
         Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.ManualClient && !string.IsNullOrWhiteSpace(actor.SubjectId) && actor.Scopes.Contains("domain.manage"),
             403, "Domain activation requires a manual owner approval.");
     }
-    public static DomainManifest BuiltIn(DomainDescriptor domain) => Validate(new(1, domain.Key,
+    public static DomainManifest BuiltIn(DomainDescriptor domain) {
+        if (Jarvis.Orchestrator.Coaching.CoachingScenarios.Contains(domain.Key)) {
+            var scenario = Jarvis.Orchestrator.Coaching.CoachingScenarios.Get(domain.Key);
+            return Validate(new(1, domain.Key, scenario.Title, domain.Instructions, [],
+                [domain.Key == "scenario-presentation" ? AgentRole.CommunicationCoach : AgentRole.InterviewCoach], [new("core_template_practice")],
+                scenario.Turns.Select(t => t.Question).ToArray(), DomainExecutionMode.Template,
+                Configuration: new Dictionary<string, string> { ["coachingScenarioId"] = scenario.Key }));
+        }
+        return Validate(new(1, domain.Key,
         CultureInfo.InvariantCulture.TextInfo.ToTitleCase(domain.Key.Replace('-', ' ')), domain.Instructions,
         domain.Workflows.ToArray(), [AgentRole.TechnicalTrainer], [new("core_template_practice")],
         ["Describe your learning goal for " + domain.Key.Replace('-', ' ') + ".", "Explain one example in your own words.", "Choose one small next practice step."], DomainExecutionMode.Template));
+    }
 }

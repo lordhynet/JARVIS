@@ -3,7 +3,7 @@ using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Orchestrator.Domains;
 
-public sealed class MemoryDomainRegistryStore(IRuntimeStore runtime, IPrivacyReader privacy) : IDomainRegistryStore
+public sealed class MemoryDomainRegistryStore(IRuntimeStore runtime, IPrivacyReader privacy, TimeProvider? clock = null) : IDomainRegistryStore
 {
     public async Task<long> EpochAsync(CancellationToken ct) {
         var status = await privacy.StatusAsync(ct); PrivacyContext.RequireWrite(status); return status.Epoch;
@@ -12,7 +12,10 @@ public sealed class MemoryDomainRegistryStore(IRuntimeStore runtime, IPrivacyRea
         var epoch = await EpochAsync(ct); using var scope = PrivacyContext.Enter(epoch); return await runtime.ReadAsync(s => read(s.DomainRegistry, epoch), ct);
     }
     public async Task<T> UpdateAsync<T>(Func<DomainRegistryState, long, T> update, CancellationToken ct) {
-        var epoch = await EpochAsync(ct); using var scope = PrivacyContext.Enter(epoch); return await runtime.UpdateAsync(s => update(s.DomainRegistry, epoch), ct);
+        var epoch = await EpochAsync(ct); using var scope = PrivacyContext.Enter(epoch); return await runtime.UpdateAsync(s => {
+            var enabled = DomainExecutionLifecycle.Enabled(s.DomainRegistry); var result = update(s.DomainRegistry, epoch);
+            enabled.ExceptWith(DomainExecutionLifecycle.Enabled(s.DomainRegistry)); DomainExecutionLifecycle.DisableRuns(s, enabled, (clock ?? TimeProvider.System).GetUtcNow()); return result;
+        }, ct);
     }
     public async Task<IReadOnlyList<DomainResolved>> ReadActiveAsync(string? key, CancellationToken ct) => await ReadAsync((state, epoch) =>
         (IReadOnlyList<DomainResolved>)state.Definitions.Values.Where(d => d.Status == DomainStatus.Active && d.CurrentVersionId is not null && (key is null || d.Key == key) &&

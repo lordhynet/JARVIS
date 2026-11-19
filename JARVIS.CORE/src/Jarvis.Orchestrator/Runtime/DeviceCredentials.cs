@@ -1,12 +1,17 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
+using Jarvis.Contracts;
 
 namespace Jarvis.Orchestrator.Runtime;
 
 // Credential hashes are authentication material, excluded from personal-data exports.
-public sealed record DeviceCredential(string DeviceId, string SecretHash, DateTimeOffset CreatedAt, bool Revoked = false);
+public sealed record OwnerElevationRecord(string TokenHash, long Epoch, DateTimeOffset ExpiresAt, IReadOnlyList<string> Scopes, string OwnerCredentialHash);
+public sealed record DeviceCredential(string DeviceId, string SecretHash, DateTimeOffset CreatedAt, bool Revoked = false,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Purpose = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] OwnerElevationRecord? Elevation = null);
 public sealed record IssuedDeviceCredential(string DeviceId, string Secret);
-public sealed record CoreActor(string SubjectId, string? DeviceId, string? CredentialHash = null);
+public sealed record CoreActor(string SubjectId, string? DeviceId, string? CredentialHash = null, bool IsOwnerBrowser = false);
 public static class DeviceCredentialContext
 {
     private static readonly AsyncLocal<CoreActor?> Current = new();
@@ -22,23 +27,46 @@ public static class DeviceCredentialContext
     public static void RequireCurrent(RuntimeState state, string deviceId)
     {
         if (Current.Value is not { DeviceId: { } bound } actor) return;
-        Guard.Require(bound == deviceId && state.DeviceCredentials.TryGetValue(bound, out var credential) &&
-            !credential.Revoked && credential.SecretHash == actor.CredentialHash, 401, "The device credential changed or was revoked.");
+        Guard.Require((bound == deviceId || actor.IsOwnerBrowser) && state.DeviceCredentials.TryGetValue(bound, out var credential) &&
+            !credential.Revoked && credential.SecretHash == actor.CredentialHash &&
+            (!actor.IsOwnerBrowser || credential.Purpose == DeviceCredentials.OwnerBrowserPurpose), 401, "The device credential changed or was revoked.");
     }
 }
 
 public sealed class DeviceCredentials(IRuntimeReader store, ICoreTransaction transaction, TimeProvider clock)
 {
     public const string Prefix = "jdv1_";
-    public Task<IssuedDeviceCredential> IssueAsync(string deviceId, CancellationToken ct) =>
+    public const string OwnerBrowserPurpose = "owner-browser";
+    public Task<IssuedDeviceCredential> IssueAsync(string deviceId, CancellationToken ct) => IssueCoreAsync(deviceId, ct);
+    public Task<IssuedDeviceCredential> EnrolBrowserAsync(RegisterDeviceRequest request, CancellationToken ct)
+    {
+        Guard.Require(CoreInvocationContext.Origin == InvocationOrigin.ManualClient, 403, "Browser enrollment requires a manual owner client.");
+        var id = Guard.Text(request.DeviceId, "DeviceId", 80); Guard.Text(request.Name, "Name", 120);
+        Guard.Require(Regex.IsMatch(id, "^[A-Za-z0-9_-]+$") && request.Kind is DeviceKind.WindowsAgent or DeviceKind.AndroidCompanion or DeviceKind.QuestClient &&
+            request.Capabilities is { HasDisplay: true }, 400, "Enroll an interactive browser with a valid device identity.");
+        return IssueCoreAsync(id, ct, request);
+    }
+    private Task<IssuedDeviceCredential> IssueCoreAsync(string deviceId, CancellationToken ct, RegisterDeviceRequest? browser = null) =>
         transaction.ExecuteAsync(async writes =>
         {
             var state = writes.Runtime;
+            var now = clock.GetUtcNow();
+            if (browser is not null) {
+                Guard.Require(!state.DeviceCredentials.TryGetValue(deviceId, out var old) || old.Revoked, 409,
+                    "This browser already has an active credential. Reconnect with it or revoke it before enrolling again.");
+                if (state.Devices.TryGetValue(deviceId, out var existing)) {
+                    var registration = existing.Registration;
+                    Guard.Require(registration.Capabilities.HasDisplay && registration.Capabilities.Extra?.Contains(VoiceAccessRules.BrowserCompanionTag) == true &&
+                        (old?.Purpose == OwnerBrowserPurpose || old is null && registration.Kind == DeviceKind.WindowsAgent), 409,
+                        "A non-browser device already uses this ID. Enroll with a new browser ID.");
+                }
+                var capabilities = browser.Capabilities with { CanControlHome = false, Extra = [VoiceAccessRules.BrowserCompanionTag] };
+                state.Devices[deviceId] = new(new(deviceId, browser.Name.Trim(), browser.Kind, capabilities, now), now, false);
+            }
             Guard.Require(state.Devices.ContainsKey(deviceId), 404, "Register the device before enrolling its credential.");
             Guard.Require(state.DeviceCredentials.ContainsKey(deviceId) || state.DeviceCredentials.Count < 100, 409, "Device credential capacity reached.");
-            var now = clock.GetUtcNow();
             var secret = Prefix + Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-            state.DeviceCredentials[deviceId] = new(deviceId, PrivacyData.Hash(secret), now);
+            state.DeviceCredentials[deviceId] = new(deviceId, PrivacyData.Hash(secret), now, Purpose: browser is null ? null : OwnerBrowserPurpose);
             InvalidateAudio(state, deviceId);
             await writes.RevokeDeviceGrantsAsync(deviceId, now);
             return new IssuedDeviceCredential(deviceId, secret);
@@ -61,7 +89,7 @@ public sealed class DeviceCredentials(IRuntimeReader store, ICoreTransaction tra
         try { return await store.ReadAsync(s => {
             var found = s.DeviceCredentials.Values.FirstOrDefault(c => !c.Revoked &&
                 CryptographicOperations.FixedTimeEquals(hash, Convert.FromHexString(c.SecretHash)));
-            return found is null ? null : new CoreActor("device:" + found.DeviceId, found.DeviceId, found.SecretHash);
+            return found is null ? null : new CoreActor("device:" + found.DeviceId, found.DeviceId, found.SecretHash, found.Purpose == OwnerBrowserPurpose);
         }, ct); }
         // Erasure also destroys device credentials. Return an authentication failure so
         // the phone invalidates its connection instead of treating erasure as an outage.
@@ -69,6 +97,8 @@ public sealed class DeviceCredentials(IRuntimeReader store, ICoreTransaction tra
     }
     private static void InvalidateAudio(RuntimeState s, string deviceId)
     {
+        if (s.Devices.TryGetValue(deviceId, out var recordingDevice) && recordingDevice.Recording is not null)
+            s.Devices[deviceId] = recordingDevice with { Recording = null };
         if (s.AudioLease?.DeviceId == deviceId) AudioFencing.Revoke(s);
         foreach (var key in s.VoiceTickets.Where(x => x.Value.Lease.DeviceId == deviceId).Select(x => x.Key).ToList()) s.VoiceTickets.Remove(key);
     }

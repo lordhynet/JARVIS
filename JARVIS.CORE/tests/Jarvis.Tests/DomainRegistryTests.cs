@@ -64,8 +64,8 @@ public sealed class DomainRegistryTests
         Assert.Equal(first.Version.Id, run.Run.WorkflowPolicy!.DomainVersionId);
         var disabled = await Post<DomainOperationReceipt>(client, "/api/domains/education/disable", new DisableDomainRequest(Guid.NewGuid(), active.Revision));
         await Assert.ThrowsAsync<DomainException>(() => runtime.StartAsync(new(Guid.NewGuid(), first.Definition.WorkflowKey, false), default));
-        var claimed = (await runtime.ClaimAsync(default))!;
-        await Assert.ThrowsAsync<DomainException>(() => host.Services.GetRequiredService<IAgentExecutor>().ExecuteAsync(claimed, default));
+        Assert.Null(await runtime.ClaimAsync(default));
+        Assert.Equal(AgentRunStatus.Cancelled, await host.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.AgentRuns[run.Run.Id].Status));
         var rollbackRequest = new ActivateDomainRequest(Guid.NewGuid(), disabled.Revision, first.Version.Id, first.Version.ManifestHash);
         var rollback = await Post<DomainOperationReceipt>(client, "/api/domains/education/rollback", rollbackRequest);
         Assert.Equal("rollback", rollback.Action);

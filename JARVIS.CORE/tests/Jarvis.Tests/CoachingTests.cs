@@ -31,8 +31,8 @@ public sealed class CoachingTests
     [Fact]
     public void Catalog_has_communication_interview_programme_and_honest_planned_modules()
     {
-        Assert.Equal(8, CoachingCatalog.Exercises.Count(x => x.Area == CoachingArea.Communication));
-        Assert.Equal(16, CoachingCatalog.Exercises.Count(x => x.Area == CoachingArea.Interview));
+        Assert.Equal(9, CoachingCatalog.Exercises.Count(x => x.Area == CoachingArea.Communication));
+        Assert.Equal(19, CoachingCatalog.Exercises.Count(x => x.Area == CoachingArea.Interview));
         Assert.Equal(12, CoachingCatalog.Weeks.Count); Assert.Equal(15, ProductModules.All.Count);
         Assert.All(ProductModules.All.Where(x => x.Status == "Planned"), x => { Assert.Empty(x.Available); Assert.NotEmpty(x.Remaining); });
         Assert.Equal(CoachingCatalog.Exercises.Count, CoachingCatalog.Exercises.Select(x => x.Id).Distinct().Count());

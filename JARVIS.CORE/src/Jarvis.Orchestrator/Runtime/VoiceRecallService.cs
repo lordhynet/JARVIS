@@ -18,7 +18,7 @@ public sealed class VoiceRecallService(IRuntimeStore store, ISessionReader sessi
         var session = await sessions.GetAsync(sessionId, ct);
         Guard.Require(session is { Status: SessionStatus.Active }, 409, "Resume the conversation before reviewing cards.");
         var source = session.Messages?.LastOrDefault(m => m.Role == ChatRoles.User);
-        if (action != "current") Guard.Require(source is not null && source.RequestId == sourceId, 409, "Use the latest captured user speech for that review action.");
+        if (action != "current") Guard.Require(source is not null && !source.Restricted && source.RequestId == sourceId, 409, "Use the latest unrestricted captured user speech for that review action.");
         return await store.UpdateAsync(s =>
         {
             Guard.Require(!s.RetiredSessions.Contains(sessionId), 409, "This conversation was retired.");
@@ -36,7 +36,7 @@ public sealed class VoiceRecallService(IRuntimeStore store, ISessionReader sessi
             {
                 if (active is not null) return View(s, active);
                 Guard.Require(s.VoiceRecalls.Count < 1000, 409, "Voice recall history is full; apply retention before starting more.");
-                var card = s.Learning.Values.Where(c => c.DueAt <= now).OrderBy(c => c.DueAt).ThenBy(c => c.Id).FirstOrDefault();
+                var card = s.Learning.Values.Where(c => c.SourceRecordingId is null && c.DueAt <= now).OrderBy(c => c.DueAt).ThenBy(c => c.Id).FirstOrDefault();
                 if (card is null) return null;
                 var recall = new VoiceRecall(startId, sessionId, card.Id, Fingerprint(card), "Question", sourceId, now, now);
                 s.VoiceRecalls.Add(recall.Id, recall); return View(s, recall);

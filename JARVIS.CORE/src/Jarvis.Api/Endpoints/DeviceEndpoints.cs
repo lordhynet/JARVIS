@@ -11,9 +11,11 @@ public static class DeviceEndpoints
     public static void MapDeviceEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup(CoreRoutes.Devices).WithTags("Devices").RequireAuthorization(CorePolicies.OwnerOrCompanion);
-        group.MapGet("/", async (HttpContext context, IQueryHandler<ListDevices, IReadOnlyList<DeviceView>> handler, CancellationToken ct) => {
+        group.MapGet("/", async (HttpContext context, IConfiguration config, ILoggerFactory logs, IQueryHandler<ListDevices, IReadOnlyList<DeviceView>> handler, CancellationToken ct) => {
             var devices = await handler.HandleAsync(new ListDevices(), ct);
-            return context.Items[ApiKeyMiddleware.ActorItem] is CoreActor { DeviceId: { } id }
+            var displayName = OwnerDisplayName.Read(config, logs.CreateLogger("Jarvis.OwnerDisplayName"));
+            devices = devices.Select(d => d with { OwnerDisplayName = displayName }).ToArray();
+            return context.Items[ApiKeyMiddleware.ActorItem] is CoreActor { DeviceId: { } id, IsOwnerBrowser: false }
                 ? devices.Where(d => d.Device.Registration.DeviceId == id).ToArray() : devices;
         });
         group.MapPost(CoreRoutes.DeviceCredentialSuffix, (string id, ICommandHandler<IssueDeviceCredential, IssuedDeviceCredential> handler, CancellationToken ct) => handler.HandleAsync(new IssueDeviceCredential(id), ct)).RequireAuthorization(CorePolicies.DeviceManage);
@@ -27,5 +29,22 @@ public static class DeviceEndpoints
         });
         group.MapPost("/{id}/verify", (string id, ICommandHandler<VerifyDevice, RegisteredDevice> handler, CancellationToken ct) =>
             handler.HandleAsync(new VerifyDevice(id), ct)).RequireAuthorization(Jarvis.Api.Security.CorePolicies.DeviceVerify);
+        group.MapPost(PairingCodesSuffix, (CreatePairingCodeRequest request, ICommandHandler<CreatePairingCode, IssuedPairingCode> handler, CancellationToken ct) =>
+            handler.HandleAsync(new CreatePairingCode(request), ct)).RequireAuthorization(CorePolicies.DeviceManage);
+
+        // The phone has no credential yet, so this route sits outside /api. Only a single-use owner code is accepted.
+        app.MapPost(PairingExchangeRoute, async (PairingExchangeRequest request, CoreRequestLimits limits, IPrivacyReader privacy,
+            ICommandHandler<ExchangePairingCode, IssuedDeviceCredential> handler, CancellationToken ct) =>
+        {
+            Guard.Require(limits.AdmitAnonymous(), 429, "Too many pairing attempts. Wait a minute.");
+            var status = await privacy.StatusAsync(ct);
+            PrivacyContext.RequireWrite(status);
+            using var scope = PrivacyContext.Enter(status.Epoch);
+            var issued = await handler.HandleAsync(new ExchangePairingCode(request), ct);
+            return new { deviceId = issued.DeviceId, credential = issued.Secret };
+        }).WithTags("Devices").AllowAnonymous();
     }
+
+    public const string PairingCodesSuffix = "/pairing-codes";
+    public const string PairingExchangeRoute = "/pair/exchange";
 }

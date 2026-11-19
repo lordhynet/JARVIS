@@ -33,6 +33,7 @@ public sealed class ProviderFactory(Func<HttpRequestMessage, Task<HttpResponseMe
         builder.UseSetting("HomeAssistant:Token", "fake-ha-token");
         builder.UseSetting("HomeAssistant:AllowedEntities:0", "light.desk");
         builder.ConfigureServices(s => s.AddHttpClient("providers").ConfigurePrimaryHttpMessageHandler(() => new StubHttpHandler(handle)));
+        builder.ConfigureServices(s => s.AddHttpClient(TflTravelSource.ClientName).ConfigurePrimaryHttpMessageHandler(() => new StubHttpHandler(handle)));
         builder.ConfigureServices(s => s.AddSingleton<IAudioDurationProbe, FixtureAudioProbe>());
     }
     public HttpClient Client()
@@ -133,7 +134,7 @@ public sealed class ProviderIntegrationTests
     public async Task Morning_briefing_survives_calendar_outage_and_keeps_transport_and_learning()
     {
         using var host = new ProviderFactory(request => Task.FromResult(request.RequestUri!.Host == "api.tfl.gov.uk"
-            ? Reply("""[{"id":"jubilee","name":"Jubilee","lineStatuses":[{"statusSeverityDescription":"Good Service"}]}]""")
+            ? Reply("""[{"id":"jubilee","name":"Jubilee","lineStatuses":[{"statusSeverity":10,"statusSeverityDescription":"Good Service"}]}]""")
             : Reply("{}", HttpStatusCode.Unauthorized)));
         using var client = host.Client(); var briefing = await client.GetFromJsonAsync<JsonElement>("/api/briefing");
         var sections = briefing.GetProperty("sections").EnumerateArray().ToList();

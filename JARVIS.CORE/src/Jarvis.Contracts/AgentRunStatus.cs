@@ -3,6 +3,7 @@ namespace Jarvis.Contracts;
 public static class AgentRunStatus
 {
     public const string Queued = "Queued";
+    public const string AwaitingSetup = "AwaitingSetup";
     public const string Running = "Running";
     public const string Succeeded = "Succeeded";
     public const string Failed = "Failed";

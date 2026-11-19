@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Jarvis.Api.Endpoints;
 using Jarvis.Api.Hubs;
 using Jarvis.Api.Security;
+using Jarvis.Orchestrator.Travel;
 using Jarvis.Orchestrator.Sessions;
 using Jarvis.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -60,20 +61,22 @@ else
             o.Listen(address, host.GetValue<int>("HttpsPort"), listen => listen.UseHttps(host["CertificatePath"]!, builder.Configuration["Server:Tls:Password"]));
     });
 }
+_ = BrowserOwnerAccess.RequiresEnrollment(builder.Configuration); // Reject an invalid security migration flag before accepting traffic.
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = builder.Configuration.GetValue("Server:MaxRequestBodyBytes", 11_000_000L));
 builder.Services.AddHttpClient("providers", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(45);
     client.MaxResponseContentBufferSize = 8_000_000;
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<CoreRequestLimits>();
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = 429;
-    foreach (var policy in new[] { "cloud", "voice" })
+    foreach (var policy in new[] { CoreRequestLimits.Cloud, CoreRequestLimits.Voice })
         o.AddPolicy(policy, context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
-            context.Items[ApiKeyMiddleware.ActorItem] is CoreActor actor ? actor.SubjectId : "unauthenticated:" + context.Connection.RemoteIpAddress,
-            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = policy == "voice" ? 40 : 20,
-                Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+            context.Items[ApiKeyMiddleware.ActorItem] is CoreActor actor ? actor.SubjectId : "unauthenticated",
+            _ => CoreRequestLimits.Window(context.Items[ApiKeyMiddleware.ActorItem] is not CoreActor ? CoreRequestLimits.AnonymousPermits :
+                policy == CoreRequestLimits.Voice ? CoreRequestLimits.VoicePermits : CoreRequestLimits.CloudPermits)));
 });
 
 // Enums as readable strings ("MockInterview") in JSON, for both REST and SignalR.
@@ -102,6 +105,8 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IDeviceCommandReader, PostgresDeviceCommandStore>();
     builder.Services.AddSingleton<IDeviceReceiptReader, PostgresDeviceReceiptStore>();
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
+    builder.Services.AddSingleton<ITravelStore, PostgresTravelStore>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingStore, PostgresRecordingStore>();
     builder.Services.AddSingleton<ICoreTransaction, PostgresCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
     builder.Services.AddSingleton<IPrivacyStore, PostgresPrivacyStore>();
@@ -117,6 +122,8 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IDeviceCommandReader, InMemoryDeviceCommandStore>();
     builder.Services.AddSingleton<IDeviceReceiptReader, InMemoryDeviceReceiptStore>();
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
+    builder.Services.AddSingleton<ITravelStore, MemoryTravelStore>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingStore, Jarvis.Orchestrator.Recordings.MemoryRecordingStore>();
     builder.Services.AddSingleton<ICoreTransaction, MemoryCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
     builder.Services.AddSingleton<IPrivacyStore, InMemoryPrivacyStore>();
@@ -135,6 +142,17 @@ builder.Services.AddSingleton<SessionLifecycleService>();
 builder.Services.AddSingleton<LearningService>();
 builder.Services.AddSingleton<ToolService>();
 builder.Services.AddSingleton<ProviderGateway>();
+builder.Services.AddSingleton<ITravelSource, TflTravelSource>();
+builder.Services.AddSingleton<ITravelDeliveryPolicy, TravelDeliverySettings>();
+builder.Services.AddSingleton<TravelService>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingAudioFiles>(_ => new EncryptedRecordingFiles(() => new(
+    builder.Configuration.GetValue("Recordings:Enabled", false), builder.Configuration["Recordings:Directory"] ?? "recordings", builder.Configuration["Recordings:EncryptionKey"])));
+if (!testing) builder.Services.AddHostedService<Jarvis.Api.Privacy.RecordingRetentionWorker>();
+builder.Services.AddSingleton<TravelMonitor>();
+if (!testing) builder.Services.AddHostedService<TravelMonitorWorker>();
+builder.Services.AddHttpClient(TflTravelSource.ClientName, client => { client.Timeout = TimeSpan.FromSeconds(8); client.MaxResponseContentBufferSize = 2_000_000; })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false }).RemoveAllLoggers();
+if (testing) builder.Services.AddHttpClient(TflTravelSource.ClientName).ConfigurePrimaryHttpMessageHandler(() => new UnconfiguredTflTestHandler());
 builder.Services.AddSingleton<HomeAssistantCommandAdapter>();
 builder.Services.AddSingleton<IHomeControl>(s => s.GetRequiredService<HomeAssistantCommandAdapter>());
 if (!testing) builder.Services.AddHostedService<HomeAssistantCommandWorker>();
@@ -142,6 +160,7 @@ builder.Services.AddSingleton<IIntegrationReader>(s => s.GetRequiredService<Prov
 builder.Services.AddSingleton<OpenAiProvider>();
 builder.Services.AddSingleton<IConversationProvider>(s => s.GetRequiredService<OpenAiProvider>());
 builder.Services.AddSingleton<ITranscriptionProvider>(s => s.GetRequiredService<OpenAiProvider>());
+builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingTranscriber, RecordingTranscriber>();
 builder.Services.AddSingleton<ConversationService>();
 builder.Services.AddJarvisCqrs();
 builder.Services.AddHostedService<RuntimeWorker>();
@@ -151,11 +170,17 @@ builder.Services.AddSingleton<IWorkflowStepExecutor, LegacyPracticePlanExecutor>
 builder.Services.AddSingleton<IWorkflowStepExecutor, LegacyInterviewBriefExecutor>();
 builder.Services.AddSingleton<UsageBudget>();
 builder.Services.AddSingleton<IBudgetPolicySource, BudgetSettings>();
+builder.Services.AddSingleton<FxQuoteCache>();
+builder.Services.AddHttpClient(FxAutoSettings.ClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+builder.Services.AddHostedService<FxQuoteRefresher>();
 builder.Services.AddSingleton<BudgetApprovalService>();
 builder.Services.AddSingleton<BudgetManagementAuthorization>();
 builder.Services.AddSingleton<ManagedAi>();
 builder.Services.AddSingleton<RateCard>();
-builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.ITextReasoningProvider, TextReasoningService>();
+builder.Services.AddSingleton<TextReasoningService>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.IIntelligenceEvaluator, IntelligenceEvaluator>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.ITextReasoningProvider>(s => s.GetRequiredService<TextReasoningService>());
 builder.Services.AddSingleton<ITextReasoningAdapter, OpenAiResponsesAdapter>();
 builder.Services.AddSingleton<ITextReasoningAdapter, AnthropicMessagesAdapter>();
 builder.Services.AddSingleton<AiCoach>();
@@ -181,16 +206,37 @@ builder.Services.AddSingleton<DeviceGrantService>();
 builder.Services.AddSingleton<DeviceCommandService>();
 builder.Services.AddSingleton<DeviceReceiptService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Runtime.IDeviceCapabilityCatalog>(
-    _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All));
+    _ => new Jarvis.Orchestrator.Runtime.DeviceCapabilityCatalog(Jarvis.Orchestrator.Runtime.BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCapabilities.All)));
 builder.Services.AddSingleton<OwnerAuthorization>();
+builder.Services.AddSingleton<BrowserOwnerAccess>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IWorkflowCatalog, Jarvis.Orchestrator.Domains.WorkflowCatalog>();
-builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(_ => new Jarvis.Orchestrator.Domains.CapabilityCatalog(Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat([new("core_template_practice", "Deliver an authored domain practice template without AI or tools.", Jarvis.Orchestrator.Domains.CapabilityRisk.ReadOnly)])));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(s => new Jarvis.Orchestrator.Domains.CapabilityCatalog(
+    Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat(AgentCapabilityIds.BuiltIns).Concat(
+        s.GetRequiredService<IDeviceCapabilityCatalog>().Installed.Select(d => new Jarvis.Orchestrator.Domains.CapabilityDescriptor(d.Id, d.Description,
+            Jarvis.Orchestrator.Domains.CapabilityRisk.ExternalAction, d.Version, d.ArgumentSchemaJson, [ReasoningDataClass.Personal],
+            d.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible, d.Risk == DeviceCapabilityRisk.Irreversible, ActionRisk: d.Risk)))));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityRegistry>(s => s.GetRequiredService<Jarvis.Orchestrator.Domains.ICapabilityCatalog>());
+builder.Services.AddSingleton<AgentSpecialistCatalog>(_ => new AgentSpecialistCatalog());
+builder.Services.AddSingleton<IAgentToolHandler, AgentTemplateTool>();
+builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentReasoningTool(s.GetRequiredService<TextReasoningService>(), false));
+builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentReasoningTool(s.GetRequiredService<TextReasoningService>(), true));
+builder.Services.AddSingleton<AgentToolGateway>();
+builder.Services.AddSingleton<AgentActionService>();
+foreach (var capability in BuiltInDeviceCapabilities.All.Concat(WindowsDeviceCapabilities.All)) {
+    var id = capability.Id;
+    builder.Services.AddSingleton<IAgentToolHandler>(s => new AgentDeviceTool(id, s.GetRequiredService<IRuntimeStore>(),
+        s.GetRequiredService<IDeviceGrantStore>(), s.GetRequiredService<IDeviceCapabilityCatalog>(), s.GetRequiredService<DeviceCommandService>(), s.GetRequiredService<TimeProvider>()));
+}
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainFactory, Jarvis.Orchestrator.Domains.DomainFactory>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.ContextMemoryService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainRegistry, Jarvis.Orchestrator.Domains.DomainRegistryService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IDomainCatalog, Jarvis.Orchestrator.Domains.DomainCatalog>();
 builder.Services.AddSingleton<HubTickets>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Coaching.VoiceCoachingService>();
+builder.Services.AddSingleton<Jarvis.Api.Voice.CoreHandoffVoiceTool>();
+builder.Services.AddSingleton<Jarvis.Api.Voice.VoiceBriefingService>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreVoiceTools>();
+builder.Services.AddSingleton<Jarvis.Api.Voice.CoreWindowsVoiceTool>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.CoreHomeVoiceTool>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Intelligence.IRealtimeConnectionFactory, Jarvis.Api.Voice.RealtimeConnectionFactory>();
 builder.Services.AddSingleton<Jarvis.Api.Voice.RealtimeGateway>();
@@ -240,6 +286,7 @@ app.Use(async (context, next) =>
     catch (DomainException ex) when (!context.Response.HasStarted)
     {
         context.Response.StatusCode = ex.StatusCode;
+        if (ex.RetryAfter is { } retry) context.Response.Headers.RetryAfter = Math.Clamp((int)Math.Ceiling(retry.TotalSeconds), 1, 86400).ToString(System.Globalization.CultureInfo.InvariantCulture);
         await context.Response.WriteAsJsonAsync(new { error = ex.Message });
     }
     catch (Exception ex) when (!context.Response.HasStarted && (ex is HttpRequestException || ex is OperationCanceledException && !context.RequestAborted.IsCancellationRequested))
@@ -268,6 +315,9 @@ app.MapAgentEndpoints();
 app.MapDomainEndpoints();
 app.MapBudgetEndpoints();
 app.MapPrivacyEndpoints();
+app.MapBrowserAccessEndpoints();
+app.MapTravelEndpoints();
+app.MapRecordingEndpoints();
 app.MapPost("/api/hubs/ticket", (HubTickets tickets, CancellationToken ct) => tickets.IssueAsync(ct)).RequireAuthorization(CorePolicies.Owner);
 app.MapImportEndpoints();
 app.MapGet("/api/push/status", (PushNotifications push, IConfiguration config) => new { ready = push.Ready, publicKey = push.Ready ? config["Push:PublicKey"] : "" }).RequireAuthorization(CorePolicies.Owner);

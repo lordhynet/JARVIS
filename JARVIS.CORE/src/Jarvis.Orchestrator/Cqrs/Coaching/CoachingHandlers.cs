@@ -31,11 +31,13 @@ public sealed record GetCoaching(Guid Id) : IQuery<CoachingAttemptView>;
 public sealed record ListCoaching(Guid SessionId) : IQuery<IReadOnlyList<CoachingAttemptSummary>>;
 public sealed record GetProgramme : IQuery<ProgrammeView>;
 public sealed record GetSessionReview(Guid SessionId) : IQuery<SessionReview>;
+public sealed record GetSpeechDelivery(Guid? SessionId) : IQuery<IReadOnlyList<SpeechDeliverySession>>;
 public sealed class CoachingQueryHandlers(IRuntimeReader reader, ISessionReader sessions, TimeProvider clock) :
     IQueryHandler<GetCoachingPrompt, CoachingPrompt>, IQueryHandler<GetCoaching, CoachingAttemptView>,
     IQueryHandler<ListCoaching, IReadOnlyList<CoachingAttemptSummary>>, IQueryHandler<GetProgramme, ProgrammeView>,
-    IQueryHandler<GetSessionReview, SessionReview>
+    IQueryHandler<GetSessionReview, SessionReview>, IQueryHandler<GetSpeechDelivery, IReadOnlyList<SpeechDeliverySession>>
 {
+    public Task<IReadOnlyList<SpeechDeliverySession>> HandleAsync(GetSpeechDelivery q, CancellationToken ct = default) => reader.ReadAsync(s => SpeechDelivery.Sessions(s, q.SessionId), ct);
     public Task<CoachingPrompt> HandleAsync(GetCoachingPrompt q, CancellationToken ct = default) => reader.ReadAsync(s => CoachingService.Prompt(s, q.ExerciseId, q.StoryId, q.StoryVersion, q.ClaimIndex), ct);
     public Task<CoachingAttemptView> HandleAsync(GetCoaching q, CancellationToken ct = default) => reader.ReadAsync(s =>
     {

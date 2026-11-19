@@ -4,6 +4,8 @@ COPY Directory.Build.props global.json ./
 COPY appsettings.example.json ./appsettings.json
 COPY appsettings.example.json ./appsettings.example.json
 COPY src/ ./src/
+# The offline intelligence evaluation corpus is embedded into Jarvis.Orchestrator at build time.
+COPY evals/ ./evals/
 RUN dotnet publish src/Jarvis.Api/Jarvis.Api.csproj -c Release -o /app --no-self-contained
 
 FROM mcr.microsoft.com/dotnet/aspnet:11.0@sha256:bc0d6653979efba491ab3d6f589d691f96c309c3c3ef81325efa6978e7b7f242
@@ -11,6 +13,7 @@ ARG FFMPEG_VERSION=7:8.0.1-3ubuntu2
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg=${FFMPEG_VERSION} && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app ./
+RUN mkdir -p /app/recordings && chown "$APP_UID" /app/recordings && chmod 700 /app/recordings
 ENV ASPNETCORE_HTTP_PORTS=8080
 USER $APP_UID
 EXPOSE 8080

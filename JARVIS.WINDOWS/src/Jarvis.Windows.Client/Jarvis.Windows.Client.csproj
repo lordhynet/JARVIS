@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../../JARVIS.CORE/src/Jarvis.Contracts/Jarvis.Contracts.csproj" />
+  </ItemGroup>
+</Project>

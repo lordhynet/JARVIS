@@ -30,6 +30,8 @@ public interface IDomainRegistry
     Task<DomainOperationReceipt> ActivateAsync(string key, ActivateDomainRequest request, BudgetActor actor, CancellationToken ct);
     Task<DomainOperationReceipt> DisableAsync(string key, DisableDomainRequest request, BudgetActor actor, CancellationToken ct);
     Task<DomainResolved?> ResolveActiveAsync(string key, CancellationToken ct);
+    Task<DomainResolved?> ResolveLearningAsync(LearningDomain domain, CancellationToken ct) => ResolveActiveAsync(DomainAliases.LearningKey(domain), ct);
+    Task<DomainResolved?> ResolveActivityAsync(ActivityType activity, CancellationToken ct) => ResolveActiveAsync(DomainAliases.ActivityKey(activity), ct);
     Task<IReadOnlyList<DomainResolved>> ActiveAsync(CancellationToken ct);
     Task<UserDomainState> GetStateAsync(string key, CancellationToken ct);
     Task<UserDomainState> SaveStateAsync(string key, SaveDomainStateRequest request, CancellationToken ct);

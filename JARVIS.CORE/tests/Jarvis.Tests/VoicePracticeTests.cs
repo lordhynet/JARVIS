@@ -37,7 +37,7 @@ public sealed class VoicePracticeTests
         using var host = new ProviderFactory(_ => throw new InvalidOperationException());
         var tools = host.Services.GetRequiredService<CoreVoiceTools>();
         var args = JsonSerializer.Serialize(new { exercise_id = exercise, story_id = (string?)null, story_version = (int?)null, claim_index = (int?)null });
-        using var reply = JsonDocument.Parse(await tools.ExecuteAsync("core_coaching_prompt", args, Guid.NewGuid(), new HashSet<Guid>(), default));
+        using var reply = JsonDocument.Parse(await tools.ExecuteAsync("core_coaching_prompt", args, await Session(host.Services), new HashSet<Guid>(), default));
         Assert.False(reply.RootElement.GetProperty("ok").GetBoolean());
     }
 
@@ -65,6 +65,7 @@ public sealed class VoicePracticeTests
     {
         var id = Guid.NewGuid(); var now = DateTimeOffset.UtcNow;
         await services.GetRequiredService<ISessionStore>().AddAsync(new(id, ActivityType.General, "Voice fixture", SessionStatus.Active, null, null, now, now, []));
+        await VoiceToolFixture.OpenAsync(services, id);
         return id;
     }
     private static async Task<Guid> Say(IServiceProvider services, Guid session, string text, string role = "user")
@@ -153,9 +154,10 @@ public sealed class VoicePracticeTests
             var card = Guid.NewGuid(); s.Learning[card] = new(card, LearningDomain.CSharpDotNet, "Question", "Secret reference answer", 0, 5, now, now); return true;
         });
         var tools = services.GetRequiredService<CoreVoiceTools>();
-        var goals = await tools.ExecuteAsync("core_context", "{\"section\":\"goals\"}", Guid.NewGuid(), new HashSet<Guid>(), default);
+        var session = await Session(services);
+        var goals = await tools.ExecuteAsync("core_context", "{\"section\":\"goals\"}", session, new HashSet<Guid>(), default);
         Assert.Contains("Visible goal", goals); Assert.DoesNotContain("Private goal", goals);
-        var due = await tools.ExecuteAsync("core_context", "{\"section\":\"due\"}", Guid.NewGuid(), new HashSet<Guid>(), default);
+        var due = await tools.ExecuteAsync("core_context", "{\"section\":\"due\"}", session, new HashSet<Guid>(), default);
         Assert.Contains("Question", due); Assert.DoesNotContain("Secret reference answer", due);
     }
     [Fact]

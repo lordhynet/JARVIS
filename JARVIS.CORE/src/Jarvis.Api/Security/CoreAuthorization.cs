@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 
 namespace Jarvis.Api.Security;
@@ -20,6 +21,7 @@ public static class CorePolicies
     public const string DeviceCommandConfirm = "CoreOwnerStepUp:" + DeviceCommandService.ConfirmScope;
     public const string ToolConfirm = "CoreOwnerStepUp:" + ToolService.ConfirmScope;
     public const string DomainManage = "CoreOwnerStepUp:domain.manage";
+    public const string IntelligenceEvaluate = "CoreOwnerStepUp:" + Jarvis.Orchestrator.Intelligence.IntelligenceEvaluation.ManageScope;
     public const string BudgetManage = "CoreOwnerStepUp:budget.manage";
 }
 
@@ -38,7 +40,7 @@ public sealed class JarvisItemAuthenticationHandler(
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, actor.SubjectId),
-            new("jarvis_actor", actor.DeviceId is null ? "owner" : "companion")
+            new("jarvis_actor", actor.DeviceId is null || actor.IsOwnerBrowser ? "owner" : "companion")
         };
         if (actor.DeviceId is not null) claims.Add(new("jarvis_device_id", actor.DeviceId));
         if (Context.Items[ApiKeyMiddleware.FingerprintItem] is string fingerprint)
@@ -98,6 +100,11 @@ public static class CoreAuthorizationRegistration
     {
         services.AddHttpContextAccessor();
         services.AddAuthentication(CorePolicies.Scheme).AddScheme<AuthenticationSchemeOptions, JarvisItemAuthenticationHandler>(CorePolicies.Scheme, _ => { });
+        // Core authenticates with keys and tickets. Keep framework protection in process memory and skip disk key-ring startup.
+        services.AddDataProtection().UseEphemeralDataProtectionProvider();
+        var keyRingStartup = services.SingleOrDefault(descriptor => descriptor.ServiceType == typeof(IHostedService) &&
+            descriptor.ImplementationType?.FullName == "Microsoft.AspNetCore.DataProtection.Internal.DataProtectionHostedService");
+        if (keyRingStartup is not null) services.Remove(keyRingStartup);
         services.AddAuthorization(options =>
         {
             options.AddPolicy(CorePolicies.Owner, p => p.RequireAuthenticatedUser().AddRequirements(new JarvisActorRequirement("owner")));

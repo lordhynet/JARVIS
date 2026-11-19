@@ -9,7 +9,7 @@ public sealed class PracticePlanProcessor(IRuntimeReader reader, TimeProvider cl
     public Task<PracticePlan> BuildAsync(CancellationToken ct = default) => reader.ReadAsync(state =>
     {
         var now = clock.GetUtcNow();
-        var steps = state.Learning.Values.Where(x => x.Domain != LearningDomain.French && x.DueAt <= now)
+        var steps = state.Learning.Values.Where(x => x.SourceRecordingId is null && x.Domain != LearningDomain.French && x.DueAt <= now)
             .OrderBy(x => x.DueAt).ThenByDescending(x => x.Difficulty).ThenBy(x => x.Id)
             .Take(2).Select(x => new PracticeStep("learning", x.Id, "Recall the answer to your saved learning card.")).ToList();
         var story = state.Stories.Values.OrderBy(x => x.UpdatedAt).ThenBy(x => x.Id).FirstOrDefault();

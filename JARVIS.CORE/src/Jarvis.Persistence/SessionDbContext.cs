@@ -12,6 +12,14 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<PrivacyJobRow> PrivacyJobs => Set<PrivacyJobRow>();
     public DbSet<CheckpointRow> Checkpoints => Set<CheckpointRow>();
     public DbSet<RuntimeDocument> RuntimeDocuments => Set<RuntimeDocument>();
+    public DbSet<RuntimeAudioRow> RuntimeAudioState => Set<RuntimeAudioRow>();
+    public DbSet<RuntimeVoiceTicketRow> RuntimeVoiceTickets => Set<RuntimeVoiceTicketRow>();
+    public DbSet<RuntimeVoiceTurnRow> RuntimeVoiceTurns => Set<RuntimeVoiceTurnRow>();
+    public DbSet<TravelRouteRow> TravelRoutes => Set<TravelRouteRow>();
+    public DbSet<TravelLineStateRow> TravelLineStates => Set<TravelLineStateRow>();
+    public DbSet<TravelMonitorRow> TravelMonitorState => Set<TravelMonitorRow>();
+    public DbSet<InterviewRecordingRow> InterviewRecordings => Set<InterviewRecordingRow>();
+    public DbSet<RecordingChunkRow> RecordingChunks => Set<RecordingChunkRow>();
     public DbSet<WorkflowRunRow> WorkflowRuns => Set<WorkflowRunRow>();
     public DbSet<WorkflowEventRow> WorkflowEvents => Set<WorkflowEventRow>();
     public DbSet<DomainDefinitionRow> DomainDefinitions => Set<DomainDefinitionRow>();
@@ -27,6 +35,9 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     protected override void OnModelCreating(ModelBuilder model)
     {
         DomainModel.Configure(model);
+        RuntimeHotModel.Configure(model);
+        TravelModel.Configure(model);
+        RecordingModel.Configure(model);
         model.Entity<PrivacyControlRow>(b => { b.HasKey(x => x.Id); b.HasData(new PrivacyControlRow()); });
         model.Entity<PrivacyJobRow>(b => { b.HasKey(x => x.Id); b.Property(x => x.CountsJson).HasColumnType("jsonb"); b.HasIndex(x => x.CompletedAt); });
         model.Entity<WorkflowRunRow>(b =>
@@ -46,6 +57,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
         {
             b.HasKey(r => r.Id);
             b.Property(r => r.Json).HasColumnType("jsonb");
+            b.Property(r => r.Fingerprint).HasMaxLength(64).HasDefaultValue("");
             b.HasData(new RuntimeDocument { Id = 1, Json = "{}" });
         });
         model.Entity<SessionRow>(b =>
@@ -54,6 +66,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
             b.HasKey(s => s.Id);
             b.Property(s => s.Title).HasMaxLength(120);
             b.Property(s => s.PendingVoiceProjectionIdsJson).HasColumnType("jsonb");
+            b.Property(s => s.VoiceSummaryJson).HasColumnType("jsonb");
             b.HasIndex(s => s.UpdatedAt);
             b.HasMany(s => s.Checkpoints).WithOne().HasForeignKey(c => c.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -121,13 +134,15 @@ public sealed class SessionRow
     public string? HandoffJson { get; set; }
     public string MessagesJson { get; set; } = "[]";
     public string PendingVoiceProjectionIdsJson { get; set; } = "[]";
+    public string? VoiceSummaryJson { get; set; }
 
     public ConversationSession ToContract() => new(Id, Activity, Title, Status, ActiveDeviceId,
         CurrentTask, CreatedAt, UpdatedAt,
         Checkpoints.OrderBy(c => c.Sequence).Select(c => c.ToContract()).ToList(),
         HandoffJson is null ? null : JsonSerializer.Deserialize<SessionHandoff>(HandoffJson),
         JsonSerializer.Deserialize<List<ChatMessage>>(MessagesJson),
-        JsonSerializer.Deserialize<List<Guid>>(PendingVoiceProjectionIdsJson));
+        JsonSerializer.Deserialize<List<Guid>>(PendingVoiceProjectionIdsJson),
+        VoiceSummaryJson is null ? null : JsonSerializer.Deserialize<SessionVoiceSummary>(VoiceSummaryJson));
 
     public static SessionRow FromContract(ConversationSession s) => new()
     {
@@ -137,7 +152,8 @@ public sealed class SessionRow
         Checkpoints = s.Checkpoints.Select(CheckpointRow.FromContract).ToList(),
         HandoffJson = s.Handoff is null ? null : JsonSerializer.Serialize(s.Handoff),
         MessagesJson = JsonSerializer.Serialize(s.Messages ?? []),
-        PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(s.PendingVoiceProjectionIds ?? [])
+        PendingVoiceProjectionIdsJson = JsonSerializer.Serialize(s.PendingVoiceProjectionIds ?? []),
+        VoiceSummaryJson = s.VoiceSummary is null ? null : JsonSerializer.Serialize(s.VoiceSummary)
     };
 
     // PostgreSQL timestamps store microseconds; normalize responses before returning
@@ -160,16 +176,17 @@ public sealed class DeviceGrantRow
     public string? GrantedBy { get; set; }
     public string? Reason { get; set; }
     public bool PreApproved { get; set; }
+    public bool AllowWhenLocked { get; set; }
 
     public Jarvis.Orchestrator.Runtime.DeviceGrant Contract() => new(Id, DeviceId, CapabilityId, CapabilityVersion,
-        ConstraintsJson, CredentialHash, GrantedAt, ExpiresAt, RevokedAt, GrantedBy, Reason, PreApproved);
+        ConstraintsJson, CredentialHash, GrantedAt, ExpiresAt, RevokedAt, GrantedBy, Reason, PreApproved, AllowWhenLocked);
     public static DeviceGrantRow From(Jarvis.Orchestrator.Runtime.DeviceGrant grant) => new()
     {
         Id = grant.Id, DeviceId = grant.DeviceId, CapabilityId = grant.CapabilityId,
         CapabilityVersion = grant.CapabilityVersion, ConstraintsJson = grant.ConstraintsJson,
         CredentialHash = grant.CredentialHash, GrantedAt = SessionRow.DatabaseTimestamp(grant.GrantedAt),
         ExpiresAt = SessionRow.DatabaseTimestamp(grant.ExpiresAt), RevokedAt = grant.RevokedAt,
-        GrantedBy = grant.GrantedBy, Reason = grant.Reason, PreApproved = grant.PreApproved
+        GrantedBy = grant.GrantedBy, Reason = grant.Reason, PreApproved = grant.PreApproved, AllowWhenLocked = grant.AllowWhenLocked
     };
 }
 

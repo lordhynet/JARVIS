@@ -60,14 +60,17 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
         var descriptor = await workflowCatalog.ResolveAsync(request.Workflow, ct);
         RequireConsent(descriptor, request.AllowCloudProcessing);
         var brief = string.IsNullOrWhiteSpace(request.Brief) ? "" : Guard.Text(request.Brief, "Goal brief", 2000);
+        var occurrence = "manual:" + Hash(brief) + (request.HoldForSetup ? ":setup" : "");
         return await store.UpdateAsync(s =>
         {
             if (s.AgentRuns.TryGetValue(request.RequestId, out var existing))
             {
                 Guard.Require(existing.DeletedAt is null && existing.Workflow == request.Workflow && existing.AllowCloudProcessing == request.AllowCloudProcessing &&
-                    existing.Occurrence == "manual:" + Hash(brief), 409, "Agent request ID belongs to different or deleted work."); return View(s, existing);
+                    existing.Occurrence == occurrence, 409, "Agent request ID belongs to different or deleted work."); return View(s, existing);
             }
-            return View(s, Create(s, request.RequestId, null, "manual:" + Hash(brief), request.Workflow, request.AllowCloudProcessing, brief, clock.GetUtcNow(), descriptor));
+            var created = Create(s, request.RequestId, null, occurrence, request.Workflow, request.AllowCloudProcessing, brief, clock.GetUtcNow(), descriptor);
+            if (request.HoldForSetup) s.AgentRuns[created.Id] = created = created with { Status = AgentRunStatus.AwaitingSetup, Deadline = clock.GetUtcNow().AddDays(1) };
+            return View(s, created);
         }, ct);
     }
     private AgentRun Create(RuntimeState s, Guid id, Guid? scheduleId, string occurrence, string workflow, bool consent, string brief, DateTimeOffset now, WorkflowDescriptor descriptor)
@@ -109,12 +112,12 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             if (!s.AgentRuns.ContainsKey(id)) { Create(s, id, schedule.Id, occurrence, schedule.Workflow, schedule.AllowCloudProcessing, schedule.Title, now, available[schedule.Workflow]); count++; }
             s.AgentSchedules[schedule.Id] = schedule with { LastOccurrence = occurrence };
         }
-        foreach (var run in s.AgentRuns.Values.Where(x => x.DeletedAt is null && x.Status is AgentRunStatus.Queued or AgentRunStatus.Running).ToList())
+        foreach (var run in s.AgentRuns.Values.Where(x => x.DeletedAt is null && x.Status is AgentRunStatus.Queued or AgentRunStatus.Running or AgentRunStatus.AwaitingSetup).ToList())
         {
             var tasks = run.TaskIds.Select(id => s.AgentTasks[id]).ToList();
             if (run.Deadline <= now)
             {
-                foreach (var task in tasks.Where(x => x.Status is AgentTaskStatus.Queued or AgentTaskStatus.Running or AgentTaskStatus.RetryScheduled))
+                foreach (var task in tasks.Where(x => x.Status is AgentTaskStatus.Queued or AgentTaskStatus.Running or AgentTaskStatus.RetryScheduled or AgentTaskStatus.AwaitingApproval or AgentTaskStatus.AwaitingReceipt))
                     s.AgentTasks[task.Id] = task with { Status = AgentTaskStatus.Failed, ClaimToken = null, ErrorCode = "deadline_expired", CompletedAt = now };
                 s.AgentRuns[run.Id] = run with { Status = AgentRunStatus.Expired }; continue;
             }
@@ -135,7 +138,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             var local = TimeZoneInfo.ConvertTime(now, TrainingProjection.Zone(s.AgentControls.TimeZone)); var time = TimeOnly.FromDateTime(local.DateTime);
             var start = LocalTime(s.AgentControls.QuietStart); var end = LocalTime(s.AgentControls.QuietEnd);
             var quiet = start == end ? false : start < end ? time >= start && time < end : time >= start || time < end;
-            if (!quiet) foreach (var message in s.AgentOutbox.Values.Where(x => !x.Delivered && x.DeliverAfter <= now && x.ExpiresAt > now).ToList())
+            if (!quiet) foreach (var message in s.AgentOutbox.Values.Where(x => x.Category != NotificationCategories.Travel && !x.Delivered && x.DeliverAfter <= now && x.ExpiresAt > now).ToList())
                 s.AgentOutbox[message.Id] = message with { Delivered = true };
         }
         return count;
@@ -185,7 +188,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             Guard.Require(s.AgentTasks.TryGetValue(id, out var task) && task.Status == AgentTaskStatus.Running && task.ClaimToken == token && task.LeaseExpiresAt > clock.GetUtcNow(), 409, "Agent task claim expired or changed.");
             var run = s.AgentRuns[task.RunId];
             Guard.Require(run.DeletedAt is null && run.Status == AgentRunStatus.Running && run.Deadline > clock.GetUtcNow() && !s.AgentControls.EffectiveAgentsPaused && s.AgentControls.PausedWorkflows?.Contains(run.Workflow) != true, 409, "Agent run is cancelled, paused or expired.");
-            Guard.Require(error is not null || (task.SourceRefs ?? []).All(source => SourceCurrent(s, source)), 409, "Agent source changed during processing. Start a fresh run.");
+            Guard.Require(error is not null || (task.SourceRefs ?? []).All(source => SourceCurrent(s, source, clock.GetUtcNow())), 409, "Agent source changed during processing. Start a fresh run.");
             s.AgentTasks[id] = task with { Status = error is null ? AgentTaskStatus.Succeeded : uncertain ? AgentTaskStatus.NeedsReconciliation : AgentTaskStatus.Failed,
                 Output = error is null ? output : null, ErrorCode = error, ClaimToken = null, LeaseExpiresAt = null, CompletedAt = clock.GetUtcNow() }; return true;
         }, ct);
@@ -193,6 +196,7 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
     public Task<bool> CancelAsync(Guid id, bool delete, CancellationToken ct) => store.UpdateAsync(s =>
     {
         Guard.Require(s.AgentRuns.TryGetValue(id, out var run), 404, "Agent run not found.");
+        AgentToolLifecycle.Retire(s, id, clock.GetUtcNow(), delete);
         s.AgentRuns[id] = run with { Status = AgentRunStatus.Cancelled, DeletedAt = delete ? clock.GetUtcNow() : run.DeletedAt,
             WorkflowPolicy = delete && run.WorkflowPolicy is { } policy ? policy with { DomainContext = null, PracticeTemplate = null } : run.WorkflowPolicy };
         foreach (var taskId in run.TaskIds)
@@ -208,16 +212,24 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
             (x.SourceRefs ?? []).All(source => SourceCurrent(s, source)) ? x.Output : null,
             (x.SourceRefs ?? []).All(source => SourceCurrent(s, source)) ? x.ErrorCode : "source_changed")).ToList());
     public static string LearningVersion(LearningItem item) => Hash(item.Prompt + "\n" + item.Answer);
-    public static bool SourceCurrent(RuntimeState s, AgentSourceRef source) => source.Kind switch
+    public static bool SourceCurrent(RuntimeState s, AgentSourceRef source, DateTimeOffset? at = null) => source.Kind switch
     {
         "story" => s.Stories.TryGetValue(source.Id, out var story) && story.Version.ToString(CultureInfo.InvariantCulture) == source.Version,
-        "learning" => s.Learning.TryGetValue(source.Id, out var item) && LearningVersion(item) == source.Version,
+        "learning" => s.Learning.TryGetValue(source.Id, out var item) && item.SourceRecordingId is null && LearningVersion(item) == source.Version,
+        "import" => s.ImportedDocuments.TryGetValue(source.Id, out var document) && document.DeletedAt is null && document.Kind != "interview" && document.ContentHash == source.Version,
+        "voice" => s.VoiceTurns.TryGetValue(source.Id, out var turn) && !turn.Restricted && turn.Role == ChatRoles.User && !s.RetiredSessions.Contains(turn.SessionId) &&
+            !Jarvis.Orchestrator.Recordings.RecordedPracticePrivacy.PrivateSession(s, turn.SessionId) &&
+            PrivacyData.Hash(System.Text.Json.JsonSerializer.Serialize(turn)) == source.Version,
+        "memory" => s.ContextMemories.TryGetValue(source.Id, out var memory) && Jarvis.Orchestrator.Intelligence.ContextMemoryService.Version(memory) == source.Version &&
+            memory.ExpiresAt > (at ?? DateTimeOffset.UtcNow) && Jarvis.Orchestrator.Intelligence.ContextMemoryService.Current(s, memory),
         _ => false
     };
     public static void InvalidateSource(RuntimeState s, string kind, Guid id)
     {
+        Jarvis.Orchestrator.Intelligence.ContextMemoryService.DropSource(s, kind, id);
         foreach (var task in s.AgentTasks.Values.Where(x => x.SourceRefs?.Any(r => r.Kind == kind && r.Id == id) == true).ToList())
         {
+            AgentToolLifecycle.Retire(s, task.RunId, DateTimeOffset.UtcNow, true);
             s.AgentTasks[task.Id] = task with { Output = null, Input = "", ClaimToken = null, Status = AgentTaskStatus.Cancelled, ErrorCode = "source_deleted" };
             s.AgentRuns[task.RunId] = s.AgentRuns[task.RunId] with { Status = AgentRunStatus.SourceDeleted };
             ReasoningLifecycle.Retire(s, task.Id);

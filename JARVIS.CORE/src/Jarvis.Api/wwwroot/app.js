@@ -5,39 +5,85 @@ import { initPrivacy } from './privacy.js';
 import { initPlanning } from './planning.js';
 import { initImports } from './imports.js';
 import { initNotifications } from './notifications.js';
+import { initTravel } from './travel.js';
+import { initRecordings } from './recordings.js';
+import { qrSvg } from './qr.js';
 let liveVoice;
 let connectionGeneration = 0;
 const $ = id => document.getElementById(id);
 const state = { key: '', session: null, devices: [], registered: false, recorder: null, stream: null, recognition: null, recordingTimer: null, pollBusy: false, releaseBusy: false };
-const deviceId = localStorage.getItem('jarvis-device') || `browser-${crypto.randomUUID()}`;
+let browserAccess = null, ownerElevation = null, elevationPending = null;
+const browserCredentialStorage = 'jarvis-enrolled-browser-credential';
+let deviceId = localStorage.getItem('jarvis-device') || `browser-${crypto.randomUUID()}`;
 localStorage.setItem('jarvis-device', deviceId);
 $('device-id').textContent = `This browser: ${deviceId}`;
 $('today').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; $('notice').hidden = false; }
-async function api(path, body, method) {
+try { $('api-key').value = sessionStorage.getItem(browserCredentialStorage) || ''; } catch { /* Storage may be disabled. */ }
+function clearBrowserAccess(forget = false) {
+  browserAccess = null; ownerElevation = null; elevationPending = null;
+  if ($('browser-owner-key')) $('browser-owner-key').value = '';
+  if (forget) { $('owner-key').value = ''; try { sessionStorage.removeItem(browserCredentialStorage); } catch { /* Memory is cleared regardless. */ } }
+  renderBrowserAccess();
+}
+async function elevateOwner() {
+  if (!browserAccess?.enrolled) throw new Error('Enroll this browser before unlocking temporary owner access.');
+  if (ownerElevation && Date.parse(ownerElevation.expiresAt) > Date.now() + 1000) return ownerElevation;
+  if (elevationPending) return elevationPending;
+  const generation = connectionGeneration;
+  const secret = $('browser-owner-key')?.value || $('owner-key').value;
+  if (!secret) throw new Error('Owner access expired. Enter the owner key under Connections and unlock temporary access.');
+  elevationPending = (async () => {
+    const response = await fetch('/api/browser/elevation', { method: 'POST', headers: { 'X-Jarvis-Key': state.key, 'X-Jarvis-Owner-Key': secret, 'Content-Type': 'application/json' }, body: JSON.stringify({ scopes: browserAccess.scopes }) });
+    const result = await response.json().catch(() => ({}));
+    if (generation !== connectionGeneration) throw new Error('The Core connection changed while unlocking owner access.');
+    if (!response.ok) throw new Error(result.error || 'Owner access could not be unlocked.');
+    ownerElevation = result; $('owner-key').value = ''; if ($('browser-owner-key')) $('browser-owner-key').value = '';
+    renderBrowserAccess(); return result;
+  })();
+  try { return await elevationPending; } finally { if (generation === connectionGeneration) elevationPending = null; }
+}
+async function api(path, body, method, binary = false) {
   const generation = connectionGeneration;
   const multipart = body instanceof FormData;
   const verb = method || (body === undefined ? 'GET' : 'POST');
-  const ownerCall = verb === 'GET' && path === '/privacy/export' ||
+  const ownerCall = verb === 'POST' && path === '/browser/enrollment' || verb === 'GET' && path === '/privacy/export' ||
+    verb === 'GET' && /^\/recordings\/[^/]+\/practice\/[^/]+\/audio\//.test(path) ||
+    verb === 'POST' && path === '/intelligence/evaluations' ||
     verb === 'POST' && ['/privacy/erase', '/privacy/reopen', '/privacy/retention/apply'].includes(path) ||
     ['POST', 'DELETE'].includes(verb) && /^\/devices\/[^/]+\/(verify|credential)$/.test(path) ||
+    verb === 'POST' && path === '/devices/pairing-codes' ||
+    verb === 'POST' && (path === '/recordings' || /^\/recordings\/[^/]+\/delete$/.test(path)) ||
     verb === 'POST' && /^\/devices\/[^/]+\/grants$/.test(path) ||
     ['GET', 'DELETE'].includes(verb) && /^\/device-grants(?:\/[^/]+)?$/.test(path) ||
     verb === 'POST' && /^\/device-commands\/[^/]+\/confirm$/.test(path) ||
+    verb === 'POST' && /^\/agents\/runs\/[^/]+\/(tool-grants|release)$/.test(path) ||
+    verb === 'POST' && /^\/agents\/actions\/[^/]+\/approve$/.test(path) ||
+    verb === 'DELETE' && /^\/agents\/tool-grants\/[^/]+$/.test(path) ||
     verb === 'POST' && /^\/domains\/[^/]+\/(activate|disable|rollback)$/.test(path) ||
     verb === 'POST' && /^\/tools\/[^/]+\/confirm$/.test(path) ||
     verb === 'POST' && /^\/budget\/(approvals(?:\/[^/]+\/revoke)?|legacy\/[^/]+\/classify)$/.test(path) ||
     verb === 'GET' && /^\/budget\/legacy\/[^/]+\/preview$/.test(path) ||
     verb === 'POST' && /^\/usage\/charges\/[^/]+\/reconcile$/.test(path);
-  const response = await fetch(`/api${path}`, { method: verb, headers: { 'X-Jarvis-Key': state.key, ...(ownerCall && $('owner-key').value ? { 'X-Jarvis-Owner-Key': $('owner-key').value } : {}), ...(!multipart && body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body) });
-  const data = await response.json().catch(() => ({}));
+  let ownerHeaders = {};
+  if (ownerCall) {
+    if (browserAccess?.enrolled) ownerHeaders = { 'X-Jarvis-Owner-Elevation': (await elevateOwner()).token };
+    else { const key = $('browser-owner-key')?.value || $('owner-key').value; if (key) ownerHeaders = { 'X-Jarvis-Owner-Key': key }; }
+  }
+  if (generation !== connectionGeneration) throw new Error('The Core connection changed before this request.');
+  const response = await fetch(`/api${path}`, { method: verb, headers: { 'X-Jarvis-Key': state.key, ...ownerHeaders, ...(!multipart && body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body) });
+  const data = binary && response.ok ? await response.blob() : await response.json().catch(() => ({}));
   if (generation !== connectionGeneration) throw new Error('This response belongs to a previous Core connection.');
-  if (!response.ok) throw new Error(data.error || data.detail || Object.values(data.errors || {}).flat().join(' ') || `Request failed (${response.status}).`);
+  if (!response.ok) {
+    if (browserAccess?.enrolled && response.status === 401) $('disconnect').click();
+    if (browserAccess?.enrolled && ownerCall && response.status === 403) { ownerElevation = null; renderBrowserAccess(); }
+    throw new Error(data.error || data.detail || Object.values(data.errors || {}).flat().join(' ') || `Request failed (${response.status}).`);
+  }
   return data;
 }
 function on(id, event, fn) { $(id).addEventListener(event, async e => { e.preventDefault(); const button = e.submitter || (e.currentTarget.tagName === 'BUTTON' ? e.currentTarget : null); if (button) button.disabled = true; try { await fn(e); } catch (error) { notice(error.message, true); } finally { if (button) button.disabled = false; } }); }
 function node(tag, text, className) { const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el; }
-function button(text, action) { const el = node('button', text); el.type = 'button'; el.addEventListener('click', async () => { el.disabled = true; try { await action(); } catch (e) { notice(e.message, true); } finally { el.disabled = false; } }); return el; }
+function button(text, action) { const el = node('button', text); el.type = 'button'; el.addEventListener('click', async () => { el.disabled = true; try { await action(); } catch (e) { notice(e.message, true); } finally { el.disabled = false; if (el.closest('#browser-access')) renderBrowserAccess(); } }); return el; }
 function selected() { if (!state.session) throw new Error('Open a conversation first.'); return state.session; }
 function ownsAudio() { return state.session?.status === 'Active' && state.session?.activeDeviceId === deviceId; }
 let localAudio = null, localDeadline = 0, audioGeneration = 0, localRelease = Promise.resolve();
@@ -68,16 +114,22 @@ function stopAudio(discard = true) {
 }
 const extraModules = initModules({ api, notice, node, button, on, selectedSession: () => state.session,
   ensureSession: async (activity, title) => { if (state.session && state.session.status !== 'Ended') return state.session; const session = await api('/sessions', { activity, title, deviceId: null }); await openSession(session.id); return state.session; } });
-liveVoice = initLiveVoice({ api, selectedSession: () => state.session, deviceId, notice, beforeStart: async () => { stopAudio(); await localRelease; },
+liveVoice = initLiveVoice({ api, selectedSession: () => state.session, deviceId, getDeviceId: () => deviceId, notice, beforeStart: async () => { stopAudio(); await localRelease; },
   claimSession: async id => { state.session = await api(`/sessions/${id}/claim`, { deviceId }); renderSession(); },
   ensureSession: async (activity, title) => { if (state.session && state.session.status !== 'Ended') return state.session; const session = await api('/sessions', { activity, title, deviceId: null }); await openSession(session.id, true); return state.session; } });
 const intelligence = initIntelligence({ api, node, button, notice });
 const notifications = initNotifications({ api, node, button, notice });
 const imports = initImports({ api, node, button, notice });
 const planning = initPlanning({ api, node, button, notice });
+const travel = initTravel({ api, node, button, notice });
+const recordings = initRecordings({ api, node, button, notice, openPractice: async id => {
+  await openSession(id); document.querySelector('[data-tab="sessions"]').click();
+  notice('Private interview activity selected. Start Everyday voice with cloud consent, then ask JARVIS to resume coaching.');
+} });
 const privacy = initPrivacy({ api, node, button, notice, onErased: () => {
   connectionGeneration++;
-  stopAudio(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); imports.clear(); notifications.clear(); state.session = null; state.devices = []; state.registered = false;
+  clearBrowserAccess(true);
+  stopAudio(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); travel.clear(); recordings.clear(); imports.clear(); notifications.clear(); state.session = null; state.devices = []; state.registered = false;
   for (const id of ['session-list', 'device-list', 'learning-list', 'tool-list', 'device-command-list', 'messages', 'checkpoints', 'briefing-content', 'integration-list']) $(id)?.replaceChildren();
   for (const field of document.querySelectorAll('[data-panel] input,[data-panel] textarea')) { if (field.type === 'checkbox' || field.type === 'radio') field.checked = false; else field.value = ''; }
   for (const id of ['selected-title', 'owner', 'handoff-state']) $(id).textContent = '';
@@ -90,23 +142,58 @@ document.querySelectorAll('[data-tab]').forEach(tab => tab.addEventListener('cli
   document.querySelectorAll('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== tab.dataset.tab);
   $('page-title').textContent = tab.textContent;
   if (!state.key) return;
-  try { if (tab.dataset.tab === 'sessions') { await loadSessions(); await loadDevices(); } if (tab.dataset.tab === 'devices') await loadDevices(); if (tab.dataset.tab === 'learning') await loadLearning(); if (tab.dataset.tab === 'tools') await loadTools(); if (tab.dataset.tab === 'agents') await intelligence.load(); if (tab.dataset.tab === 'privacy') await privacy.load(); if (tab.dataset.tab === 'planning') await planning.load(); if (tab.dataset.tab === 'imports') await imports.load(); await extraModules.load(tab.dataset.tab); } catch (e) { notice(e.message, true); }
+  try { if (tab.dataset.tab === 'sessions') { await loadSessions(); await loadDevices(); } if (tab.dataset.tab === 'devices') await loadDevices(); if (tab.dataset.tab === 'learning') await loadLearning(); if (tab.dataset.tab === 'tools') await loadTools(); if (tab.dataset.tab === 'agents') await intelligence.load(); if (tab.dataset.tab === 'privacy') await privacy.load(); if (tab.dataset.tab === 'planning') await planning.load(); if (tab.dataset.tab === 'imports') await imports.load(); if (tab.dataset.tab === 'briefing') await travel.load(); if (tab.dataset.tab === 'recordings') await recordings.load(); await extraModules.load(tab.dataset.tab); } catch (e) { notice(e.message, true); }
 }));
 on('connect-form', 'submit', async () => {
   connectionGeneration++;
+  clearBrowserAccess();
   state.key = $('api-key').value.trim();
   try {
     const control = await api('/privacy/status');
     if (control.erased) {
       $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false; $('connection').textContent = 'Core erased'; privacy.show(); return;
     }
+    await refreshBrowserAccess();
     const integrations = await api('/integrations'); await loadSessions(); await loadDevices(); renderIntegrations(integrations);
   }
   catch (error) { state.key = ''; throw error; }
   $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false; $('connection').textContent = 'Connected'; notice('Connected. Your saved sessions are ready.');
   await liveVoice.refresh();
 });
-on('disconnect', 'click', () => { connectionGeneration++; stopAudio(); document.getElementById('verify-device')?.remove(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); imports.clear(); notifications.clear(); privacy.clear(); state.key = ''; $('owner-key').value = ''; state.session = null; state.registered = false; $('workspace').hidden = true; $('login').hidden = false; $('connection').textContent = 'Disconnected'; $('notice').hidden = true; });
+on('disconnect', 'click', () => { connectionGeneration++; stopAudio(); clearBrowserAccess(true); document.getElementById('verify-device')?.remove(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); travel.clear(); recordings.clear(); imports.clear(); notifications.clear(); privacy.clear(); state.key = ''; $('owner-key').value = ''; state.session = null; state.registered = false; $('workspace').hidden = true; $('login').hidden = false; $('connection').textContent = 'Disconnected'; $('notice').hidden = true; });
+function renderBrowserAccess() {
+  if (!$('browser-access-status')) return;
+  $('browser-access-status').textContent = browserAccess?.enrolled
+    ? `Enrolled browser. ${ownerElevation && Date.parse(ownerElevation.expiresAt) > Date.now() ? 'Owner access until ' + new Date(ownerElevation.expiresAt).toLocaleTimeString() : 'Owner access locked.'}`
+    : 'Legacy Core-key connection. Enroll this browser before enabling the server migration flag.';
+  $('enroll-browser').disabled = !!browserAccess?.enrolled;
+  $('elevate-browser').disabled = !browserAccess?.enrolled;
+  $('lock-browser-owner').disabled = !browserAccess?.enrolled;
+  $('copy-browser-credential').disabled = !browserAccess?.enrolled;
+}
+async function refreshBrowserAccess() {
+  browserAccess = await api('/browser/status');
+  if (browserAccess.enrolled && browserAccess.deviceId) {
+    deviceId = browserAccess.deviceId; localStorage.setItem('jarvis-device', deviceId); $('device-id').textContent = `This browser: ${deviceId}`;
+    try { sessionStorage.setItem(browserCredentialStorage, state.key); } catch { /* The active credential still works in memory. */ }
+  }
+  renderBrowserAccess();
+}
+const browserCard = node('div', '', 'card'); browserCard.id = 'browser-access'; browserCard.append(node('h2', 'Browser access'));
+const browserStatus = node('p'); browserStatus.id = 'browser-access-status'; browserCard.append(browserStatus);
+const ownerLabel = node('label', 'Owner key for temporary access'); const ownerInput = document.createElement('input'); ownerInput.id = 'browser-owner-key'; ownerInput.type = 'password'; ownerInput.autocomplete = 'off'; ownerLabel.append(ownerInput); browserCard.append(ownerLabel);
+const enrollBrowser = button('Enroll this browser', async () => {
+  stopAudio(); await localRelease;
+  const credential = await api('/browser/enrollment', { deviceId, name: $('device-name').value || 'My browser', kind: /Quest|Oculus/i.test(navigator.userAgent) ? 'QuestClient' : /Android/i.test(navigator.userAgent) ? 'AndroidCompanion' : 'WindowsAgent', capabilities: { canListen: !!navigator.mediaDevices?.getUserMedia, canSpeak: 'speechSynthesis' in window, hasDisplay: true, canControlHome: false, extra: ['browser-companion'] } });
+  connectionGeneration++; state.key = credential.secret; ownerElevation = null; await refreshBrowserAccess(); await loadDevices();
+  notice('Browser enrolled. Test its microphone and speaker under Devices before starting audio.');
+}); enrollBrowser.id = 'enroll-browser';
+const elevateBrowser = button('Unlock owner access for five minutes', async () => { await elevateOwner(); notice('Temporary owner access unlocked.'); }); elevateBrowser.id = 'elevate-browser';
+const lockBrowser = button('Lock owner access', async () => { await api('/browser/elevation', undefined, 'DELETE'); ownerElevation = null; renderBrowserAccess(); notice('Owner access locked.'); }); lockBrowser.id = 'lock-browser-owner';
+const copyBrowser = button('Copy enrolled credential', async () => { await navigator.clipboard.writeText(state.key); notice('Enrolled credential copied. Save it in your password manager.'); }); copyBrowser.id = 'copy-browser-credential';
+const accessButtons = node('div', '', 'row wrap'); accessButtons.append(enrollBrowser, elevateBrowser, lockBrowser, copyBrowser); browserCard.append(accessButtons,
+  node('p', 'Enrollment credentials stay in this tab’s session storage until disconnect. Save the enrolled credential to reconnect after closing the tab. Owner keys and five-minute access tokens stay in memory. The server migration flag is off by default; enable it only after checking enrolled-browser reconnection.', 'muted'));
+document.querySelector('[data-panel=settings]').append(browserCard); renderBrowserAccess();
 async function loadSessions() {
   const sessions = await api('/sessions'); $('session-count').textContent = sessions.length; $('session-list').replaceChildren();
   for (const s of sessions) { const b = button('', () => openSession(s.id)); b.className = 'session-button list-item' + (state.session?.id === s.id ? ' selected' : ''); b.append(node('strong', s.title), node('small', `${s.activity} · ${s.status}`)); $('session-list').append(b); }
@@ -127,7 +214,7 @@ function renderSession(keepLive = false) {
   $('owner').textContent = s.activeDeviceId ? `Active device: ${s.activeDeviceId === deviceId ? 'this browser' : s.activeDeviceId}` : 'No device owns audio. Choose “Use this device” to start voice.';
   const messages = s.messages || []; $('messages').replaceChildren();
   if (!messages.length) $('messages').append(node('p', s.status === 'Ended' ? 'Session ended. Your checkpoints are saved below.' : s.status === 'Paused' ? 'Session paused. Resume when you are ready.' : 'Your session is ready. Send a message, or save a checkpoint below.', 'muted'));
-  for (const m of messages) { const div = node('div', '', `message ${m.role}`); div.append(node('small', m.role === 'assistant' ? 'JARVIS' : 'You'), document.createTextNode(m.text)); $('messages').append(div); }
+  for (const m of messages) { const div = node('div', '', `message ${m.role}`); div.append(node('small', `${m.role === 'assistant' ? 'JARVIS' : 'You'}${m.restricted ? ' · Locked device — audit only' : ''}`), document.createTextNode(m.text)); $('messages').append(div); }
   $('messages').scrollTop = $('messages').scrollHeight;
   $('checkpoints').replaceChildren(...s.checkpoints.slice().reverse().map(c => node('p', `${c.sequence}. ${c.summary}`, 'list-item')));
   const h = s.handoff; $('handoff-state').textContent = h ? `Transfer: ${h.state} · ${h.fromDeviceId} → ${h.toDeviceId}` : '';
@@ -159,8 +246,34 @@ async function loadDevices() {
   $('device-list').replaceChildren(); const oldTarget = $('target-device').value; $('target-device').replaceChildren(node('option', 'Choose target device'));
   $('target-device').firstChild.value = '';
   for (const d of state.devices) { const r = d.device.registration; const div = node('div', '', 'list-item'); div.append(node('strong', r.name), node('p', `${r.deviceId} · ${d.online ? 'Online' : 'Offline'} · ${d.device.capabilitiesVerified ? 'Verified' : 'Needs capability test'}`, 'muted')); $('device-list').append(div);
+    if (r.kind === 'AndroidCompanion' && r.capabilities.extra?.includes('audio-only')) div.append(button('Pair again', () => showPairing(r.deviceId, r.name)));
     if (r.deviceId !== deviceId && d.online && d.device.capabilitiesVerified) { const option = node('option', r.name); option.value = r.deviceId; $('target-device').append(option); }
   } $('target-device').value = oldTarget;
+  if (!document.getElementById('phone-pairing')) {
+    const panel = node('div', '', 'card'); panel.id = 'phone-pairing';
+    panel.append(node('h3', 'Add a phone'), node('p', 'Show a one-time code, then scan it with the phone camera. The phone gets its own key; this computer keeps the master key.', 'muted'),
+      button('Pair a phone', () => showPairing(null, 'a new phone')));
+    $('device-list').after(panel);
+  }
+}
+let pairingTimer = null;
+async function showPairing(targetDeviceId, label) {
+  const host = location.hostname;
+  if (location.protocol !== 'https:' || host === 'localhost' || /^[\d.]+$/.test(host) || host.includes(':'))
+    throw new Error('Open this dashboard at your private HTTPS name (for example jarvis.your-tailnet.ts.net) to pair a phone.');
+  const issued = await api('/devices/pairing-codes', { deviceId: targetDeviceId });
+  const link = `jarvis://pair?u=${encodeURIComponent(location.origin)}&c=${encodeURIComponent(issued.code)}`;
+  const panel = $('phone-pairing'); clearInterval(pairingTimer);
+  const view = node('div', '', 'pairing-code'); view.id = 'pairing-code';
+  const countdown = node('p', '', 'muted'); countdown.setAttribute('role', 'status');
+  view.append(node('p', `Scan with ${label}'s camera, then tap Connect in JARVIS.`), qrSvg(link), countdown,
+    button('Hide code', () => { clearInterval(pairingTimer); view.remove(); }));
+  document.getElementById('pairing-code')?.remove(); panel.append(view);
+  const expires = new Date(issued.expiresAt).getTime();
+  const tick = () => { const left = Math.max(0, Math.round((expires - Date.now()) / 1000));
+    countdown.textContent = left ? `Works once · expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Expired. Create a new code.';
+    if (!left) { clearInterval(pairingTimer); view.querySelector('svg')?.remove(); } };
+  tick(); pairingTimer = setInterval(tick, 1000);
 }
 on('device-form', 'submit', async () => { await api('/devices', { deviceId, name: $('device-name').value, kind: /Quest|Oculus/i.test(navigator.userAgent) ? 'QuestClient' : /Android/i.test(navigator.userAgent) ? 'AndroidCompanion' : 'WindowsAgent', capabilities: { canListen: !!navigator.mediaDevices?.getUserMedia, canSpeak: 'speechSynthesis' in window, hasDisplay: true, canControlHome: false, extra: ['browser-companion'] } }); await loadDevices(); notice('Registered. Test microphone and speaker to verify this device.'); });
 on('test-device', 'click', async () => {
@@ -185,7 +298,9 @@ for (const [id, action] of [['handoff-ready', 'ready'], ['handoff-complete', 'co
 async function loadLearning() {
   const cards = await api('/learning?due=true'); $('learning-list').replaceChildren();
   if (!cards.length) $('learning-list').append(node('p', 'All caught up. Add a card or come back when one is due.', 'muted'));
-  for (const card of cards) { const div = node('div', '', 'list-item'); const started = Date.now(); div.append(node('small', card.domain), node('p', card.prompt)); const answer = node('p', card.answer); answer.hidden = true; const ratings = node('div', '', 'row wrap'); ratings.hidden = true; for (const rating of ['Again', 'Hard', 'Good', 'Easy']) ratings.append(button(rating, async () => { await api(`/learning/${card.id}/reviews`, { requestId: crypto.randomUUID(), rating, responseSeconds: Math.min(3600, (Date.now() - started) / 1000) }); await loadLearning(); })); div.append(button('Reveal answer', () => { answer.hidden = false; ratings.hidden = false; }), answer, ratings); $('learning-list').append(div); }
+  for (const card of cards) { const div = node('div', '', 'list-item'); const started = Date.now(); div.append(node('small', card.domain), node('p', card.prompt));
+    if (card.sourceRecordingId) div.append(button('Open private interview practice', () => recordings.open(card.sourceRecordingId)));
+    const answer = node('p', card.answer); answer.hidden = true; const ratings = node('div', '', 'row wrap'); ratings.hidden = true; for (const rating of ['Again', 'Hard', 'Good', 'Easy']) ratings.append(button(rating, async () => { await api(`/learning/${card.id}/reviews`, { requestId: crypto.randomUUID(), rating, responseSeconds: Math.min(3600, (Date.now() - started) / 1000) }); await loadLearning(); })); div.append(button('Reveal answer', () => { answer.hidden = false; ratings.hidden = false; }), answer, ratings); $('learning-list').append(div); }
 }
 on('learning-form', 'submit', async () => { await api('/learning', { domain: $('learning-domain').value, prompt: $('learning-prompt').value, answer: $('learning-answer').value }); $('learning-prompt').value = ''; $('learning-answer').value = ''; await loadLearning(); notice('Learning card added.'); });
 on('refresh-learning', 'click', loadLearning);

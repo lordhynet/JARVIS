@@ -12,22 +12,25 @@ public sealed partial class PostgresSessionTests
     [PostgresFact]
     public async Task Idle_runtime_updates_preserve_row_version_and_narrow_audio_projections_match_state()
     {
-        await using var database = await TestDatabase.CreateAsync(); using var host = new PostgresApiFactory(database.ConnectionString);
+        await using var database = await TestDatabase.CreateAsync();
+        var clock = new VoiceFixtureClock();
+        using var host = new PostgresApiFactory(database.ConnectionString, clock);
         using var client = host.AuthorisedClient(); var state = host.Services.GetRequiredService<IRuntimeStore>();
         var factory = host.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>();
         async Task<string> Version() { await using var db = await factory.CreateDbContextAsync(); return await db.Database.SqlQueryRaw<string>("SELECT xmin::text AS \"Value\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1").SingleAsync(); }
         var before = await Version();
         for (var i = 0; i < 10; i++) await state.UpdateAsync(_ => false);
         Assert.Equal(before, await Version());
-        var session = await CreateSession(client); var lease = new AudioLease(session.Id, "fixture", 12345, DateTimeOffset.UtcNow.AddMinutes(1));
+        var now = clock.GetUtcNow();
+        var session = await CreateSession(client);
+        var lease = new AudioLease(session.Id, "fixture", 12345, now.AddMinutes(1));
         var sessions = host.Services.GetRequiredService<ISessionStore>();
         session = await sessions.UpdateAsync(session.Id, current => current with
         {
             ActiveDeviceId = "fixture",
-            Messages = [new(Guid.NewGuid(), "user", "Synthetic transcript with [brackets].", DateTimeOffset.UtcNow)]
+            Messages = [new(Guid.NewGuid(), "user", "Synthetic transcript with [brackets].", now)]
         })
             ?? throw new InvalidOperationException("The test session disappeared during update.");
-        var now = DateTimeOffset.UtcNow;
         Assert.True((await state.ReadAudioLeaseStateAsync()).IsAvailable(now));
         Assert.Null(await state.ReadRegisteredDeviceAsync("fixture"));
         var devices = host.Services.GetRequiredService<DeviceService>();
@@ -43,7 +46,7 @@ public sealed partial class PostgresSessionTests
         Assert.False(active.IsAvailable(now));
         Assert.True(active.IsAvailable(lease.ExpiresAt));
         using var fence = new LiveAudioFence(lease, host.Services.GetRequiredService<AudioOwnership>(),
-            host.Services.GetRequiredService<AudioFenceChanges>(), TimeProvider.System);
+            host.Services.GetRequiredService<AudioFenceChanges>(), clock);
         Assert.True(await fence.RefreshAsync(default));
         await state.UpdateAsync(s => { AudioFencing.Revoke(s); return true; });
         Assert.False(fence.IsCurrent());

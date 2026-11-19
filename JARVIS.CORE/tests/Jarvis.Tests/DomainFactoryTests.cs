@@ -40,6 +40,38 @@ public sealed class DomainFactoryTests
     public void Voice_proposal_intent_rejects_general_requests(string phrase) =>
         Assert.False(DomainFactory.IsExplicitProposalRequest(phrase));
     [Fact]
+    public async Task Owner_sources_and_original_guidance_are_bound_by_core_and_invented_references_are_refused()
+    {
+        var generator = new Generator();
+        using var host = new JarvisApiFactory().WithWebHostBuilder(b => { b.UseSetting("Jarvis:WorkflowsEnabled", "false"); b.ConfigureServices(s => s.AddSingleton<ITextReasoningProvider>(generator)); });
+        using var manual = CoreInvocationContext.Enter(InvocationOrigin.ManualClient);
+        var import = await host.Services.GetRequiredService<ImportService>().ImportAsync(new(Guid.NewGuid(), "cv", "Owner file", "Canonical owner knowledge", true));
+        var factory = host.Services.GetRequiredService<IDomainFactory>();
+        DomainKnowledgeReference[] sources = [new("url", "https://example.org/spanish"), new("import", import.Id.ToString())];
+        var request = new ProposeDomainRequest(Guid.NewGuid(), "Create Education for Spanish verb practice", true, KnowledgeSources: sources);
+        var result = await factory.ProposeAsync(request, default);
+        Assert.Equal(request.Description, result.Preview.Version.Manifest.StudyGuidance);
+        Assert.Equal(DomainPolicy.ValidateKnowledge(sources), result.Preview.Version.Manifest.KnowledgeSources);
+        Assert.DoesNotContain("Canonical owner knowledge", DomainPolicy.Serialize(result.Preview.Version.Manifest));
+        Assert.Null(result.Preview.Definition.CurrentVersionId);
+        generator.Output = DomainPolicy.Serialize(DomainRegistryTests.Education("invented") with { KnowledgeSources = [new("url", "https://example.org/minted")] });
+        await Assert.ThrowsAsync<DomainException>(() => factory.ProposeAsync(new(Guid.NewGuid(), "Create something", true), default));
+        var calls = generator.Calls;
+        await host.Services.GetRequiredService<ImportService>().DeleteAsync(import.Id, import.Revision);
+        await Assert.ThrowsAsync<DomainException>(() => factory.ProposeAsync(request with { RequestId = Guid.NewGuid() }, default));
+        Assert.Equal(calls, generator.Calls);
+    }
+    [Theory]
+    [InlineData("{\"provider\":\"privileged\"}")]
+    [InlineData("{\"dataClasses\":[\"Sensitive\"]}")]
+    [InlineData("{\"tools\":[\"shell\"]}")]
+    public void Drafts_cannot_mint_provider_data_class_or_tool_fields(string extra)
+    {
+        var json = DomainPolicy.Serialize(DomainRegistryTests.Education());
+        using var document = JsonDocument.Parse(json[..^1] + "," + extra[1..]);
+        Assert.Throws<DomainException>(() => DomainPolicy.Parse(document.RootElement));
+    }
+    [Fact]
     public async Task Generation_saves_a_provenanced_draft_and_replay_does_not_regenerate_or_activate()
     {
         var generator = new Generator();
@@ -89,6 +121,7 @@ public sealed class DomainFactoryTests
         using var host = new JarvisApiFactory().WithWebHostBuilder(b => b.ConfigureServices(s => s.AddSingleton<ITextReasoningProvider>(generator)));
         var runtime = host.Services.GetRequiredService<IRuntimeStore>(); var session = Guid.NewGuid(); var source = Guid.NewGuid();
         var tools = host.Services.GetRequiredService<CoreVoiceTools>();
+        await VoiceToolFixture.OpenAsync(host.Services, session);
         var args = JsonSerializer.Serialize(new { utterance_id = source });
         Assert.Contains("latest user speech", await tools.ExecuteAsync("core_domain_propose", args, session, new HashSet<Guid>(), default)); Assert.Equal(0, generator.Calls);
         await runtime.UpdateAsync(s => { s.VoiceTurns[source] = new(source, session, "user", "Hello there", null, DateTimeOffset.UtcNow); return true; });

@@ -31,6 +31,7 @@ public sealed class BudgetPolicyTests
         await budget.ReserveAsync(Guid.NewGuid(), Guid.NewGuid(), "fixture", ceiling, Loose, default, UsageLane.Voice, "openai");
         var denied = await Assert.ThrowsAsync<DomainException>(() => budget.ReserveAsync(Guid.NewGuid(), Guid.NewGuid(), "other", .01m, Loose, default, UsageLane.Background, "anthropic"));
         Assert.Equal(429, denied.StatusCode); Assert.Single(await state.ReadAsync(s => s.UsageReservations));
+        Assert.Equal(VoiceEndReasons.GbpBudgetCeiling, denied.Code);
         Assert.Single(await state.ReadAsync(s => s.GbpCommitments));
     }
     [Fact]

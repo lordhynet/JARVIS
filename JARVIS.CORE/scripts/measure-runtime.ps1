@@ -1,5 +1,6 @@
-param([switch]$VoiceProfile)
+param([switch]$VoiceProfile, [switch]$RecordingUpload)
 $ErrorActionPreference = 'Stop'
+if ($VoiceProfile -and $RecordingUpload) { throw 'Select VoiceProfile or RecordingUpload for one isolated measurement.' }
 
 $adminConnection = $env:JARVIS_PERF_TEST_POSTGRES
 if ([string]::IsNullOrWhiteSpace($adminConnection)) {
@@ -25,14 +26,16 @@ $root = Split-Path $PSScriptRoot -Parent
 $outputPath = Join-Path ([System.IO.Path]::GetTempPath()) "jarvis-runtime-measurement-$PID.json"
 $previousOutput = $env:JARVIS_PERF_OUTPUT
 $previousProfile = $env:JARVIS_PERF_VOICE_PROFILE
+$previousRecordingLoad = $env:JARVIS_PERF_RECORDING_LOAD
 $env:JARVIS_PERF_OUTPUT = $outputPath
 $env:JARVIS_PERF_VOICE_PROFILE = if ($VoiceProfile) { '1' } else { $null }
+$env:JARVIS_PERF_RECORDING_LOAD = if ($RecordingUpload) { '1' } else { $null }
 Write-Output "Performance harness environment set: connection=$([bool]$env:JARVIS_PERF_TEST_POSTGRES), reportPath=$([bool]$env:JARVIS_PERF_OUTPUT)"
 Push-Location $root
 try {
     $dotnet = Join-Path (Split-Path $root -Parent) '.tools/dotnet/dotnet.exe'
     if (!(Test-Path -LiteralPath $dotnet)) { $dotnet = 'dotnet' }
-    & $dotnet test tests/Jarvis.Tests/Jarvis.Tests.csproj --no-restore `
+    & $dotnet test tests/Jarvis.Tests/Jarvis.Tests.csproj --no-restore -c Release `
         --filter 'FullyQualifiedName~RuntimeMeasurementHarnessTests.Generate_synthetic_dataset_and_measure_runtime_hot_paths' `
         --logger 'console;verbosity=normal'
     if ($LASTEXITCODE -ne 0) { throw 'Runtime measurement harness failed.' }
@@ -42,5 +45,6 @@ try {
 } finally {
     $env:JARVIS_PERF_OUTPUT = $previousOutput
     $env:JARVIS_PERF_VOICE_PROFILE = $previousProfile
+    $env:JARVIS_PERF_RECORDING_LOAD = $previousRecordingLoad
     Pop-Location
 }

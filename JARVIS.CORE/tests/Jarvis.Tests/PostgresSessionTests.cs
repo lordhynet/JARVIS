@@ -6,6 +6,7 @@ using Jarvis.Contracts;
 using Jarvis.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -108,7 +109,7 @@ public sealed partial class PostgresSessionTests
         return (await response.Content.ReadFromJsonAsync<ConversationSession>(Json))!;
     }
 
-    private sealed class PostgresApiFactory(string connection) : WebApplicationFactory<Program>
+    private sealed class PostgresApiFactory(string connection, TimeProvider? clock = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -117,6 +118,7 @@ public sealed partial class PostgresSessionTests
             builder.UseSetting("Jarvis:ApiKey", JarvisApiFactory.TestKey);
             builder.UseSetting("Jarvis:StorageProvider", "Postgres");
             builder.UseSetting("ConnectionStrings:Jarvis", connection);
+            if (clock is not null) builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(clock));
         }
 
         public HttpClient AuthorisedClient()
