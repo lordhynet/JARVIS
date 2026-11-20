@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Jarvis.Contracts;
@@ -42,6 +43,66 @@ public sealed class ForgeCheckInPayloadTests
         var result = (Payload() with { Observations = [input] }).Normalize(Programme(), Now).Observations!.Single();
         Assert.Equal(reference.Id, result.Source!.Id); Assert.Equal("training", result.Source.Kind); Assert.Equal("2", result.Source.Version);
         Assert.Null(result.NumericValue); Assert.Null(result.TextValue); Assert.Null(result.BooleanValue); Assert.Null(result.Unit);
+    }
+
+    [Theory]
+    [InlineData("1000000000000")]
+    [InlineData("-1000000000000")]
+    [InlineData("1000000000000.0000000000000000")]
+    [InlineData("999999999999.999999")]
+    [InlineData("-999999999999.999999")]
+    [InlineData("0.000001")]
+    [InlineData("-0.000001")]
+    [InlineData("1.2300000000000000000000000000")]
+    [InlineData("-1.2300000000000000000000000000")]
+    [InlineData("-0.0000000000000000000000000000")]
+    public void ForgeCheckIn_numbers_preserve_exact_values_with_canonical_scale(string text)
+    {
+        var value = decimal.Parse(text, CultureInfo.InvariantCulture); var programme = Programme();
+        var normalized = (Payload() with { Observations = [Report() with { NumericValue = value, Unit = "count" }] }).Normalize(programme, Now);
+        var result = normalized.Observations!.Single();
+        Assert.Equal(value, result.NumericValue); Assert.Equal("count", result.Unit);
+        var bits = decimal.GetBits(result.NumericValue!.Value); var scale = (bits[3] >> 16) & 0xff;
+        Assert.InRange(scale, 0, 6);
+        if (value == 0) Assert.Equal(new int[4], bits);
+        else if (scale > 0) Assert.NotEqual(value, decimal.Round(result.NumericValue.Value, scale - 1));
+        Assert.Equal(JsonSerializer.Serialize(normalized), JsonSerializer.Serialize(normalized.Normalize(programme, Now)));
+    }
+
+    [Theory]
+    [InlineData("1000000000000.000001")]
+    [InlineData("-1000000000000.000001")]
+    [InlineData("1000000000001")]
+    [InlineData("-1000000000001")]
+    [InlineData("79228162514264337593543950335")]
+    [InlineData("-79228162514264337593543950335")]
+    [InlineData("1.0000001")]
+    [InlineData("-1.0000001")]
+    [InlineData("0.0000000000000000000000000001")]
+    public void ForgeCheckIn_out_of_range_or_over_precise_numbers_are_rejected_without_rounding(string text)
+    {
+        var value = decimal.Parse(text, CultureInfo.InvariantCulture);
+        var input = Payload() with { Observations = [Report() with { NumericValue = value, Unit = "count" }] };
+        Assert.Equal(400, Assert.Throws<DomainException>(() => input.Normalize(Programme(), Now)).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("1", "1.0000000000000000000000000000")]
+    [InlineData("-1.23", "-1.2300000000000000000000000000")]
+    [InlineData("0", "-0.0000000000000000000000000000")]
+    public void ForgeCheckIn_equivalent_decimal_scales_have_identical_retry_proofs(string original, string retry)
+    {
+        var programme = Programme();
+        byte[] Encode(string value) => JsonSerializer.SerializeToUtf8Bytes((Payload() with {
+            Observations = [Report() with { NumericValue = decimal.Parse(value, CultureInfo.InvariantCulture), Unit = "count" }]
+        }).Normalize(programme, Now));
+        var left = Encode(original); var right = Encode(retry); var changed = Encode("2");
+        try {
+            var protector = Protector(); var context = new ProtectedRecordContext("forge.check-in.save", programme.OwnerScope, programme.Id, Guid.NewGuid(), 0, 1);
+            var proof = protector.CreateRetryProof(context, left);
+            Assert.Equal(left, right); Assert.True(protector.MatchesRetryProof(context, proof, right));
+            Assert.False(protector.MatchesRetryProof(context, proof, changed));
+        } finally { CryptographicOperations.ZeroMemory(left); CryptographicOperations.ZeroMemory(right); CryptographicOperations.ZeroMemory(changed); }
     }
 
     [Theory]

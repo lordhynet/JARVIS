@@ -22,6 +22,22 @@ public sealed record ForgeCheckInPayload(int Version, string DivisionKey, IReadO
     private static bool TimeValid(DateTimeOffset? value, DateTimeOffset now) => value is null || value > DateTimeOffset.MinValue && value <= now;
     private static string? Optional(string? value, string label, int max) => string.IsNullOrWhiteSpace(value) ? null : Guard.Text(value, label, max);
 
+    private static decimal? NormalizeNumber(decimal? input)
+    {
+        if (input is not { } value) return null;
+        Guard.Require(value is >= -1_000_000_000_000m and <= 1_000_000_000_000m && decimal.Round(value, 6) == value,
+            400, "Reported number exceeds the supported range or precision.");
+        // Strip only trailing zeros: preserve the exact value without rounding or adding precision.
+        // Decimal scale affects JSON bytes, so equivalent retries need one representation.
+        var bits = decimal.GetBits(value);
+        UInt128 coefficient = (uint)bits[0] | ((UInt128)(uint)bits[1] << 32) | ((UInt128)(uint)bits[2] << 64);
+        var scale = (bits[3] >> 16) & 0xff;
+        if (coefficient == 0) return 0m;
+        while (scale > 0 && coefficient % 10 == 0) { coefficient /= 10; scale--; }
+        return new decimal(unchecked((int)(uint)coefficient), unchecked((int)(uint)(coefficient >> 32)),
+            unchecked((int)(uint)(coefficient >> 64)), bits[3] < 0, (byte)scale);
+    }
+
     // Structural normalization only. Future commands must authorize the owner, resolve the installed
     // division/metric rules and recheck every canonical source's scope/current version/status in transaction.
     public ForgeCheckInPayload Normalize(ForgeProgramme programme, DateTimeOffset now)
@@ -47,7 +63,7 @@ public sealed record ForgeCheckInPayload(int Version, string DivisionKey, IReadO
                     400, "Canonical source reference is invalid.");
                 source = item.Source with { Kind = kind, Version = version };
             } else Guard.Require(item.Source is null, 400, "Owner reports cannot impersonate canonical source data.");
-            return item with { MetricKey = key, TextValue = text, Unit = unit, Source = source, Note = Optional(item.Note, "Observation note", 128) };
+            return item with { MetricKey = key, NumericValue = NormalizeNumber(item.NumericValue), TextValue = text, Unit = unit, Source = source, Note = Optional(item.Note, "Observation note", 128) };
         }).OrderBy(x => x.MetricKey, StringComparer.Ordinal).ToArray();
         Guard.Require(normalized is null || normalized.Select(x => x.MetricKey).Distinct(StringComparer.Ordinal).Count() == normalized.Length,
             400, "Duplicate check-in metric keys are invalid.");
