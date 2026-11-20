@@ -87,6 +87,11 @@ builder.Services.AddSignalR().AddJsonProtocol(o =>
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<AudioFenceChanges>();
+// Empty/missing private configuration grants no key; historical reads resolve their retained key ID.
+builder.Services.AddSingleton<IProtectedRecordProtector>(services => {
+    var config = services.GetRequiredService<IConfiguration>();
+    return new ProtectedRecordProtector(() => config.GetSection(ConfigKeys.ProtectedRecords).Get<ProtectedRecordKeyOptions>() ?? new());
+});
 builder.Services.AddCoreAuthorization();
 var storageProvider = builder.Configuration["Jarvis:StorageProvider"] ?? "InMemory";
 if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))

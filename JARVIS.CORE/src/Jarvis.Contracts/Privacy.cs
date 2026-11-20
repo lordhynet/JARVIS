@@ -32,4 +32,16 @@ public sealed record CoreDataExport(int SchemaVersion, DateTimeOffset ExportedAt
     IReadOnlyList<ContextMemoryItem>? ContextMemories = null,
     IReadOnlyList<TravelRoute>? TravelRoutes = null, IReadOnlyList<TravelLineState>? TravelLineStates = null,
     IReadOnlyList<InterviewRecording>? InterviewRecordings = null,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ForgeProgramme>? ForgeProgrammes = null);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ForgeProgramme>? ForgeProgrammes = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ForgeProtectedRevisionExport>? ForgeProtectedRecords = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ExportSensitivity = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ExportStorageAdvice = null);
+
+// Explicit authorized owner export only; not a display, agent, event or cache projection.
+// Payload uses the versioned protected codec's property names and preserves historical values.
+public sealed record ForgeProtectedRevisionExport(string Kind, string OwnerScope, Guid ProgrammeId, Guid Id,
+    long Epoch, int Revision, Guid RequestId, int ExpectedRevision, DateTimeOffset CreatedAt, System.Text.Json.JsonElement Payload)
+{
+    public const string Sensitivity = "private-plaintext";
+    public const string StorageAdvice = "This export contains plaintext private data. Store the downloaded file encrypted.";
+}

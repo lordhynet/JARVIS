@@ -127,7 +127,8 @@ public sealed class InMemoryDeviceReceiptStore(MemoryPrivacyBoundary boundary) :
 }
 
 public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemorySessionStore sessions, InMemoryWorkflowStore workflows,
-    MemoryPrivacyBoundary boundary, InMemoryDeviceGrantStore deviceGrants, IRecordingAudioFiles? recordingFiles = null) : IPrivacyStore
+    MemoryPrivacyBoundary boundary, InMemoryDeviceGrantStore deviceGrants, IRecordingAudioFiles? recordingFiles = null,
+    IProtectedRecordProtector? protectedRecords = null) : IPrivacyStore
 {
     private RuntimeState State() => runtime.ReadAsync(x => x).GetAwaiter().GetResult();
     private List<ConversationSession> Sessions() => sessions.ListAsync().GetAwaiter().GetResult().ToList();
@@ -137,10 +138,13 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
         lock(boundary.Sync)
         {
             RequireEpoch(); var snapshot = workflows.PrivacySnapshot();
-            Guard.Require(boundary.ForgeProtectedRecords.Count == 0, 503, "Protected Forge export is not available. No partial export was produced.");
+            var protectedExport = Jarvis.Orchestrator.Forge.ForgeProtectedJson.ExportRevisions(protectedRecords, boundary.ForgeProtectedRecords, boundary.Status.Epoch, ct);
             return Task.FromResult(PrivacyData.Export(boundary.Status, State(), Sessions(), snapshot.Runs, snapshot.Events, boundary.Jobs.Values.ToList(), now) with {
                 TravelRoutes = boundary.Travel.Routes.Values.ToArray(), TravelLineStates = boundary.Travel.Lines.Values.ToArray(), InterviewRecordings = boundary.Recordings.Sessions.Values.Select(r => r.View).ToArray(),
-                ForgeProgrammes = boundary.ForgeProgrammes.Count == 0 ? null : boundary.ForgeProgrammes.Values.OrderBy(x => x.Id).ToArray() });
+                ForgeProgrammes = boundary.ForgeProgrammes.Count == 0 ? null : boundary.ForgeProgrammes.Values.OrderBy(x => x.Id).ToArray(),
+                ForgeProtectedRecords = protectedExport,
+                ExportSensitivity = protectedExport is null ? null : ForgeProtectedRevisionExport.Sensitivity,
+                ExportStorageAdvice = protectedExport is null ? null : ForgeProtectedRevisionExport.StorageAdvice });
         }
     }
     public Task<IReadOnlyList<PrivacyJob>> JobsAsync(CancellationToken ct = default)

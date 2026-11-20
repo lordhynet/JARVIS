@@ -9,7 +9,7 @@ export function initPrivacy({ api, node, button, notice, onErased, onReopened })
     const token = generation; const data = await api('/privacy/export'); if (token !== generation) return;
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a'); link.href = url; link.download = `jarvis-core-${new Date().toISOString().slice(0, 10)}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notice('Export downloaded. It contains personal data; store it privately.');
+    notice('Export downloaded. It contains plaintext private data; store the downloaded file encrypted.');
   }), retention, erase, jobs, button('Refresh privacy status', load));
   function input(parent, label) { const wrap = node('label', label); const value = document.createElement('input'); value.maxLength = 40; value.required = true; value.setAttribute('aria-label', label); wrap.append(value); parent.append(wrap); return value; }
   function render() {
