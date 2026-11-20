@@ -33,7 +33,7 @@ public sealed class LearningService(IRuntimeStore store, TimeProvider clock)
         if (previous is not null) {
             previous.Validate();
             Guard.Require(previous.RequestId == normalized.RequestId && previous.Epoch == epoch, 409, "Creation request belongs to another data generation.");
-            Guard.Require(previous.Status != LearningCreationReceipt.Retired, 410, "Creation request belongs to a deleted source.", "learning_creation_retired");
+            Guard.Require(previous.Status != LearningCreationReceipt.Retired, 410, "Creation request has been retired.", "learning_creation_retired");
             Guard.Require(previous.FingerprintVersion == LearningCreationReceipt.CurrentFingerprintVersion &&
                 previous.Fingerprint == LearningCreationReceipt.FingerprintFor(normalized), 409, "RequestId was used for different learning content.");
             return new(previous.Result!, null);

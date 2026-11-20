@@ -170,7 +170,7 @@ public sealed class VoiceCoachingTests
         await Run(service, session, "stop", answer);
         await store.UpdateAsync(s => {
             Assert.Empty(PrivacyData.EmptyAfterErase(s).VoiceCoachings);
-            PrivacyData.RetainRuntime(s, new(), now.AddDays(31), new([], [], [], [], [], [], [], [], []));
+            PrivacyData.RetainRuntime(s, new(), now.AddDays(31), new([], [], [], [], [], [], [], [], [], []));
             return true;
         });
         Assert.Empty(await store.ReadAsync(s => s.VoiceCoachings));

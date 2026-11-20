@@ -28,7 +28,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
     }
     private static PrivacyCounts AllCounts(RuntimeState state, int sessions, IReadOnlyList<WorkflowRun> workflows) => new(sessions,
         state.TrainingAttempts.Values.Count(x => x.DeletedAt is null), state.CoachingAttempts.Values.Count(x => x.DeletedAt is null),
-        state.VoiceTurns.Count, state.ProviderResults.Count, workflows.Count(x => x.DeletedAt is null), state.AgentRuns.Values.Count(x => x.DeletedAt is null), ContextMemories: state.ContextMemories.Count);
+        state.VoiceTurns.Count, state.ProviderResults.Count, workflows.Count(x => x.DeletedAt is null), state.AgentRuns.Values.Count(x => x.DeletedAt is null), ContextMemories: state.ContextMemories.Count, CreationReceipts: state.CreationReceipts.Count);
     public async Task<CoreDataExport> ExportAsync(DateTimeOffset now, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
