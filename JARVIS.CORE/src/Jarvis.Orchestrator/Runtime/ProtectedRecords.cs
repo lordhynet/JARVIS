@@ -12,6 +12,9 @@ public interface IProtectedRecordProtector
     ProtectedRecordEnvelope Protect(ProtectedRecordContext context, ReadOnlySpan<byte> plaintext);
     // Caller owns the returned plaintext buffer and must clear it after consuming the typed payload.
     byte[] Unprotect(ProtectedRecordContext context, ProtectedRecordEnvelope envelope);
+    // Preferred for storage readers: the borrowed span is valid only inside read;
+    // the protector clears its entire plaintext buffer before returning or throwing.
+    T Unprotect<T>(ProtectedRecordContext context, ProtectedRecordEnvelope envelope, Func<ReadOnlySpan<byte>, T> read);
     ProtectedRetryProof CreateRetryProof(ProtectedRecordContext context, ReadOnlySpan<byte> canonicalRequest);
     bool MatchesRetryProof(ProtectedRecordContext context, ProtectedRetryProof proof, ReadOnlySpan<byte> canonicalRequest);
 }
