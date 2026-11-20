@@ -1,0 +1,11 @@
+# Indexed review-history read
+
+Extend existing IRuntimeReader.ReadLearningHistoryAsync and dispatch the existing GetReviewHistory query through it. Memory/default readers retain the existing callback. PostgreSQL reads only matching Reviews rows from the canonical RuntimeLearningRows store in its existing repeatable-read transaction/privacy SHARE/epoch boundary. No new service, entity, history, scheduler, client contract/route or writer lock.
+
+The additive partial expression index keys lower(Json.Event.LearningItemId) for Reviews rows. The parameterized query uses the same expression and a canonical D-format UUID string. Case-folding preserves valid uppercase/lowercase UUID hex in historical JSON. Text comparison deliberately avoids imposing new UUID-cast validity constraints on unrelated future/null JSON; existing narrow reads must remain isolated from unrelated malformed payloads. Original JSON is not rewritten or replaced by a projection. Index-only Down drops no data; Up/Down/Up preserves existing rows and old unrelated payloads.
+
+Decode only selected records and validate the outer request ID against the row key and event target against the query. Sort exact canonical ReviewedAt in memory, preserving all ticks/offsets and response-time/timing provenance. Equal-instant ordering remains unspecified as before. The public API remains uncapped and untruncated; a genuinely large history for one card is still a large response. Missing/deleted card history remains available without a card lookup. No write or replay is performed.
+
+Acceptance includes narrow async command interception, query dispatch/cancellation, deleted/missing card behavior, provenance/ties, epoch fencing, selected identity corruption, unrelated payload isolation, nonmutation and index-only round-trip. An opt-in synthetic matched callback/indexed read benchmark at1k/2k/10k cards/reviews plus200 goals records p95 and the actual unforced selective query plan. It does not claim correction/rebuild/removal performance, complete Q2B closure, lock-contention guarantees or voice latency.
+
+C1 durable optional creation request receipts still precede any automated card producer. Remaining correction/rebuild/removal mutation work, Forge entry gates and the original interview programme are unchanged. This is JARVIS infrastructure used by Forge, not a Forge-specific history.
