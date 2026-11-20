@@ -89,6 +89,8 @@ public sealed partial class PostgresSessionTests
         Assert.Empty(first.Items); Assert.NotNull(first.Next); Assert.Equal(2, first.CandidatesRead);
         var second = await reader.ReadDueLearningPageAsync(cutoff, 1, first.Next);
         Assert.Equal(due, Assert.Single(second.Items)); Assert.Null(second.Next);
+        Assert.Equal(TimeSpan.FromHours(5.5), second.Items[0].DueAt.Offset);
+        Assert.Equal(cutoff.UtcTicks, second.Items[0].DueAt.UtcTicks);
         Assert.Equal(due, Assert.Single(await reader.ReadLearningItemsAsync(true, cutoff)));
         Assert.Equal(new[] { due, future }, await reader.ReadLearningItemsAsync(false, cutoff));
     }
