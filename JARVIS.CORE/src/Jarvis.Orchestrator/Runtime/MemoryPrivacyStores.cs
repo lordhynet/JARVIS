@@ -187,7 +187,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             {
                 DeviceGrants = boundary.DeviceGrants.Count, DeviceCommands = boundary.DeviceCommands.Count,
                 DeviceReceipts = boundary.DeviceReceipts.Values.Sum(x => x.Count), ContextMemories = state.ContextMemories.Count,
-                ForgeProgrammes = boundary.ForgeProgrammes.Count
+                ForgeProgrammes = boundary.ForgeProgrammes.Count, CreationReceipts = state.CreationReceipts.Count
             };
             removed = RecordingRetention.Counts(boundary.Recordings, removed);
             recordingFiles?.EraseAsync(ct).GetAwaiter().GetResult();

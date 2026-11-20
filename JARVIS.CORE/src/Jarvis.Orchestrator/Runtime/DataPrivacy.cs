@@ -44,7 +44,7 @@ public static class PrivacyData
     public static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     public static string PolicyHash(RetentionPolicy policy) => Hash(JsonSerializer.Serialize(policy));
     public static void Validate(RetentionPolicy policy) => Guard.Require(new[] { policy.SessionDays, policy.AnswerDays, policy.VoiceDays,
-        policy.ProviderCacheDays, policy.ArtifactDays }.All(x => x is >= 1 and <= 3650) && policy.SweepMinutes is >= 1 and <= 1440,
+        policy.ProviderCacheDays, policy.ArtifactDays, policy.CreationReceiptDays }.All(x => x is >= 1 and <= 3650) && policy.SweepMinutes is >= 1 and <= 1440,
         400, "Retention days must be 1–3650 and sweep minutes 1–1440.");
     public static CoreDataExport Export(PrivacyStatus status, RuntimeState state, IReadOnlyList<ConversationSession> sessions,
         IReadOnlyList<WorkflowRun> workflows, IReadOnlyList<WorkflowEvent> events, IReadOnlyList<PrivacyJob> jobs, DateTimeOffset now, DomainRegistryExport? domains = null) => new CoreDataExport(1, now, status,
@@ -79,9 +79,9 @@ public static class PrivacyData
         answer.AiAssessmentId is Guid id ? state.AiCoachAssessments.GetValueOrDefault(id)?.At ?? answer.CreatedAt : answer.CreatedAt }.Max();
     public static bool Finished(WorkflowRun run) => run.Status is WorkflowStatus.Succeeded or WorkflowStatus.Cancelled or WorkflowStatus.Expired or WorkflowStatus.Failed;
     public sealed record Selection(HashSet<Guid> Sessions, HashSet<Guid> Training, HashSet<Guid> Coaching, HashSet<Guid> Voice,
-        HashSet<Guid> Providers, HashSet<Guid> Workflows, HashSet<Guid> Agents, HashSet<Guid> Imports, HashSet<Guid> Memories)
+        HashSet<Guid> Providers, HashSet<Guid> Workflows, HashSet<Guid> Agents, HashSet<Guid> Imports, HashSet<Guid> Memories, HashSet<Guid> CreationReceipts)
     {
-        public PrivacyCounts Counts => new(Sessions.Count, Training.Count, Coaching.Count, Voice.Count, Providers.Count, Workflows.Count, Agents.Count, Imports.Count, ContextMemories: Memories.Count);
+        public PrivacyCounts Counts => new(Sessions.Count, Training.Count, Coaching.Count, Voice.Count, Providers.Count, Workflows.Count, Agents.Count, Imports.Count, ContextMemories: Memories.Count, CreationReceipts: CreationReceipts.Count);
     }
     public static Selection Select(RuntimeState state, IReadOnlyList<ConversationSession> sessions, IReadOnlyList<WorkflowRun> workflows, RetentionPolicy p, DateTimeOffset at)
     {
@@ -97,13 +97,17 @@ public static class PrivacyData
             state.ContextMemories.Values.Where(x => x.ExpiresAt <= at || x.SessionId is Guid session && deadSessions.Contains(session) ||
                 x.Source.Kind == "voice" && state.VoiceTurns.TryGetValue(x.Source.Id, out var turn) && turn.At < at.AddDays(-p.VoiceDays) ||
                 x.Source.Kind == "import" && state.ImportedDocuments.TryGetValue(x.Source.Id, out var document) && document.Kind == "interview" && document.ImportedAt < at.AddDays(-p.ArtifactDays))
-                .Select(x => x.Id).ToHashSet());
+                .Select(x => x.Id).ToHashSet(),
+            state.CreationReceipts.Values.Where(x => x.Status == LearningCreationReceipt.Created && x.Result is { } result &&
+                result.CreatedAt < at.AddDays(-p.CreationReceiptDays)).Select(x => x.RequestId).ToHashSet());
     }
     public static PrivacyCounts Counts(RuntimeState s, IReadOnlyList<ConversationSession> sessions, IReadOnlyList<WorkflowRun> workflows, RetentionPolicy p, DateTimeOffset at) => Select(s, sessions, workflows, p, at).Counts;
     public static HashSet<Guid> RetainRuntime(RuntimeState state, RetentionPolicy p, DateTimeOffset at, Selection selection)
     {
         var privatePractices = state.VoiceCoachings.Values.Where(x => x.SourceRecordingId is not null).ToArray();
         foreach (var id in selection.Imports) ImportService.Purge(state, state.ImportedDocuments[id], at);
+        // Source purges still need original receipt lineage before age retirement removes it.
+        foreach (var id in selection.CreationReceipts) state.CreationReceipts[id] = state.CreationReceipts[id].Retire(at);
         var affected = new HashSet<Guid>();
         foreach (var answer in state.TrainingAttempts.Values.Where(x => selection.Training.Contains(x.Id)).ToList())
         {

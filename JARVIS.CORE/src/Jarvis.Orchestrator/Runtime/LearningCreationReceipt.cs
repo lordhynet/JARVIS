@@ -28,10 +28,11 @@ public sealed record LearningCreationReceipt(Guid RequestId, long Epoch, string 
     public LearningCreationExport Export() {
         Validate(); return new(RequestId, Epoch, Status, Result?.CreatedAt, Result?.Id, Result, RetiredAt);
     }
+    public LearningCreationReceipt Retire(DateTimeOffset at) => Status == Retired ? this : new(RequestId, Epoch, Retired, null, null, null, at);
     public static void Retire(RuntimeState state, IReadOnlySet<Guid> cardIds, DateTimeOffset at)
     {
         foreach (var receipt in state.CreationReceipts.Values.Where(x => x.Result is { } result && cardIds.Contains(result.Id)).ToArray())
-            state.CreationReceipts[receipt.RequestId] = new(receipt.RequestId, receipt.Epoch, Retired, null, null, null, at);
+            state.CreationReceipts[receipt.RequestId] = receipt.Retire(at);
     }
 }
 

@@ -167,6 +167,8 @@ Authenticated Core endpoints:
 - `POST /api/privacy/erase`: `requestId`, `expectedRevision`, `confirmation: "ERASE MY CORE DATA"`.
 - `POST /api/privacy/reopen`: `expectedRevision`, `confirmation: "START A NEW CORE"`; requires a Core API key different from the erasing key.
 
+Retention includes `creationReceiptDays` (default30, range1–3650). A confirmed sweep retires saved learning-creation responses strictly older than its cutoff, leaving minimal request tombstones; current learning cards and review history are preserved. Preview/job `creationReceipts` counts are omitted when zero. Retrying a retired create request returns410 with `code: "learning_creation_retired"`, even with changed content. The original response is replayable after ordinary card removal until retirement. Retention stays disabled by default; age eligibility alone does not run a sweep or expire a response during replay. Existing worker cadence and explicit manual-apply controls remain unchanged.
+
 Normal Core operations return 503 while erased; work from an earlier epoch cannot publish after reopen. Erasure retains minimal spending/replay metadata and pauses paid work. See [privacy scope](PRIVACY.md) for data-copy limitations.
 
 ### Audio companion preparation
