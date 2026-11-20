@@ -48,8 +48,8 @@ public sealed class ForgeProtectedStorageFixture(IServiceProvider services)
         var programme = Programme(); var id = Guid.NewGuid(); var requestId = Guid.NewGuid();
         var checkIn = Record(programme, ForgeProtectedKind.CheckIn, id, value: "Synthetic check-in", request: requestId);
         var capacity = Record(programme, ForgeProtectedKind.Capacity, id, value: "Synthetic capacity", request: requestId);
-        await Transaction.ExecuteAsync(async w => { await w.SaveForgeProgrammeAsync(programme); await w.AppendForgeProtectedRecordAsync(checkIn); return true; });
-        await Append(capacity);
+        await Transaction.ExecuteAsync(async w => { await w.SaveForgeProgrammeAsync(programme);
+            await w.AppendForgeProtectedRecordAsync(checkIn); await w.AppendForgeProtectedRecordAsync(capacity); return true; });
         Assert.Equal(checkIn.Envelope.Ciphertext, (await Latest(checkIn))!.Envelope.Ciphertext);
         Assert.Equal("Synthetic check-in", Open((await Receipt(checkIn))!).Value);
         Assert.Equal("Synthetic capacity", Open((await Receipt(capacity))!).Value);
