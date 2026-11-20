@@ -46,6 +46,32 @@ public sealed class ForgeProgrammeTests
     }
 
     [Fact]
+    public void View_uses_stored_dates_and_rejects_incompatible_phase_configuration()
+    {
+        var programme = new ForgeProgramme(Guid.NewGuid(), ForgeProgrammePolicy.OwnerScope, 1, 1,
+            ForgeCalendar.DefaultStart, ForgeCalendar.DefaultGraduation, ForgeCalendar.DefaultTimeZone, false,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var view = ForgeProgrammePolicy.View(programme, DateTimeOffset.UtcNow);
+        Assert.Equal(programme.Start, view.Calendar.Start); Assert.Equal(programme.Graduation, view.Calendar.Graduation);
+        Assert.Throws<ArgumentException>(() => ForgeProgrammePolicy.View(programme with { Start = programme.Start.AddDays(1) }, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public async Task Deleted_programmes_do_not_exhaust_active_allowance_or_require_erasing_JARVIS()
+    {
+        using var host = new ForgeApiFactory(); using var owner = host.Owner(); Guid first = default;
+        for (var i = 0; i < 12; i++) {
+            var programme = await Create(owner); if (i == 0) first = programme.Id;
+            using var deleted = await owner.DeleteAsync($"{Root}/{programme.Id}?revision=1"); deleted.EnsureSuccessStatusCode();
+        }
+        for (var i = 0; i < 10; i++) await Create(owner);
+        using var full = await owner.PostAsJsonAsync(Root, new CreateForgeProgrammeRequest(Guid.NewGuid()));
+        Assert.Equal(HttpStatusCode.Conflict, full.StatusCode);
+        using var stale = await owner.PostAsJsonAsync(Root, new CreateForgeProgrammeRequest(first));
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+    }
+
+    [Fact]
     public async Task Default_off_returns_404_without_activating_Forge_and_keeps_export_shape_unchanged()
     {
         using var host = new JarvisApiFactory(); using var owner = host.CreateAuthorisedClient(); var id = Guid.NewGuid();

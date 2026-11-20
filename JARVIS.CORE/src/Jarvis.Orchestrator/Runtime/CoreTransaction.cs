@@ -61,7 +61,8 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
         public Task<ForgeProgramme?> ReadForgeProgrammeAsync(string ownerScope, Guid id) =>
             Task.FromResult(stagedForge.GetValueOrDefault((ownerScope, id)) ?? boundary.ForgeProgrammes.GetValueOrDefault((ownerScope, id)));
         public Task<int> CountForgeProgrammesAsync(string ownerScope) => Task.FromResult(
-            boundary.ForgeProgrammes.Keys.Concat(stagedForge.Keys).Distinct().Count(x => x.Owner == ownerScope));
+            boundary.ForgeProgrammes.Values.Where(x => !stagedForge.ContainsKey((x.OwnerScope, x.Id))).Concat(stagedForge.Values)
+                .Count(x => x.OwnerScope == ownerScope && x.DeletedAt is null));
         public Task SaveForgeProgrammeAsync(ForgeProgramme programme) {
             stagedForge[(programme.OwnerScope, programme.Id)] = programme;
             return Task.CompletedTask;

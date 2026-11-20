@@ -85,17 +85,25 @@ public sealed partial class PostgresSessionTests
     [PostgresFact]
     public async Task Forge_migration_down_and_reapply_leave_existing_interview_json_unchanged()
     {
-        await using var database = await TestDatabase.CreateAsync(); using var baseHost = new PostgresApiFactory(database.ConnectionString);
-        using var host = baseHost.WithWebHostBuilder(b => b.UseSetting("Forge:Enabled", "true")); using var owner = ForgeOwner(host);
-        using var started = await owner.PostAsJsonAsync("/api/programme", new StartProgrammeRequest(Guid.NewGuid(), "2026-11-01")); started.EnsureSuccessStatusCode();
-        await CreateForge(owner, Guid.NewGuid());
-        var contexts = host.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>(); await using var db = await contexts.CreateDbContextAsync();
-        var runtimeBefore = (await db.RuntimeDocuments.AsNoTracking().SingleAsync()).Json;
+        await using var database = await TestDatabase.CreateAsync();
+        using (var baseHost = new PostgresApiFactory(database.ConnectionString, manualAgents: true))
+        using (var host = baseHost.WithWebHostBuilder(b => b.UseSetting("Forge:Enabled", "true")))
+        using (var owner = ForgeOwner(host)) {
+            using var started = await owner.PostAsJsonAsync("/api/programme", new StartProgrammeRequest(Guid.NewGuid(), "2026-11-01")); started.EnsureSuccessStatusCode();
+            await CreateForge(owner, Guid.NewGuid());
+        }
+        var options = new DbContextOptionsBuilder<SessionDbContext>().UseNpgsql(database.ConnectionString).Options;
+        await using var db = new SessionDbContext(options);
         var migrator = db.Database.GetService<IMigrator>();
+        // Isolate the Forge migration's own storage layout. Later migrations may
+        // legitimately move learning properties out of, and back into, this JSON.
+        await migrator.MigrateAsync("20261120005002_ForgeProgrammes");
+        var runtimeBefore = (await db.RuntimeDocuments.AsNoTracking().SingleAsync()).Json;
         await migrator.MigrateAsync("20261119000007_InterviewRecordings");
         Assert.Equal(runtimeBefore, (await db.RuntimeDocuments.AsNoTracking().SingleAsync()).Json);
-        await db.Database.MigrateAsync(); Assert.Empty(await db.ForgeProgrammes.AsNoTracking().ToArrayAsync());
+        await migrator.MigrateAsync("20261120005002_ForgeProgrammes"); Assert.Empty(await db.ForgeProgrammes.AsNoTracking().ToArrayAsync());
         Assert.Equal(runtimeBefore, (await db.RuntimeDocuments.AsNoTracking().SingleAsync()).Json);
+        await db.Database.MigrateAsync();
         Assert.False(db.Database.HasPendingModelChanges());
     }
 }

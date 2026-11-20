@@ -13,7 +13,7 @@ public static class ForgeCalendar
     public static readonly DateOnly DefaultGraduation = new(2027, 8, 18);
     public static readonly DateOnly TechnicalCheckpoint = new(2027, 5, 31);
 
-    /// <summary>Provisional windows from the reviewed plan; verify against the original addendum before activation.</summary>
+    /// <summary>Phase windows verified against Project Forge Master Addendum V2, section 15.</summary>
     public static IReadOnlyList<ForgePhase> DefaultPhases { get; } = Array.AsReadOnly<ForgePhase>(
     [
         new("foundation", "Foundation and reset", new(2026, 12, 1), new(2026, 12, 31)),

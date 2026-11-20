@@ -705,6 +705,49 @@ namespace Jarvis.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.RuntimeLearningControlRow", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("NextTrainingSequence")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("RuntimeLearningState", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            NextTrainingSequence = 1L
+                        });
+                });
+
+            modelBuilder.Entity("Jarvis.Persistence.RuntimeLearningRow", b =>
+                {
+                    b.Property<string>("Kind")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("DueAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Kind", "Id");
+
+                    b.HasIndex("Kind", "DueAt");
+
+                    b.ToTable("RuntimeLearningRows", (string)null);
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.RuntimeVoiceTicketRow", b =>
                 {
                     b.Property<string>("Hash")

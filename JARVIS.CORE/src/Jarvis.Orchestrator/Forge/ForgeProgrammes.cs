@@ -19,7 +19,8 @@ public static class ForgeProgrammePolicy
     public static DateTimeOffset Timestamp(DateTimeOffset now) => new(now.UtcTicks - now.UtcTicks % 10, TimeSpan.Zero);
     public static void RequireEnabled(IForgeAvailability feature) => Guard.Require(feature.Enabled, 404, "Forge is not available.");
     public static ForgeProgrammeView View(ForgeProgramme programme, DateTimeOffset now) =>
-        new(programme, ForgeCalendar.Evaluate(now, TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone)));
+        new(programme, ForgeCalendar.Evaluate(now, TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone),
+            programme.Start, programme.Graduation, ForgeCalendar.DefaultPhases));
 }
 
 public sealed class ForgeProgrammeService(ICoreTransaction transaction, IForgeAvailability feature, TimeProvider clock)
@@ -41,7 +42,7 @@ public sealed class ForgeProgrammeService(ICoreTransaction transaction, IForgeAv
             }
             Guard.Require(start == ForgeCalendar.DefaultStart && graduation == ForgeCalendar.DefaultGraduation && request.TimeZone == ForgeCalendar.DefaultTimeZone,
                 400, "This configuration supports Forge from 1 December 2026 to 18 August 2027 in Europe/London.");
-            Guard.Require(await writes.CountForgeProgrammesAsync(ForgeProgrammePolicy.OwnerScope) < 10, 409, "Forge programme history is full.");
+            Guard.Require(await writes.CountForgeProgrammesAsync(ForgeProgrammePolicy.OwnerScope) < 10, 409, "Ten active Forge programmes already exist.");
             var now = ForgeProgrammePolicy.Timestamp(clock.GetUtcNow());
             var programme = new ForgeProgramme(request.RequestId, ForgeProgrammePolicy.OwnerScope, 1, 1, start, graduation,
                 request.TimeZone, false, now, now);

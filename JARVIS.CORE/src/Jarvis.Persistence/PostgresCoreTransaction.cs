@@ -36,7 +36,7 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         public RuntimeState Runtime => runtime;
         public async Task<ForgeProgramme?> ReadForgeProgrammeAsync(string ownerScope, Guid id) =>
             (await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == ownerScope && x.Id == id, ct))?.Contract();
-        public Task<int> CountForgeProgrammesAsync(string ownerScope) => db.ForgeProgrammes.CountAsync(x => x.OwnerScope == ownerScope, ct);
+        public Task<int> CountForgeProgrammesAsync(string ownerScope) => db.ForgeProgrammes.CountAsync(x => x.OwnerScope == ownerScope && x.DeletedAt == null, ct);
         public async Task SaveForgeProgrammeAsync(ForgeProgramme programme) {
             var row = await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == programme.OwnerScope && x.Id == programme.Id, ct);
             if (row is null) { row = new() { OwnerScope = programme.OwnerScope, Id = programme.Id }; db.ForgeProgrammes.Add(row); }
