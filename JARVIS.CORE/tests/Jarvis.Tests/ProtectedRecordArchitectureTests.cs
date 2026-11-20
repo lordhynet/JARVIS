@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Reflection.Emit;
+using Jarvis.Api.Security;
 using Jarvis.Orchestrator.Forge;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Persistence;
@@ -12,7 +13,7 @@ public sealed class ProtectedRecordArchitectureTests
     // Add future approved Forge command/query handlers individually after independent review.
     // No namespace-wide exemption for agents, briefing, snapshots, workers or devices.
     private static readonly HashSet<Type> Allowed = [typeof(IProtectedRecordProtector), typeof(ProtectedRecordProtector),
-        typeof(ForgeProtectedJson), typeof(PostgresPrivacyStore), typeof(InMemoryPrivacyStore), typeof(Program)];
+        typeof(ForgeProtectedJson), typeof(PostgresPrivacyStore), typeof(InMemoryPrivacyStore), typeof(ProtectedRecordsRegistration)];
     private const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
     private static readonly Dictionary<short, OpCode> Opcodes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
         .Where(f => f.FieldType == typeof(OpCode)).Select(f => (OpCode)f.GetValue(null)!).ToDictionary(x => x.Value);
@@ -32,6 +33,7 @@ public sealed class ProtectedRecordArchitectureTests
         Assert.Contains(Dependencies(typeof(InjectedConsumer)), x => x.Contains("signature", StringComparison.Ordinal));
         Assert.Contains(Dependencies(typeof(ServiceLocatorConsumer)), x => x.Contains("IL", StringComparison.Ordinal));
         Assert.Contains(Dependencies(typeof(TypeLocatorConsumer)), x => x.Contains("IL", StringComparison.Ordinal));
+        Assert.Contains(Dependencies(typeof(InlineHandlerOwner)), x => x.Contains("signature", StringComparison.Ordinal));
     }
 
     private static Type Root(Type type) { while (type.DeclaringType is { } parent) type = parent; return type; }
@@ -87,4 +89,5 @@ public sealed class ProtectedRecordArchitectureTests
     private sealed class InjectedConsumer(IProtectedRecordProtector protector) { public bool Check() => protector.Ready; }
     private static class ServiceLocatorConsumer { public static object Resolve(IServiceProvider services) => services.GetRequiredService<IProtectedRecordProtector>(); }
     private static class TypeLocatorConsumer { public static object? Resolve(IServiceProvider services) => services.GetService(typeof(IProtectedRecordProtector)); }
+    private static class InlineHandlerOwner { public static Func<IProtectedRecordProtector, bool> Handler() => protector => protector.Ready; }
 }
