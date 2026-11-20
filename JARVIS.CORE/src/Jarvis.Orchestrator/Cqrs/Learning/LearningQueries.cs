@@ -13,6 +13,5 @@ public sealed class LearningQueryHandlers(IRuntimeReader reader, TimeProvider cl
         reader.ReadLearningItemsAsync(query.DueOnly, clock.GetUtcNow(), ct);
 
     public Task<IReadOnlyList<ReviewEvent>> HandleAsync(GetReviewHistory query, CancellationToken ct = default) =>
-        reader.ReadAsync<IReadOnlyList<ReviewEvent>>(s => s.Reviews.Values.Where(r => r.Event.LearningItemId == query.ItemId)
-            .Select(r => r.Event).OrderByDescending(r => r.ReviewedAt).ToList(), ct);
+        reader.ReadLearningHistoryAsync(query.ItemId, ct);
 }
