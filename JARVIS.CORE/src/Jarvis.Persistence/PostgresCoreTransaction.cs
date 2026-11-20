@@ -4,6 +4,7 @@ using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Sessions;
 using Microsoft.EntityFrameworkCore;
 using Jarvis.Orchestrator.Domains;
+using Jarvis.Orchestrator.Forge;
 
 namespace Jarvis.Persistence;
 
@@ -18,11 +19,11 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.begin");
         // Lock privacy and runtime first across all composite writes.
-        await PostgresPrivacyGate.LockAsync(db, ct);
+        var privacy = await PostgresPrivacyGate.LockAsync(db, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "runtime.update.privacy_gate");
         var sessions = new List<(ConversationSession Before, ConversationSession After)>();
         var changed = await PostgresRuntimeStore.UpdateInTransactionAsync(db,
-            state => operation(new Writes(db, state, sessions, ct)), started, phase, ct);
+            state => operation(new Writes(db, state, sessions, privacy.Epoch, ct)), started, phase, ct);
         await transaction.CommitAsync(ct);
         CoreTelemetry.RecordStoragePhase(changed.SavedAt, "runtime.update.commit");
         audioChanges.LeaseChanged(changed.Before, changed.After);
@@ -31,16 +32,54 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
     }
 
     internal sealed class Writes(SessionDbContext db, RuntimeState runtime,
-        List<(ConversationSession Before, ConversationSession After)> sessions, CancellationToken ct) : ICoreTransactionWrites
+        List<(ConversationSession Before, ConversationSession After)> sessions, long epoch, CancellationToken ct) : ICoreTransactionWrites
     {
         public RuntimeState Runtime => runtime;
         public async Task<ForgeProgramme?> ReadForgeProgrammeAsync(string ownerScope, Guid id) =>
-            (await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == ownerScope && x.Id == id, ct))?.Contract();
+            (db.ForgeProgrammes.Local.SingleOrDefault(x => x.OwnerScope == ownerScope && x.Id == id) ??
+                await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == ownerScope && x.Id == id, ct))?.Contract();
         public Task<int> CountForgeProgrammesAsync(string ownerScope) => db.ForgeProgrammes.CountAsync(x => x.OwnerScope == ownerScope && x.DeletedAt == null, ct);
         public async Task SaveForgeProgrammeAsync(ForgeProgramme programme) {
-            var row = await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == programme.OwnerScope && x.Id == programme.Id, ct);
+            var row = db.ForgeProgrammes.Local.SingleOrDefault(x => x.OwnerScope == programme.OwnerScope && x.Id == programme.Id) ??
+                await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == programme.OwnerScope && x.Id == programme.Id, ct);
             if (row is null) { row = new() { OwnerScope = programme.OwnerScope, Id = programme.Id }; db.ForgeProgrammes.Add(row); }
             row.Apply(programme);
+            if (programme.DeletedAt is not null) {
+                // A prior session write may already have flushed an appended revision inside this transaction.
+                // Detach both staged and flushed immutable rows; SQL below performs the single physical purge.
+                foreach (var entry in db.ChangeTracker.Entries<ForgeProtectedRow>().Where(x =>
+                    x.Entity.OwnerScope == programme.OwnerScope && x.Entity.ProgrammeId == programme.Id).ToList()) entry.State = EntityState.Detached;
+                foreach (var rows in new[] { db.ForgeCheckIns, db.ForgeCapacity }) {
+                    await rows.Where(x => x.OwnerScope == programme.OwnerScope && x.ProgrammeId == programme.Id).ExecuteDeleteAsync(ct);
+                }
+            }
+        }
+        private DbSet<ForgeProtectedRow> ProtectedRows(ForgeProtectedKind kind) => kind switch {
+            ForgeProtectedKind.CheckIn => db.ForgeCheckIns, ForgeProtectedKind.Capacity => db.ForgeCapacity,
+            _ => throw new DomainException(400, "Unknown protected Forge record kind.")
+        };
+        public async Task<ForgeProtectedRecord?> ReadForgeProtectedRecordAsync(ForgeProtectedKind kind, string ownerScope, Guid programmeId, Guid id) {
+            if (await ReadForgeProgrammeAsync(ownerScope, programmeId) is not { DeletedAt: null }) return null;
+            var rows = ProtectedRows(kind);
+            var staged = rows.Local.Where(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.Id == id).OrderByDescending(x => x.Revision).FirstOrDefault();
+            var saved = await rows.AsNoTracking().Where(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.Id == id)
+                .OrderByDescending(x => x.Revision).FirstOrDefaultAsync(ct);
+            return (staged is not null && (saved is null || staged.Revision > saved.Revision) ? staged : saved)?.Record(kind);
+        }
+        public async Task<ForgeProtectedRecord?> ReadForgeProtectedRequestAsync(ForgeProtectedKind kind, string ownerScope, Guid programmeId, Guid requestId) {
+            if (await ReadForgeProgrammeAsync(ownerScope, programmeId) is not { DeletedAt: null }) return null;
+            var rows = ProtectedRows(kind);
+            return (rows.Local.SingleOrDefault(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.RequestId == requestId) ??
+                await rows.AsNoTracking().SingleOrDefaultAsync(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.RequestId == requestId, ct))?.Record(kind);
+        }
+        public async Task AppendForgeProtectedRecordAsync(ForgeProtectedRecord record) {
+            record.Validate(epoch);
+            Guard.Require(await ReadForgeProgrammeAsync(record.OwnerScope, record.ProgrammeId) is { DeletedAt: null }, 404, "Forge programme not found.");
+            var latest = await ReadForgeProtectedRecordAsync(record.Kind, record.OwnerScope, record.ProgrammeId, record.Id);
+            Guard.Require((latest?.Revision ?? 0) == record.ExpectedRevision, 409, "Protected Forge record changed. Reload before editing.");
+            Guard.Require(await ReadForgeProtectedRequestAsync(record.Kind, record.OwnerScope, record.ProgrammeId, record.RequestId) is null,
+                409, "Protected Forge request ID is already committed.");
+            ProtectedRows(record.Kind).Add(ForgeProtectedRow.From(record));
         }
         public async Task<DomainResolved?> ReadActiveDomainAsync(string key) => DomainRegistryProjection.Active(await PostgresDomainRegistryStore.Snapshot(db, ct), key);
 
