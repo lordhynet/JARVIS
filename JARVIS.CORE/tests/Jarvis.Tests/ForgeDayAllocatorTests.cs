@@ -147,6 +147,64 @@ public sealed class ForgeDayAllocatorTests
     }
 
     [Fact]
+    public void Plan_graph_refuses_json_in_both_directions()
+    {
+        var plan = ForgeDayAllocator.Plan(Typical(), [Task("review.fr", ForgePlanTaskKind.Review, 20), Task("optional.x", ForgePlanTaskKind.Optional, 600)], Midnight);
+        Assert.NotEmpty(plan.Scheduled); Assert.NotEmpty(plan.Deferred);
+        Assert.Throws<NotSupportedException>(() => System.Text.Json.JsonSerializer.Serialize(plan));
+        Assert.Throws<NotSupportedException>(() => System.Text.Json.JsonSerializer.Serialize(plan.Scheduled[0]));
+        Assert.Throws<NotSupportedException>(() => System.Text.Json.JsonSerializer.Serialize(plan.Deferred[0]));
+        Assert.Throws<NotSupportedException>(() => System.Text.Json.JsonSerializer.Serialize(Task("a", ForgePlanTaskKind.Study, 5)));
+        Assert.Throws<NotSupportedException>(() => System.Text.Json.JsonSerializer.Serialize(new object[] { plan }));
+        Assert.Throws<NotSupportedException>(() => System.Text.Json.JsonSerializer.Deserialize<ForgeDayPlan>("{}"));
+    }
+
+    [Fact]
+    public void Day_end_after_day_and_end_of_time_produce_no_windows_without_overflow()
+    {
+        var capacity = Typical();
+        ForgePlanCandidate[] tasks = [Task("review.fr", ForgePlanTaskKind.Review, 20)];
+        foreach (var notBefore in new[] { Midnight.AddDays(1), Midnight.AddDays(3), DateTimeOffset.MaxValue,
+            new DateTimeOffset(DateTime.MaxValue.AddHours(-3), TimeSpan.FromHours(2)) })
+        {
+            var plan = ForgeDayAllocator.Plan(capacity, tasks, notBefore);
+            Assert.Equal(ForgePlanStatus.Planned, plan.Status); Assert.Empty(plan.Scheduled);
+            Assert.Equal(ForgeDeferReason.NoOpenWindow, Assert.Single(plan.Deferred).Reason);
+        }
+    }
+
+    [Fact]
+    public void Spring_forward_window_crossing_the_gap_is_planned_in_elapsed_time()
+    {
+        // 28 Mar 2027: 01:00 GMT jumps to 02:00 BST (23-hour day). Open 00:00 GMT to 03:00 BST = 120 real minutes.
+        var day = new DateOnly(2027, 3, 28);
+        var capacity = ForgeCapacityProjection.ForDay(Programme(), 1, day, 120, 0, [Block(3, 24, 1, day)]);
+        Assert.Equal(1380, capacity.DayMinutes);
+        var plan = ForgeDayAllocator.Plan(capacity, [Task("review.fr", ForgePlanTaskKind.Review, 90), Task("study.a", ForgePlanTaskKind.Study, 30)], DateTimeOffset.MinValue);
+        Assert.Equal(120, plan.PlannedMinutes); AssertSound(capacity, plan);
+        var first = plan.Scheduled[0];
+        Assert.Equal(new DateTimeOffset(2027, 3, 28, 0, 0, 0, TimeSpan.Zero), first.Start);
+        Assert.Equal(new DateTimeOffset(2027, 3, 28, 1, 30, 0, TimeSpan.Zero), first.End); // 02:30 BST wall time
+        Assert.Equal(new DateTimeOffset(2027, 3, 28, 2, 0, 0, TimeSpan.Zero), plan.Scheduled[1].End); // 03:00 BST, the block start
+    }
+
+    [Fact]
+    public void Fall_back_window_crossing_the_repeated_hour_is_planned_in_elapsed_time()
+    {
+        // 31 Oct 2027: 02:00 BST falls back to 01:00 GMT (25-hour day). Open 00:00 BST to 03:00 GMT = 240 real minutes.
+        var day = new DateOnly(2027, 10, 31);
+        var programme = new ForgeProgramme(Guid.NewGuid(), "owner", 1, 1, Day, new(2027, 12, 31), "Europe/London", false, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var capacity = ForgeCapacityProjection.ForDay(programme, 1, day, 240, 0, [Block(3, 24, 0, day)]);
+        Assert.Equal(1500, capacity.DayMinutes);
+        var plan = ForgeDayAllocator.Plan(capacity, [Task("study.a", ForgePlanTaskKind.Study, 180)], DateTimeOffset.MinValue);
+        var item = Assert.Single(plan.Scheduled);
+        Assert.Equal(new DateTimeOffset(2027, 10, 30, 23, 0, 0, TimeSpan.Zero), item.Start); // 00:00 BST
+        Assert.Equal(180, item.Minutes); // crosses the repeated 01:00-02:00 hour without losing or adding time
+        Assert.Equal(new DateTimeOffset(2027, 10, 31, 2, 0, 0, TimeSpan.Zero), item.End);
+        AssertSound(capacity, plan);
+    }
+
+    [Fact]
     public void Invalid_candidates_are_rejected()
     {
         var capacity = Typical();

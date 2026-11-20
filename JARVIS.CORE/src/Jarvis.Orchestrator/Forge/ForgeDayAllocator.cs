@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+using Jarvis.Orchestrator.Domains;
 using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Orchestrator.Forge;
@@ -11,20 +13,33 @@ public enum ForgeDeferReason
     CapacityUnknown = 1, ProgrammePaused, NoCapacity, BudgetExhausted, NoOpenWindow, InterviewWithin24Hours
 }
 
+// Private, request-scoped views (A1). Occupied windows, allocatable minutes, deadlines and study/interview keys
+// are derived from private capacity, so these types refuse JSON exactly like ForgeCapacityProjection. An owner
+// view or export must be a separate, minimised projection; never log, cache, emit, or pass these to agents,
+// providers or unattended screensaver/watch snapshots.
+
 /// <summary>
-/// One candidate activity for a day. Key is a stable identity (for example a canonical card, goal or drill
-/// reference) used only for deterministic ordering and results; it carries no private payload.
+/// One candidate activity for a day. Key is a stable identity used for deterministic ordering and results.
+/// <see cref="DueBy"/> is a soft sort key within rank and priority, not a hard latest-completion constraint.
 /// </summary>
+[JsonConverter(typeof(PrivateCapacityJsonConverter<ForgePlanCandidate>))]
 public sealed record ForgePlanCandidate(string Key, ForgePlanTaskKind Kind, int Minutes, int MinimumMinutes, int Priority,
     DateTimeOffset? DueBy = null);
 
+/// <summary>
+/// A placed activity. Start/End are correct instants, but End keeps Start's offset (DateTimeOffset.AddMinutes);
+/// any owner display must convert both through the programme time zone rather than read them as wall time.
+/// </summary>
+[JsonConverter(typeof(PrivateCapacityJsonConverter<ForgePlannedItem>))]
 public sealed record ForgePlannedItem(string Key, ForgePlanTaskKind Kind, DateTimeOffset Start, DateTimeOffset End, bool Shortened)
 {
     public int Minutes => (int)(End - Start).TotalMinutes;
 }
 
+[JsonConverter(typeof(PrivateCapacityJsonConverter<ForgeDeferredItem>))]
 public sealed record ForgeDeferredItem(string Key, ForgePlanTaskKind Kind, ForgeDeferReason Reason);
 
+[JsonConverter(typeof(PrivateCapacityJsonConverter<ForgeDayPlan>))]
 public sealed record ForgeDayPlan(ForgePlanStatus Status, DateOnly LocalDate, int ProgrammeRevision, int CapacityRevision,
     int? AllocatableMinutes, int PlannedMinutes, IReadOnlyList<ForgePlannedItem> Scheduled, IReadOnlyList<ForgeDeferredItem> Deferred);
 
@@ -89,19 +104,16 @@ public static class ForgeDayAllocator
             capacity.AllocatableMinutes, planned, scheduled.OrderBy(x => x.Start).ToArray(), deferred);
     }
 
-    // Lower rank goes first. Due reviews always lead (delayed recall is the mastery signal); interview practice
-    // moves ahead of other work when an interview is within seven days.
+    // Lower rank goes first in ALLOCATION SELECTION. Due reviews are considered first (delayed recall is the mastery
+    // signal) and interview practice moves ahead of other work when an interview is within seven days. This is not a
+    // chronological promise: an intact long higher-ranked item can land in a later window while a lower-ranked item
+    // fills an earlier gap. Callers must supply only genuinely due reviews resolved from canonical sources.
     private static int Rank(ForgePlanCandidate item, TimeSpan? interviewIn) => item.Kind switch {
         ForgePlanTaskKind.Review => 0,
         ForgePlanTaskKind.InterviewPractice when interviewIn <= InterviewSoon => 1,
         ForgePlanTaskKind.Optional => 4,
         _ => 2
     };
-
-    // Same grammar as Domain Registry keys (DomainPolicy.Validate); kept local until the shared helper is merged.
-    private static readonly System.Text.RegularExpressions.Regex KeyPattern = new("^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$",
-        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-    private static bool ValidKey(string? key) => !string.IsNullOrWhiteSpace(key) && key.Length <= 60 && KeyPattern.IsMatch(key);
 
     private static int Length((DateTimeOffset Start, DateTimeOffset End) window) => (int)(window.End - window.Start).TotalMinutes;
 
@@ -110,7 +122,7 @@ public static class ForgeDayAllocator
         Guard.Require(candidates is not null && candidates.Count <= MaximumCandidates, 400, "Too many plan candidates.");
         var items = candidates!.ToArray();
         foreach (var item in items)
-            Guard.Require(item is { } c && ValidKey(c.Key) && Enum.IsDefined(c.Kind) &&
+            Guard.Require(item is { } c && DomainPolicy.IsValidKey(c.Key) && Enum.IsDefined(c.Kind) &&
                 c.Minutes is >= 1 and <= MaximumTaskMinutes && c.MinimumMinutes >= 1 && c.MinimumMinutes <= c.Minutes &&
                 c.Priority is >= 0 and <= 100, 400, "Plan candidate is invalid.");
         Guard.Require(items.Select(x => x.Key).Distinct(StringComparer.Ordinal).Count() == items.Length, 400, "Duplicate plan candidate keys.");
@@ -125,6 +137,8 @@ public static class ForgeDayAllocator
         var localStart = capacity.LocalDate.ToDateTime(TimeOnly.MinValue); var localEnd = capacity.LocalDate.AddDays(1).ToDateTime(TimeOnly.MinValue);
         var dayStart = new DateTimeOffset(localStart, zone.GetUtcOffset(localStart));
         var dayEnd = new DateTimeOffset(localEnd, zone.GetUtcOffset(localEnd));
+        // A2: at or after the day's end there is no window; return before rounding so MaxValue can't overflow.
+        if (notBefore >= dayEnd) return [];
         var floor = notBefore <= dayStart ? dayStart : CeilingMinute(notBefore);
         var blocked = capacity.FixedBlocks.Select(x => (Start: new DateTimeOffset(x.LocalStart, x.StartOffset), End: new DateTimeOffset(x.LocalEnd, x.EndOffset)))
             .OrderBy(x => x.Start).ToArray();
