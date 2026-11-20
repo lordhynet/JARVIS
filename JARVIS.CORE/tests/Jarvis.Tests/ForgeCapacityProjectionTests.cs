@@ -65,13 +65,19 @@ public sealed class ForgeCapacityProjectionTests
     public void Overnight_blocks_are_clipped_to_the_local_day_and_overlaps_are_rejected()
     {
         var programme = Programme(); var overnight = Block(new(2026, 11, 30, 22, 0, 0), new(2026, 12, 1, 6, 0, 0));
-        Assert.Equal(1020, ForgeCapacityProjection.ForDay(programme, 1, Day, 1020, 60, [overnight]).AllocatableMinutes);
+        var clipped = ForgeCapacityProjection.ForDay(programme, 1, Day, 1020, 60, [overnight]);
+        Assert.Equal(1020, clipped.AllocatableMinutes);
+        Assert.Equal(new DateTime(2026, 12, 1), clipped.FixedBlocks[0].LocalStart);
+        Assert.Equal(new DateTime(2026, 12, 1, 6, 0, 0), clipped.FixedBlocks[0].LocalEnd);
+        Assert.Equal(DateTimeKind.Unspecified, clipped.FixedBlocks[0].LocalStart.Kind);
         Invalid(() => ForgeCapacityProjection.ForDay(programme, 1, Day, 1021, 60, [overnight]));
         var first = Block(new(2026, 12, 1, 9, 0, 0), new(2026, 12, 1, 12, 0, 0));
         var overlapping = Block(new(2026, 12, 1, 11, 0, 0), new(2026, 12, 1, 14, 0, 0));
         Invalid(() => ForgeCapacityProjection.ForDay(programme, 1, Day, 0, 0, [first, overlapping]));
         var adjacent = Block(new(2026, 12, 1, 12, 0, 0), new(2026, 12, 1, 14, 0, 0));
-        Assert.Equal(1140, ForgeCapacityProjection.ForDay(programme, 1, Day, 1140, 0, [adjacent, first]).AllocatableMinutes);
+        var ordered = ForgeCapacityProjection.ForDay(programme, 1, Day, 1140, 0, [adjacent, first]);
+        Assert.Equal(1140, ordered.AllocatableMinutes);
+        Assert.Equal(first.LocalStart, ordered.FixedBlocks[0].LocalStart);
     }
 
     [Theory]

@@ -58,7 +58,7 @@ public sealed class ForgeCapacityProjection
             400, "Capacity day boundary is ambiguous or unavailable.");
         var start = new DateTimeOffset(localStart, zone.GetUtcOffset(localStart)); var end = new DateTimeOffset(localEnd, zone.GetUtcOffset(localEnd));
         var dayMinutes = checked((int)(end - start).TotalMinutes);
-        var blocks = fixedBlocks.ToArray(); var intervals = new List<(DateTimeOffset Start, DateTimeOffset End)>();
+        var blocks = fixedBlocks.ToArray(); var intervals = new List<(DateTimeOffset Start, DateTimeOffset End, ForgeCapacityLocalInterval View)>();
         foreach (var block in blocks) {
             Guard.Require(block is not null && block.TimeZone == programme.TimeZone &&
                 block.LocalStart.Kind == DateTimeKind.Unspecified && block.LocalEnd.Kind == DateTimeKind.Unspecified &&
@@ -71,14 +71,16 @@ public sealed class ForgeCapacityProjection
                 400, "Capacity interval offset is invalid or falls in a clock gap.");
             var from = new DateTimeOffset(block.LocalStart, block.StartOffset); var until = new DateTimeOffset(block.LocalEnd, block.EndOffset);
             Guard.Require(until > from && until - from <= TimeSpan.FromDays(2) && until > start && from < end, 400, "Capacity interval is outside its day.");
-            intervals.Add((from < start ? start : from, until > end ? end : until));
+            var clippedStart = from < start ? start : from; var clippedEnd = until > end ? end : until;
+            var viewStart = TimeZoneInfo.ConvertTime(clippedStart, zone); var viewEnd = TimeZoneInfo.ConvertTime(clippedEnd, zone);
+            intervals.Add((clippedStart, clippedEnd, new(viewStart.DateTime, viewEnd.DateTime, programme.TimeZone, viewStart.Offset, viewEnd.Offset)));
         }
         intervals.Sort((a, b) => a.Start.CompareTo(b.Start));
         for (var i = 1; i < intervals.Count; i++) Guard.Require(intervals[i].Start >= intervals[i - 1].End, 400, "Fixed capacity intervals overlap.");
         var fixedMinutes = (int)intervals.Sum(x => (x.End - x.Start).TotalMinutes);
         var remaining = dayMinutes - fixedMinutes - bufferMinutes;
         Guard.Require(remaining >= 0 && (netUsableMinutes is null || netUsableMinutes <= remaining), 400, "Capacity exceeds the available local day.");
-        return new(programme, capacityRevision, day, dayMinutes, netUsableMinutes, bufferMinutes, blocks);
+        return new(programme, capacityRevision, day, dayMinutes, netUsableMinutes, bufferMinutes, intervals.Select(x => x.View).ToArray());
     }
 }
 
