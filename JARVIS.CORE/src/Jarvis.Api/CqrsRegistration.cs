@@ -38,6 +38,15 @@ public static class CqrsRegistration
         Command<ReopenCore, PrivacyStatus, PrivacyCommands>(services);
         Command<ApplyRetention, PrivacyJob, PrivacyCommands>(services);
         services.AddSingleton<IRuntimeReader>(s => s.GetRequiredService<IRuntimeStore>());
+        services.AddSingleton<Jarvis.Orchestrator.Forge.IForgeAvailability, ForgeSettings>();
+        services.AddSingleton<Jarvis.Orchestrator.Forge.ForgeProgrammeService>();
+        services.AddSingleton<Jarvis.Orchestrator.Cqrs.Forge.ForgeCommands>();
+        services.AddSingleton<Jarvis.Orchestrator.Cqrs.Forge.ForgeQueries>();
+        Command<Jarvis.Orchestrator.Cqrs.Forge.CreateForgeProgramme, ForgeProgramme, Jarvis.Orchestrator.Cqrs.Forge.ForgeCommands>(services);
+        Command<Jarvis.Orchestrator.Cqrs.Forge.PauseForgeProgramme, ForgeProgramme, Jarvis.Orchestrator.Cqrs.Forge.ForgeCommands>(services);
+        Command<Jarvis.Orchestrator.Cqrs.Forge.DeleteForgeProgramme, bool, Jarvis.Orchestrator.Cqrs.Forge.ForgeCommands>(services);
+        Query<Jarvis.Orchestrator.Cqrs.Forge.GetForgeProgramme, ForgeProgrammeView, Jarvis.Orchestrator.Cqrs.Forge.ForgeQueries>(services);
+        Query<Jarvis.Orchestrator.Cqrs.Forge.ListForgeProgrammes, IReadOnlyList<ForgeProgrammeView>, Jarvis.Orchestrator.Cqrs.Forge.ForgeQueries>(services);
         services.AddSingleton<TravelQueries>(); services.AddSingleton<TravelCommands>();
         Query<ListTravelRoutes, IReadOnlyList<TravelRoute>, TravelQueries>(services);
         Query<GetTravelCatalogue, IReadOnlyList<TravelLine>, TravelQueries>(services);

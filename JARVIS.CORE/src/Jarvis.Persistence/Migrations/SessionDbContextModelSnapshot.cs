@@ -456,6 +456,52 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("DomainVersions", (string)null);
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.ForgeProgrammeRow", b =>
+                {
+                    b.Property<string>("OwnerScope")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ConfigurationVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Graduation")
+                        .HasColumnType("date");
+
+                    b.Property<bool>("Paused")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("Start")
+                        .HasColumnType("date");
+
+                    b.Property<string>("TimeZone")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("OwnerScope", "Id");
+
+                    b.HasIndex("OwnerScope", "CreatedAt");
+
+                    b.ToTable("ForgeProgrammes", (string)null);
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.InterviewRecordingRow", b =>
                 {
                     b.Property<Guid>("Id")

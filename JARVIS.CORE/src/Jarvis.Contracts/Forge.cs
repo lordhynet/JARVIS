@@ -1,5 +1,14 @@
 namespace Jarvis.Contracts;
 
+public sealed record CreateForgeProgrammeRequest(Guid RequestId,
+    string LocalStartDate = "2026-12-01", string LocalGraduationDate = "2027-08-18", string TimeZone = "Europe/London");
+public sealed record PauseForgeProgrammeRequest(int ExpectedRevision, bool Paused);
+// This is programme configuration, not another coaching or learning history.
+public sealed record ForgeProgramme(Guid Id, string OwnerScope, int Revision, int ConfigurationVersion,
+    DateOnly Start, DateOnly Graduation, string TimeZone, bool Paused,
+    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? DeletedAt = null);
+public sealed record ForgeProgrammeView(ForgeProgramme Programme, ForgeCalendarView Calendar);
+
 public enum ForgeProgrammeStatus { NotStarted, Active, Graduated }
 
 /// <summary>A programme phase in local calendar dates, both ends inclusive.</summary>

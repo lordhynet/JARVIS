@@ -14,6 +14,9 @@ public interface ICoreTransactionWrites
 {
     const int DeviceCommandBatchSize = 16;
     RuntimeState Runtime { get; }
+    Task<ForgeProgramme?> ReadForgeProgrammeAsync(string ownerScope, Guid id);
+    Task<int> CountForgeProgrammesAsync(string ownerScope);
+    Task SaveForgeProgrammeAsync(ForgeProgramme programme);
     Task<DomainResolved?> ReadActiveDomainAsync(string key) => Task.FromResult(DomainRegistryProjection.Active(Runtime.DomainRegistry, key));
     Task<SessionAudioState?> ReadAudioStateAsync(Guid sessionId);
     Task<ConversationSession?> UpdateSessionAsync(Guid sessionId, Func<ConversationSession, ConversationSession> update);
@@ -49,11 +52,20 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
         CancellationToken ct) : ICoreTransactionWrites
     {
         private readonly Dictionary<Guid, ConversationSession> stagedSessions = [];
+        private readonly Dictionary<(string Owner, Guid Id), ForgeProgramme> stagedForge = [];
         private Dictionary<Guid, DeviceGrant>? stagedGrants;
         private readonly Dictionary<Guid, DeviceCommand> stagedCommands = [];
         private readonly List<DeviceReceiptView> stagedReceipts = [];
 
         public RuntimeState Runtime => state;
+        public Task<ForgeProgramme?> ReadForgeProgrammeAsync(string ownerScope, Guid id) =>
+            Task.FromResult(stagedForge.GetValueOrDefault((ownerScope, id)) ?? boundary.ForgeProgrammes.GetValueOrDefault((ownerScope, id)));
+        public Task<int> CountForgeProgrammesAsync(string ownerScope) => Task.FromResult(
+            boundary.ForgeProgrammes.Keys.Concat(stagedForge.Keys).Distinct().Count(x => x.Owner == ownerScope));
+        public Task SaveForgeProgrammeAsync(ForgeProgramme programme) {
+            stagedForge[(programme.OwnerScope, programme.Id)] = programme;
+            return Task.CompletedTask;
+        }
 
         public async Task<SessionAudioState?> ReadAudioStateAsync(Guid sessionId)
         {
@@ -120,6 +132,7 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
 
         public void Commit()
         {
+            foreach (var (key, programme) in stagedForge) boundary.ForgeProgrammes[key] = programme;
             if (stagedGrants is not null) boundary.DeviceGrants = stagedGrants;
             foreach (var (id, command) in stagedCommands) boundary.DeviceCommands[id] = command;
             foreach (var receipt in stagedReceipts)

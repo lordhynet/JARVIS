@@ -7,6 +7,7 @@ namespace Jarvis.Persistence;
 
 public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options) : DbContext(options)
 {
+    public DbSet<ForgeProgrammeRow> ForgeProgrammes => Set<ForgeProgrammeRow>();
     public DbSet<SessionRow> Sessions => Set<SessionRow>();
     public DbSet<PrivacyControlRow> PrivacyControls => Set<PrivacyControlRow>();
     public DbSet<PrivacyJobRow> PrivacyJobs => Set<PrivacyJobRow>();
@@ -34,6 +35,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder model)
     {
+        ForgeProgrammeRow.Configure(model);
         DomainModel.Configure(model);
         RuntimeHotModel.Configure(model);
         TravelModel.Configure(model);
