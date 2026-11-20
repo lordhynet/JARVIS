@@ -19,6 +19,7 @@ public sealed class ForgeCapacityLocalInterval(DateTime localStart, DateTime loc
 [JsonConverter(typeof(PrivateCapacityJsonConverter<ForgeCapacityProjection>))]
 public sealed class ForgeCapacityProjection
 {
+    private readonly string ownerScope;
     public Guid ProgrammeId { get; }
     public int ProgrammeRevision { get; }
     public int CapacityRevision { get; }
@@ -36,6 +37,7 @@ public sealed class ForgeCapacityProjection
 
     private ForgeCapacityProjection(ForgeProgramme programme, int revision, DateOnly day, int dayMinutes, int? usable, int buffer, ForgeCapacityLocalInterval[] blocks)
     {
+        ownerScope = programme.OwnerScope;
         ProgrammeId = programme.Id; ProgrammeRevision = programme.Revision; ProgrammePaused = programme.Paused;
         CapacityRevision = revision; LocalDate = day; TimeZone = programme.TimeZone; DayMinutes = dayMinutes;
         UsableMinutes = usable; BufferMinutes = buffer; FixedBlocks = Array.AsReadOnly(blocks);
@@ -83,6 +85,40 @@ public sealed class ForgeCapacityProjection
         var remaining = dayMinutes - fixedMinutes - bufferMinutes;
         Guard.Require(remaining >= 0 && (netUsableMinutes is null || netUsableMinutes <= remaining), 400, "Capacity exceeds the available local day.");
         return new(programme, capacityRevision, day, dayMinutes, netUsableMinutes, bufferMinutes, intervals.Select(x => x.View).ToArray());
+    }
+
+    // PF-08 supplies current-policy intervals resolved into the programme's zone/explicit offsets.
+    // This composes constraints only; it changes neither owner configuration nor global JARVIS policy.
+    public static ForgeCapacityProjection WithPolicyQuietHours(ForgeProgramme programme, ForgeCapacityProjection capacity,
+        IReadOnlyList<ForgeCapacityLocalInterval>? policyQuiet)
+    {
+        Guard.Require(programme is { DeletedAt: null } && capacity is not null &&
+            capacity.ownerScope == programme.OwnerScope && capacity.ProgrammeId == programme.Id &&
+            capacity.ProgrammeRevision == programme.Revision && capacity.TimeZone == programme.TimeZone,
+            409, "Current capacity programme scope is required.");
+        Guard.Require(policyQuiet is not null, 409, "Resolved quiet-hours policy is unavailable.");
+        Guard.Require(policyQuiet.Count <= 64, 400, "Too many quiet-hours policy intervals.");
+        var blocked = capacity.FixedBlocks.ToList();
+        // Validate/clip each policy interval using the same approved temporal rules. They may
+        // overlap each other or owner blocks; only the resulting union goes to the final validator.
+        foreach (var quiet in policyQuiet) blocked.AddRange(ForDay(programme, capacity.CapacityRevision, capacity.LocalDate, null, 0, [quiet]).FixedBlocks);
+        var ordered = blocked.Select(x => (Start: new DateTimeOffset(x.LocalStart, x.StartOffset), End: new DateTimeOffset(x.LocalEnd, x.EndOffset)))
+            .OrderBy(x => x.Start).ThenBy(x => x.End).ToArray();
+        var union = new List<(DateTimeOffset Start, DateTimeOffset End)>();
+        foreach (var interval in ordered) {
+            if (union.Count == 0 || interval.Start > union[^1].End) union.Add(interval);
+            else if (interval.End > union[^1].End) union[^1] = (union[^1].Start, interval.End);
+        }
+        var blockedMinutes = checked((int)union.Sum(x => (x.End - x.Start).TotalMinutes));
+        var remaining = capacity.DayMinutes - blockedMinutes - capacity.BufferMinutes;
+        Guard.Require(remaining >= 0, 409, "Quiet-hours policy leaves no room for the declared capacity buffer.");
+        int? net = capacity.UsableMinutes is int known ? Math.Min(known, remaining) : null;
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
+        var merged = union.Select(x => {
+            var from = TimeZoneInfo.ConvertTime(x.Start, zone); var until = TimeZoneInfo.ConvertTime(x.End, zone);
+            return new ForgeCapacityLocalInterval(from.DateTime, until.DateTime, programme.TimeZone, from.Offset, until.Offset);
+        }).ToArray();
+        return ForDay(programme, capacity.CapacityRevision, capacity.LocalDate, net, capacity.BufferMinutes, merged);
     }
 }
 
