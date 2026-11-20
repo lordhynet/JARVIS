@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,7 @@ internal sealed class PostgresRuntimeLearningState
     }
     private (Dictionary<(string Kind, Guid Id), object> Values, RuntimeLearningControlRow Control) Load(RuntimeState state)
     {
+        var phase = Stopwatch.GetTimestamp();
         var rows = db.RuntimeLearningRows.AsNoTracking().ToArray();
         if (rows.Any(x => !IsProperty(x.Kind) || x.Kind == nameof(RuntimeState.NextTrainingSequence)))
             throw new InvalidDataException("Unknown persisted learning collection.");
@@ -41,7 +43,9 @@ internal sealed class PostgresRuntimeLearningState
         var sequenceControl = db.RuntimeLearningState.Single(x => x.Id == 1);
         state.Learning = learning; state.Reviews = reviews; state.CreationReceipts = creations; state.TrainingBaselines = baselines;
         state.TrainingBaselineReviews = included; state.TrainingManualSequences = sequences; state.NextTrainingSequence = sequenceControl.NextTrainingSequence;
-        return (Values(state, snapshot: true), sequenceControl);
+        var values = Values(state, snapshot: true);
+        CoreTelemetry.RecordStoragePhase(phase, "runtime.learning.hydrate");
+        return (values, sequenceControl);
     }
     private static Dictionary<(string Kind, Guid Id), object> Values(RuntimeState state, bool snapshot = false)
     {
@@ -78,6 +82,7 @@ internal sealed class PostgresRuntimeLearningState
     public void Apply(RuntimeState state)
     {
         if (!state.AreLearningPropertiesLoaded) return;
+        var phase = Stopwatch.GetTimestamp();
         // Erasure supplies a new empty state; load the previous rows separately so deleted
         // values cannot overwrite that empty state before applying its delta.
         if (before is null) (before, control) = Load(new RuntimeState());
@@ -90,5 +95,6 @@ internal sealed class PostgresRuntimeLearningState
             if (old is null) db.RuntimeLearningRows.Add(row); else db.RuntimeLearningRows.Update(row);
         }
         control!.NextTrainingSequence = state.NextTrainingSequence;
+        CoreTelemetry.RecordStoragePhase(phase, "runtime.learning.diff");
     }
 }

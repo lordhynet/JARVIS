@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.EntityFrameworkCore;
@@ -25,12 +26,14 @@ internal sealed class PostgresRuntimeHotState
         this.db = db; this.audio = audio; this.tickets = tickets;
         originalColdHash = fingerprint;
         if (deferCold) state.DeferColdProperties(() => {
+            var phase = Stopwatch.GetTimestamp();
             var json = db.RuntimeDocuments.AsNoTracking().Where(r => r.Id == 1).Select(r => r.Json).Single();
             CoreTelemetry.RuntimeBytes.Record(System.Text.Encoding.UTF8.GetByteCount(json));
             var cold = JsonSerializer.Deserialize<RuntimeState>(json)!;
             foreach (var property in typeof(RuntimeState).GetProperties().Where(p => p.CanWrite && !PostgresRuntimeCodec.IsHot(p.Name)))
                 property.SetValue(state, property.GetValue(cold));
             if (originalColdHash.Length == 0) originalColdHash = PostgresRuntimeCodec.Fingerprint(PostgresRuntimeCodec.Serialize(state));
+            CoreTelemetry.RecordStoragePhase(phase, "runtime.cold.hydrate");
         });
         else if (originalColdHash.Length == 0) originalColdHash = PostgresRuntimeCodec.Fingerprint(PostgresRuntimeCodec.Serialize(state));
         state.AudioLease = lease = JsonSerializer.Deserialize<AudioLease>(audio.LeaseJson);
@@ -58,9 +61,11 @@ internal sealed class PostgresRuntimeHotState
     public void Apply(RuntimeDocument row, RuntimeState state)
     {
         if (state.AreColdPropertiesLoaded) {
+            var phase = Stopwatch.GetTimestamp();
             var json = PostgresRuntimeCodec.Serialize(state);
             var hash = PostgresRuntimeCodec.Fingerprint(json);
             if (hash != originalColdHash) { row.Json = json; row.Fingerprint = hash; }
+            CoreTelemetry.RecordStoragePhase(phase, "runtime.cold.serialize_hash");
         }
         foreach (var (key, value) in Small(state)) {
             if (smallBefore[key] == value) continue;
