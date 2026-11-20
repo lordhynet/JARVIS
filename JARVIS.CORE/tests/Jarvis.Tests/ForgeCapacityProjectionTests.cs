@@ -20,6 +20,8 @@ public sealed class ForgeCapacityProjectionTests
         var programme = Programme();
         var unknown = ForgeCapacityProjection.ForDay(programme, 1, Day, null, 60, []);
         Assert.False(unknown.Known); Assert.False(unknown.CanAllocate); Assert.Null(unknown.UsableMinutes); Assert.Null(unknown.AllocatableMinutes);
+        var restDay = ForgeCapacityProjection.ForDay(programme, 2, Day, 0, 60, []);
+        Assert.True(restDay.Known); Assert.False(restDay.CanAllocate); Assert.Equal(0, restDay.AllocatableMinutes);
         var known = ForgeCapacityProjection.ForDay(programme, 2, Day, 120, 60, [Block(new(2026, 12, 1, 9, 0, 0), new(2026, 12, 1, 17, 0, 0))]);
         Assert.True(known.Known); Assert.True(known.CanAllocate); Assert.Equal(120, known.AllocatableMinutes); Assert.Equal(1440, known.DayMinutes);
     }

@@ -31,7 +31,7 @@ public sealed class ForgeCapacityProjection
     public IReadOnlyList<ForgeCapacityLocalInterval> FixedBlocks { get; }
     public bool Known => UsableMinutes.HasValue;
     public bool ProgrammePaused { get; }
-    public bool CanAllocate => Known && !ProgrammePaused;
+    public bool CanAllocate => AllocatableMinutes is > 0;
     public int? AllocatableMinutes => Known ? (ProgrammePaused ? 0 : UsableMinutes) : null;
 
     private ForgeCapacityProjection(ForgeProgramme programme, int revision, DateOnly day, int dayMinutes, int? usable, int buffer, ForgeCapacityLocalInterval[] blocks)
