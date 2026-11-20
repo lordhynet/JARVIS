@@ -1,0 +1,9 @@
+# Explicit inputs for the canonical training projection
+
+TrainingProjection.Project accepts the existing baseline, absorbed review-ID set, manual reviews/sequences and training attempts for an explicit question. It contains the existing single replay algorithm and returns a LearningItem without mutating inputs. Rebuild(RuntimeState,question) remains the compatibility wrapper that materializes those values and replaces the current canonical card. A mismatched baseline identity fails409 before projection. Reviews/attempts from another question are excluded defensively.
+
+Eligibility, original practice time and existing sequence ordering, manual rules, current-text canonical assessment checks, scores/streaks, baseline-review exclusion and London/DST behavior are preserved. There is no clock/provider call, persistence dependency, extra projection engine/history/sequence or authorization grant in this function.
+
+This boundary permits a future scoped writer to reuse the canonical rules using question-specific inputs. That caller must validate persisted identities and enforce current resource/epoch/revision/policy/source fences inside the existing D2 transaction before calling. Materialize inputs while that transaction is valid; do not pass deferred queries that outlive it. Returning a derived card authorizes neither writing it nor performing a source action.
+
+This preparatory refactor changes no database/transaction/port or lazy unit contract and claims no storage-latency improvement. The measured less-than50ms mutation gate remains open. Substantial scoped read/write/extraction work still requires an independently reviewed dependency/lock/replay/privacy design, including deletion's reasoning/provider-source purge, all default/composite/voice consumers, lossless Up/Down if needed, and export/retention/erasure. A partial RuntimeState must never enter a complete-unit diff writer.
