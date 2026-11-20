@@ -4,10 +4,12 @@ using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Microsoft.EntityFrameworkCore;
 using Jarvis.Orchestrator.Recordings;
+using Jarvis.Orchestrator.Forge;
 
 namespace Jarvis.Persistence;
 
-public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges audioChanges, IRecordingAudioFiles? recordingFiles = null) : IPrivacyStore
+public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges audioChanges,
+    IRecordingAudioFiles? recordingFiles = null, IProtectedRecordProtector? protectedRecords = null) : IPrivacyStore
 {
     public async Task<PrivacyStatus> StatusAsync(CancellationToken ct = default)
     {
@@ -32,8 +34,16 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
         var control = await db.PrivacyControls.AsNoTracking().SingleAsync(x => x.Id == 1, ct); RequireEpoch(control);
-        Guard.Require(!await db.ForgeCheckIns.AnyAsync(ct) && !await db.ForgeCapacity.AnyAsync(ct),
-            503, "Protected Forge export is not available. No partial export was produced.");
+        // Named sets are required: these tables share a CLR shape but not an identity namespace.
+        var count = await db.ForgeCheckIns.LongCountAsync(ct) + await db.ForgeCapacity.LongCountAsync(ct);
+        ForgeProtectedJson.RequireExportSize(count, 0);
+        var paddedBytes = (await db.ForgeCheckIns.SumAsync(x => (long?)x.Ciphertext.Length, ct) ?? 0) +
+            (await db.ForgeCapacity.SumAsync(x => (long?)x.Ciphertext.Length, ct) ?? 0);
+        ForgeProtectedJson.RequireExportSize(count, paddedBytes); // reject before materializing ciphertext
+        var checkIns = await db.ForgeCheckIns.AsNoTracking().ToArrayAsync(ct);
+        var capacity = await db.ForgeCapacity.AsNoTracking().ToArrayAsync(ct);
+        var protectedExport = ForgeProtectedJson.ExportRevisions(protectedRecords,
+            checkIns.Select(x => x.Record(ForgeProtectedKind.CheckIn)).Concat(capacity.Select(x => x.Record(ForgeProtectedKind.Capacity))).ToArray(), control.Epoch, ct);
         var (_, state, _) = await Runtime(db, ct);
         var sessions = (await db.Sessions.AsNoTracking().Include(x => x.Checkpoints).OrderBy(x => x.Id).ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
@@ -44,7 +54,9 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var forge = (await db.ForgeProgrammes.AsNoTracking().OrderBy(x => x.Id).ToListAsync(ct)).Select(x => x.Contract()).ToArray();
         var export = PrivacyData.Export(control.Status(), state, sessions, runs, events, jobs, now, (await PostgresDomainRegistryStore.Snapshot(db, ct)).Export()) with {
             TravelRoutes = travel.Routes.Values.ToArray(), TravelLineStates = travel.Lines.Values.ToArray(), InterviewRecordings = recordings.Sessions.Values.Select(r => r.View).ToArray(),
-            ForgeProgrammes = forge.Length == 0 ? null : forge };
+            ForgeProgrammes = forge.Length == 0 ? null : forge, ForgeProtectedRecords = protectedExport,
+            ExportSensitivity = protectedExport is null ? null : ForgeProtectedRevisionExport.Sensitivity,
+            ExportStorageAdvice = protectedExport is null ? null : ForgeProtectedRevisionExport.StorageAdvice };
         await tx.CommitAsync(ct); return export;
     }
     public async Task<RetentionPreview> PreviewAsync(RetentionPolicy policy, DateTimeOffset asOf, CancellationToken ct = default)

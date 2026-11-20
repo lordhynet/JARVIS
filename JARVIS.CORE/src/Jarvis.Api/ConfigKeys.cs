@@ -3,6 +3,7 @@ namespace Jarvis.Api;
 public static class ConfigKeys
 {
     public const string CoreApiKey = "Jarvis:ApiKey";
+    public const string ProtectedRecords = "ProtectedRecords";
     public const string RequireEnrolledBrowser = "Authentication:RequireEnrolledBrowser";
     public const string OwnerKey = "BudgetManagement:OwnerKey";
     public const string OwnerSubjectId = "BudgetManagement:SubjectId";

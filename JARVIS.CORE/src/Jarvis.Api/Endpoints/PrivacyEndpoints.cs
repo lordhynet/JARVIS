@@ -15,6 +15,8 @@ public static class PrivacyEndpoints
         group.MapGet("/export", async (HttpContext context, TimeProvider clock, IQueryHandler<ExportCore, CoreDataExport> h, CancellationToken ct) =>
         {
             context.Response.Headers.ContentDisposition = "attachment; filename=jarvis-core-export.json";
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.Pragma = "no-cache";
             return await h.HandleAsync(new(clock.GetUtcNow()), ct);
         }).RequireAuthorization(Jarvis.Api.Security.CorePolicies.PrivacyManage);
         group.MapGet("/retention", (RetentionSettings settings) => settings.Read()).RequireAuthorization(Jarvis.Api.Security.CorePolicies.Owner);

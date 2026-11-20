@@ -62,7 +62,7 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         public async Task<ForgeProtectedRecord?> ReadForgeProtectedRecordAsync(ForgeProtectedKind kind, string ownerScope, Guid programmeId, Guid id) {
             if (await ReadForgeProgrammeAsync(ownerScope, programmeId) is not { DeletedAt: null }) return null;
             var rows = ProtectedRows(kind);
-            var staged = rows.Local.Where(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.Id == id).OrderByDescending(x => x.Revision).FirstOrDefault();
+            var staged = LocalProtectedRows(rows).Where(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.Id == id).OrderByDescending(x => x.Revision).FirstOrDefault();
             var saved = await rows.AsNoTracking().Where(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.Id == id)
                 .OrderByDescending(x => x.Revision).FirstOrDefaultAsync(ct);
             return (staged is not null && (saved is null || staged.Revision > saved.Revision) ? staged : saved)?.Record(kind);
@@ -70,9 +70,12 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         public async Task<ForgeProtectedRecord?> ReadForgeProtectedRequestAsync(ForgeProtectedKind kind, string ownerScope, Guid programmeId, Guid requestId) {
             if (await ReadForgeProgrammeAsync(ownerScope, programmeId) is not { DeletedAt: null }) return null;
             var rows = ProtectedRows(kind);
-            return (rows.Local.SingleOrDefault(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.RequestId == requestId) ??
+            return (LocalProtectedRows(rows).SingleOrDefault(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.RequestId == requestId) ??
                 await rows.AsNoTracking().SingleOrDefaultAsync(x => x.OwnerScope == ownerScope && x.ProgrammeId == programmeId && x.RequestId == requestId, ct))?.Record(kind);
         }
+        // DbSet.Local includes rows of the shared CLR type; discriminate the named entity metadata.
+        private IEnumerable<ForgeProtectedRow> LocalProtectedRows(DbSet<ForgeProtectedRow> rows) =>
+            db.ChangeTracker.Entries<ForgeProtectedRow>().Where(x => x.Metadata == rows.EntityType && x.State != EntityState.Deleted).Select(x => x.Entity);
         public async Task AppendForgeProtectedRecordAsync(ForgeProtectedRecord record) {
             record.Validate(epoch);
             Guard.Require(await ReadForgeProgrammeAsync(record.OwnerScope, record.ProgrammeId) is { DeletedAt: null }, 404, "Forge programme not found.");
