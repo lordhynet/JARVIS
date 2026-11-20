@@ -27,13 +27,11 @@ public sealed class ForgeProtectedStorageFixture(IServiceProvider services)
     {
         var record = new ForgeProtectedRecord(kind, programme.OwnerScope, programme.Id, id, epoch, revision, request ?? Guid.NewGuid(), revision - 1,
             At, new(1, "", [], [], []), new(1, "", []));
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(new SyntheticForgeValue(value, revision));
         var canonical = JsonSerializer.SerializeToUtf8Bytes(new SyntheticForgeRequest(record.RequestId, record.ExpectedRevision, value));
-        try { return record with { Envelope = protector.Protect(record.ValueContext, bytes), RetryProof = protector.CreateRetryProof(record.RetryContext, canonical) }; }
-        finally { CryptographicOperations.ZeroMemory(bytes); CryptographicOperations.ZeroMemory(canonical); }
+        try { return record with { Envelope = ForgeProtectedJson.Protect(protector, record.ValueContext, new SyntheticForgeValue(value, revision)), RetryProof = protector.CreateRetryProof(record.RetryContext, canonical) }; }
+        finally { CryptographicOperations.ZeroMemory(canonical); }
     }
-    public SyntheticForgeValue Open(ForgeProtectedRecord record) => protector.Unprotect(record.ValueContext, record.Envelope,
-        plaintext => JsonSerializer.Deserialize<SyntheticForgeValue>(plaintext)!);
+    public SyntheticForgeValue Open(ForgeProtectedRecord record) => ForgeProtectedJson.Read<SyntheticForgeValue>(protector, record.ValueContext, record.Envelope);
     public bool Matches(ForgeProtectedRecord record, string value, ProtectedRecordContext? context = null) {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new SyntheticForgeRequest(record.RequestId, record.ExpectedRevision, value));
         try { return protector.MatchesRetryProof(context ?? record.RetryContext, record.RetryProof, bytes); }
@@ -44,6 +42,22 @@ public sealed class ForgeProtectedStorageFixture(IServiceProvider services)
     public Task<ForgeProtectedRecord?> Receipt(ForgeProtectedRecord record) => Transaction.ExecuteAsync(w =>
         w.ReadForgeProtectedRequestAsync(record.Kind, record.OwnerScope, record.ProgrammeId, record.RequestId));
     public Task<bool> Append(ForgeProtectedRecord record) => Transaction.ExecuteAsync(async w => { await w.AppendForgeProtectedRecordAsync(record); return true; });
+
+    public async Task KindIsolation()
+    {
+        var programme = Programme(); var id = Guid.NewGuid(); var requestId = Guid.NewGuid();
+        var checkIn = Record(programme, ForgeProtectedKind.CheckIn, id, value: "Synthetic check-in", request: requestId);
+        var capacity = Record(programme, ForgeProtectedKind.Capacity, id, value: "Synthetic capacity", request: requestId);
+        await Transaction.ExecuteAsync(async w => { await w.SaveForgeProgrammeAsync(programme); await w.AppendForgeProtectedRecordAsync(checkIn); return true; });
+        await Append(capacity);
+        Assert.Equal(checkIn.Envelope.Ciphertext, (await Latest(checkIn))!.Envelope.Ciphertext);
+        Assert.Equal("Synthetic check-in", Open((await Receipt(checkIn))!).Value);
+        Assert.Equal("Synthetic capacity", Open((await Receipt(capacity))!).Value);
+        await Append(Record(programme, ForgeProtectedKind.CheckIn, id, 2, "Updated synthetic check-in"));
+        Assert.Equal(2, (await Latest(checkIn))!.Revision); Assert.Equal(1, (await Latest(capacity))!.Revision);
+        Assert.Equal(capacity.Envelope.Ciphertext, (await Latest(capacity))!.Envelope.Ciphertext);
+        Assert.Equal(ForgeProtectedJson.BucketBytes, capacity.Envelope.Ciphertext.Length);
+    }
 
     public async Task<(ForgeProgramme Programme, ForgeProtectedRecord First, ForgeProtectedRecord Latest)> Versions()
     {
@@ -115,6 +129,10 @@ public sealed class ForgeProtectedStorageFixture(IServiceProvider services)
 
 public sealed class ForgeProtectedStorageTests
 {
+    [Fact]
+    public async Task ForgeProtected_memory_same_ids_in_capacity_and_checkins_are_isolated() {
+        using var host = new ForgeApiFactory(); await new ForgeProtectedStorageFixture(host.Services).KindIsolation();
+    }
     [Fact]
     public async Task ForgeProtected_memory_versions_retry_context_and_copy_boundaries() {
         using var host = new ForgeApiFactory(); await new ForgeProtectedStorageFixture(host.Services).Versions();

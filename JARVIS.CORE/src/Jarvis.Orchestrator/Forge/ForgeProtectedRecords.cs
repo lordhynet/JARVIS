@@ -29,7 +29,7 @@ public sealed record ForgeProtectedRecord(ForgeProtectedKind Kind, string OwnerS
             400, "Protected Forge record identity is invalid.");
         Guard.Require(Epoch >= 0 && Epoch == epoch, 409, "Protected Forge record belongs to another privacy generation.");
         Guard.Require(CreatedAt.Offset == TimeSpan.Zero && CreatedAt.Ticks % 10 == 0, 400, "Protected record timestamp must use canonical UTC precision.");
-        Guard.Require(Envelope is { Version: 1, Nonce.Length: 12, Tag.Length: 16, Ciphertext.Length: <= 65_536 } && Label(Envelope.KeyId, 64) &&
+        Guard.Require(Envelope is { Version: 1, Nonce.Length: 12, Tag.Length: 16, Ciphertext.Length: <= IProtectedRecordProtector.MaximumPlaintextBytes } && Label(Envelope.KeyId, 64) &&
             RetryProof is { Version: 1, Mac.Length: 32 } && Label(RetryProof.KeyId, 64), 400, "Protected Forge envelope is invalid.");
     }
 

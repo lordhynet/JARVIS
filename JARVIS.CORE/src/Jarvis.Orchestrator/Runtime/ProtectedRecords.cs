@@ -8,6 +8,7 @@ public sealed record ProtectedRetryProof(int Version, string KeyId, byte[] Mac);
 /// <summary>JARVIS-owned local protection. It grants no authorization and performs no storage or provider calls.</summary>
 public interface IProtectedRecordProtector
 {
+    const int MaximumPlaintextBytes = 65_536;
     bool Ready { get; }
     ProtectedRecordEnvelope Protect(ProtectedRecordContext context, ReadOnlySpan<byte> plaintext);
     // Caller owns the returned plaintext buffer and must clear it after consuming the typed payload.

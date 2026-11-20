@@ -16,6 +16,13 @@ namespace Jarvis.Tests;
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
+    public async Task ForgeProtected_postgres_same_ids_in_capacity_and_checkins_are_isolated()
+    {
+        await using var database = await TestDatabase.CreateAsync(); using var original = new PostgresApiFactory(database.ConnectionString, manualAgents: true);
+        using var host = original.WithWebHostBuilder(b => b.ConfigureTestServices(s => s.RemoveAll<IHostedService>()));
+        await new ForgeProtectedStorageFixture(host.Services).KindIsolation();
+    }
+    [PostgresFact]
     public async Task ForgeProtected_postgres_versions_and_original_retry_result_survive_restart()
     {
         await using var database = await TestDatabase.CreateAsync(); ForgeProtectedRecord first;

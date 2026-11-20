@@ -47,6 +47,7 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
             if (programme.DeletedAt is not null) {
                 // A prior session write may already have flushed an appended revision inside this transaction.
                 // Detach both staged and flushed immutable rows; SQL below performs the single physical purge.
+                // Shared CLR shape: Entries<ForgeProtectedRow>() intentionally spans BOTH named tables here.
                 foreach (var entry in db.ChangeTracker.Entries<ForgeProtectedRow>().Where(x =>
                     x.Entity.OwnerScope == programme.OwnerScope && x.Entity.ProgrammeId == programme.Id).ToList()) entry.State = EntityState.Detached;
                 foreach (var rows in new[] { db.ForgeCheckIns, db.ForgeCapacity }) {
