@@ -88,6 +88,27 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         if (card.Id != row.Id) throw new InvalidDataException("Learning dictionary and record identities differ.");
         return card;
     }
+    public async Task<IReadOnlyList<ReviewEvent>> ReadLearningHistoryAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        // Canonical JSON stores GUIDs in D format; lower supports older uppercase hex without
+        // casting unrelated/unknown payloads. Match the additive partial expression index.
+        var key = id.ToString("D");
+        var rows = await db.RuntimeLearningRows.FromSqlInterpolated($"""
+            SELECT "Kind","Id","Json","DueAt" FROM "RuntimeLearningRows"
+            WHERE "Kind"='Reviews' AND lower("Json"->'Event'->>'LearningItemId')={key}
+            """).AsNoTracking().ToArrayAsync(ct);
+        var events = rows.Select(row => {
+            var review = JsonSerializer.Deserialize<LearningReview>(row.Json) ?? throw new InvalidDataException("Null persisted learning review.");
+            if (review.RequestId != row.Id || review.Event is null || review.Event.LearningItemId != id)
+                throw new InvalidDataException("Learning review identity differs from its projection.");
+            return review.Event;
+        }).OrderByDescending(x => x.ReviewedAt).ToArray();
+        // No card lookup: original history survives a card's removal, as in the existing API.
+        await tx.CommitAsync(ct); return events;
+    }
     public async Task<LearningItem?> ReadLearningItemAsync(Guid id, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
