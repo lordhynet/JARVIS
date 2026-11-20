@@ -22,24 +22,38 @@ public static class RecordedPracticePrivacy
     {
         var practices = state.VoiceCoachings.Values.Where(p => p.SourceRecordingId == recordingId).ToArray();
         var questions = practices.SelectMany(p => p.RecordedQuestions ?? []).ToHashSet();
-        // Legacy deletion need not reparse transcripts. Only resolve extra lineage if an orphaned
-        // question-only creation result actually needs it; ordinary recording links are sufficient.
-        if (state.CreationReceipts.Values.Any(r => r.Result is { RecordedQuestionId: not null, SourceRecordingId: null }))
+        var evidence = state.Learning.Values.Concat(state.TrainingBaselines.Values).Concat(state.Reviews.Values.Select(r => r.Result)).ToArray();
+        // Resolve transcript lineage only when question-only evidence needs it. A retained
+        // baseline may be the last source-bearing record after ordinary card removal.
+        if (evidence.Any(c => c.RecordedQuestionId is not null && c.SourceRecordingId is null) ||
+            state.CreationReceipts.Values.Any(r => r.Result is { RecordedQuestionId: not null, SourceRecordingId: null }))
             foreach (var document in state.ImportedDocuments.Values.Where(d => d.SourceRecordingId == recordingId && d.DeletedAt is null))
                 foreach (var question in RecordedInterviewPractice.Questions(state, document, matchStories: false)) questions.Add(question.Id);
-        foreach (var card in state.Learning.Values.Concat(state.Reviews.Values.Select(r => r.Result)).Where(c => c.SourceRecordingId == recordingId))
+        foreach (var card in evidence.Where(c => c.SourceRecordingId == recordingId))
             if (card.RecordedQuestionId is { } question) questions.Add(question);
         foreach (var practice in practices) PurgeSession(state, practice, at);
-        var cardIds = state.Learning.Values.Where(c => c.SourceRecordingId == recordingId).Select(c => c.Id)
-            .Concat(state.Reviews.Values.Where(r => r.Result.SourceRecordingId == recordingId).Select(r => r.Event.LearningItemId))
+        var cardIds = evidence.Where(c => c.SourceRecordingId == recordingId || c.RecordedQuestionId is { } question && questions.Contains(question)).Select(c => c.Id)
             .Concat(state.CreationReceipts.Values.Where(r => r.Result is { } result &&
                 (result.SourceRecordingId == recordingId || result.RecordedQuestionId is { } question && questions.Contains(question))).Select(r => r.Result!.Id)).ToHashSet();
         LearningCreationReceipt.Retire(state, cardIds, at);
         foreach (var cardId in cardIds) {
             AgentRuntime.InvalidateSource(state, "learning", cardId); state.Learning.Remove(cardId);
-            foreach (var review in state.Reviews.Values.Where(r => r.Event.LearningItemId == cardId).ToArray()) state.Reviews.Remove(review.RequestId);
+            state.TrainingBaselines.Remove(cardId); state.TrainingBaselineReviews.Remove(cardId);
+            foreach (var review in state.Reviews.Values.Where(r => r.Event.LearningItemId == cardId).ToArray()) {
+                state.Reviews.Remove(review.RequestId); state.TrainingManualSequences.Remove(review.RequestId);
+            }
             foreach (var recall in state.VoiceRecalls.Values.Where(r => r.CardId == cardId).ToArray()) state.VoiceRecalls.Remove(recall.Id);
         }
+        var attempts = state.TrainingAttempts.Values.Where(a => cardIds.Contains(a.QuestionId)).ToArray();
+        foreach (var attempt in attempts) {
+            var changed = attempt.DeletedAt is null || attempt.Answers.Count != 0 || attempt.Assessments.Count != 0 || attempt.CanonicalAssessmentId is not null;
+            state.TrainingAttempts[attempt.Id] = attempt with { Revision = changed ? checked(attempt.Revision + 1) : attempt.Revision,
+                DeletedAt = attempt.DeletedAt ?? at, Answers = [], Assessments = [], CanonicalAssessmentId = null };
+            ReasoningLifecycle.Retire(state, attempt.Id);
+        }
+        var attemptIds = attempts.Select(a => a.Id).ToHashSet();
+        foreach (var operation in state.TrainingOperations.Where(x => attemptIds.Contains(x.Value.AttemptId)).ToArray())
+            state.TrainingOperations[operation.Key] = operation.Value with { Fingerprint = "" };
         return practices.Select(p => p.SessionId).Distinct().ToArray();
     }
     public static void PurgeSession(RuntimeState state, VoiceCoaching practice, DateTimeOffset at)
