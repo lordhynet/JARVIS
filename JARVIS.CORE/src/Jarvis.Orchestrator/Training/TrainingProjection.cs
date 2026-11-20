@@ -40,12 +40,22 @@ public static class TrainingProjection
 
     public static void Rebuild(RuntimeState state, Guid questionId)
     {
-        var current = state.TrainingBaselines[questionId];
+        state.Learning[questionId] = Project(questionId, state.TrainingBaselines[questionId],
+            state.TrainingBaselineReviews.GetValueOrDefault(questionId) ?? [], state.Reviews.Values,
+            state.TrainingManualSequences, state.TrainingAttempts.Values);
+    }
+
+    // One canonical replay for cohesive and future scoped callers. Inputs must be materialized
+    // and resource/epoch/revision checked inside the caller's existing transaction boundary.
+    public static LearningItem Project(Guid questionId, LearningItem baseline, IReadOnlySet<Guid> includedReviews,
+        IEnumerable<LearningReview> reviews, IReadOnlyDictionary<Guid, long> manualSequences, IEnumerable<TrainingAttempt> attempts)
+    {
+        Guard.Require(baseline.Id == questionId, 409, "Projection baseline belongs to another question.");
+        var current = baseline;
         var events = new List<(DateTimeOffset At, long Order, ReviewRating? Rating, TrainingAssessment? Assessment)>();
-        var includedReviews = state.TrainingBaselineReviews.GetValueOrDefault(questionId) ?? [];
-        events.AddRange(state.Reviews.Values.Where(x => x.Event.LearningItemId == questionId && !includedReviews.Contains(x.RequestId))
-            .Select(x => (x.Event.ReviewedAt, state.TrainingManualSequences.GetValueOrDefault(x.RequestId), (ReviewRating?)x.Event.Rating, (TrainingAssessment?)null)));
-        events.AddRange(state.TrainingAttempts.Values.Where(x => x.QuestionId == questionId && !x.Skipped && x.DeletedAt is null &&
+        events.AddRange(reviews.Where(x => x.Event.LearningItemId == questionId && !includedReviews.Contains(x.RequestId))
+            .Select(x => (x.Event.ReviewedAt, manualSequences.GetValueOrDefault(x.RequestId), (ReviewRating?)x.Event.Rating, (TrainingAssessment?)null)));
+        events.AddRange(attempts.Where(x => x.QuestionId == questionId && !x.Skipped && x.DeletedAt is null &&
             x.CanonicalAssessment?.ContentScore is not null && x.CanonicalAssessment.TextRevision == x.TextRevision)
             .Select(x => (x.SubmittedAt, x.Sequence, (ReviewRating?)null, x.CanonicalAssessment)));
         foreach (var entry in events.OrderBy(x => x.At).ThenBy(x => x.Order))
@@ -58,7 +68,7 @@ public static class TrainingProjection
             current = current with { MasteryScore = score, MasterySource = assessment.Source, StrongStreak = streak, Stability = days,
                 DueAt = CalendarDue(entry.At, days, Zone(assessment.TimeZone)), SchedulingRuleVersion = "content-score-v1" };
         }
-        state.Learning[questionId] = current;
+        return current;
     }
 
     public static TrainingAttemptSummary Summary(TrainingAttempt attempt) => new(attempt.Id, attempt.SessionId,
