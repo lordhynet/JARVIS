@@ -139,6 +139,15 @@ public readonly record struct AudioLeaseState(AudioLease? Lease, DateTimeOffset?
 
 public interface IRuntimeStore : IRuntimeReader
 {
+    Task<LearningItem> CreateLearningItemAsync(CreateLearningRequest request, TimeProvider clock, CancellationToken ct = default)
+    {
+        var create = LearningService.PrepareCreate(request);
+        return UpdateAsync(s => {
+            var item = create(clock.GetUtcNow());
+            s.Learning.Add(item.Id, item);
+            return item;
+        }, ct);
+    }
     Task<LearningItem> ReviewLearningItemAsync(Guid id, ReviewLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {
         LearningService.ValidateReview(request);

@@ -6,17 +6,16 @@ namespace Jarvis.Orchestrator.Runtime;
 public sealed class LearningService(IRuntimeStore store, TimeProvider clock)
 {
     public Task<LearningItem> CreateAsync(CreateLearningRequest request, CancellationToken ct)
+        => store.CreateLearningItemAsync(request, clock, ct);
+
+    // Validate before storage; generate identity and sample the supplied time only inside its write boundary.
+    public static Func<DateTimeOffset, LearningItem> PrepareCreate(CreateLearningRequest request)
     {
         Guard.Require(Enum.IsDefined(request.Domain), 400, "Unknown learning domain.");
         var prompt = Guard.Text(request.Prompt, "Prompt", 2000);
         var answer = Guard.Text(request.Answer, "Answer", 8000);
-        return store.UpdateAsync(s =>
-        {
-            var now = clock.GetUtcNow();
-            var item = new LearningItem(Guid.NewGuid(), request.Domain, prompt, answer, 0, 5, now, now);
-            s.Learning.Add(item.Id, item);
-            return item;
-        }, ct);
+        var domain = request.Domain;
+        return now => new(Guid.NewGuid(), domain, prompt, answer, 0, 5, now, now);
     }
 
     public Task<LearningItem> ReviewAsync(Guid id, ReviewLearningRequest request, CancellationToken ct)

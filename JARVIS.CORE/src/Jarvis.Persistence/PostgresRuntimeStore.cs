@@ -11,6 +11,27 @@ namespace Jarvis.Persistence;
 // and transcript rows share this boundary without rewriting the cold document.
 public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges? audioChanges = null) : IRuntimeStore
 {
+    public async Task<LearningItem> CreateLearningItemAsync(CreateLearningRequest request, TimeProvider clock, CancellationToken ct = default)
+    {
+        var started = Stopwatch.GetTimestamp();
+        var create = LearningService.PrepareCreate(request);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        var stamps = await db.Database.SqlQueryRaw<RuntimeDocumentStamp>(
+            "SELECT \"Id\", \"Fingerprint\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1 FOR UPDATE").ToListAsync(ct);
+        _ = stamps.Single();
+        CoreTelemetry.RuntimeLockWait.Record(Stopwatch.GetElapsedTime(started).TotalSeconds);
+        var item = create(clock.GetUtcNow());
+        db.RuntimeLearningRows.Add(new() { Kind = nameof(RuntimeState.Learning), Id = item.Id,
+            Json = JsonSerializer.Serialize(item), DueAt = item.DueAt.ToUniversalTime() });
+        await db.SaveChangesAsync(ct);
+        var phase = Stopwatch.GetTimestamp();
+        await tx.CommitAsync(ct);
+        CoreTelemetry.RecordStoragePhase(phase, "runtime.learning.create.commit");
+        CoreTelemetry.RuntimeWrites.Add(1);
+        return item;
+    }
     public async Task<LearningItem> ReviewLearningItemAsync(Guid id, ReviewLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {
         var started = Stopwatch.GetTimestamp();
