@@ -10,6 +10,23 @@ namespace Jarvis.Tests;
 
 public sealed class TrainingTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task Purged_training_operation_never_replays_even_when_the_attempt_is_still_active(string? fingerprint)
+    {
+        var f = new Fixture(); var attempt = await f.Submit();
+        await f.Store.UpdateAsync(s => {
+            // A restored null and the existing empty sentinel must both fail closed.
+            s.TrainingOperations[attempt.Id] = s.TrainingOperations[attempt.Id] with { Fingerprint = fingerprint! }; return true;
+        });
+        var before = await f.Store.ReadAsync(s => System.Text.Json.JsonSerializer.Serialize(s));
+        var request = new SubmitTrainingAnswerRequest(attempt.Id, f.Session, attempt.QuestionId, 1, attempt.Mode, attempt.CurrentAnswer);
+        var error = await Assert.ThrowsAsync<DomainException>(() => f.Service.SubmitAsync(request, default));
+        Assert.Equal(409, error.StatusCode); Assert.Equal("training_operation_purged", error.Code);
+        Assert.Equal(before, await f.Store.ReadAsync(s => System.Text.Json.JsonSerializer.Serialize(s)));
+    }
+
     private sealed class Clock : TimeProvider
     {
         public DateTimeOffset Now = DateTimeOffset.Parse("2026-03-27T12:00:00Z");

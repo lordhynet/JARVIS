@@ -94,7 +94,8 @@ public sealed class RecordingTrainingPrivacyTests
         await store.UpdateAsync(s => { fixture.Purge(s); return true; });
         await store.ReadAsync(s => { fixture.AssertPurged(s); return true; });
         var service = new TrainingService(store, sessions, new ForgeClock { Now = RecordingTrainingFixture.At });
-        Assert.Equal(409, (await Assert.ThrowsAsync<DomainException>(() => service.CorrectAsync(fixture.Attempt, fixture.Correction, default))).StatusCode);
+        var error = await Assert.ThrowsAsync<DomainException>(() => service.CorrectAsync(fixture.Attempt, fixture.Correction, default));
+        Assert.Equal(409, error.StatusCode); Assert.Equal("training_operation_purged", error.Code);
         await store.UpdateAsync(s => { fixture.Purge(s); return true; });
         await store.ReadAsync(s => { fixture.AssertPurged(s); return true; });
     }
@@ -118,6 +119,7 @@ public sealed partial class PostgresSessionTests
         await restarted.Services.GetRequiredService<IRuntimeStore>().ReadAsync(s => { fixture.AssertPurged(s); return true; });
         var export = await restarted.Services.GetRequiredService<IPrivacyStore>().ExportAsync(RecordingTrainingFixture.At);
         Assert.DoesNotContain(RecordingTrainingFixture.Marker, JsonSerializer.Serialize(export));
-        Assert.Equal(409, (await Assert.ThrowsAsync<DomainException>(() => restarted.Services.GetRequiredService<TrainingService>().CorrectAsync(fixture.Attempt, fixture.Correction, default))).StatusCode);
+        var error = await Assert.ThrowsAsync<DomainException>(() => restarted.Services.GetRequiredService<TrainingService>().CorrectAsync(fixture.Attempt, fixture.Correction, default));
+        Assert.Equal(409, error.StatusCode); Assert.Equal("training_operation_purged", error.Code);
     }
 }

@@ -146,6 +146,7 @@ public sealed class TrainingService(IRuntimeStore store, ISessionReader sessions
     private static TrainingAttempt? Replay(RuntimeState state, Guid operation, string kind, Guid id, string fingerprint)
     {
         if (!state.TrainingOperations.TryGetValue(operation, out var prior)) return null;
+        Guard.Require(!string.IsNullOrEmpty(prior.Fingerprint), 409, "This training operation was purged; start a new practice request.", "training_operation_purged");
         Guard.Require(prior.Kind == kind && prior.AttemptId == id && prior.Fingerprint == fingerprint, 409, "RequestId was used for different training input.");
         var attempt = state.TrainingAttempts[id];
         Guard.Require(attempt.DeletedAt is null, 409, "This training attempt was deleted; use a new RequestId for new practice.");
