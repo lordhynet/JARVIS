@@ -8,6 +8,8 @@ namespace Jarvis.Persistence;
 public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options) : DbContext(options)
 {
     public DbSet<ForgeProgrammeRow> ForgeProgrammes => Set<ForgeProgrammeRow>();
+    public DbSet<ForgeProtectedRow> ForgeCheckIns => Set<ForgeProtectedRow>(nameof(ForgeCheckIns));
+    public DbSet<ForgeProtectedRow> ForgeCapacity => Set<ForgeProtectedRow>(nameof(ForgeCapacity));
     public DbSet<RuntimeLearningRow> RuntimeLearningRows => Set<RuntimeLearningRow>();
     public DbSet<RuntimeLearningControlRow> RuntimeLearningState => Set<RuntimeLearningControlRow>();
     public DbSet<SessionRow> Sessions => Set<SessionRow>();
@@ -38,6 +40,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     protected override void OnModelCreating(ModelBuilder model)
     {
         ForgeProgrammeRow.Configure(model);
+        ForgeProtectedRow.Configure(model);
         RuntimeLearningModel.Configure(model);
         DomainModel.Configure(model);
         RuntimeHotModel.Configure(model);

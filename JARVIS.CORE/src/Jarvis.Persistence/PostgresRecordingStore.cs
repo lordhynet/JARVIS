@@ -53,7 +53,7 @@ public sealed class PostgresRecordingStore(IDbContextFactory<SessionDbContext> f
         await using var db = await factory.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
         TPlan prepared = default!; var planned = false; var committing = false; var outcome = RecordingCommitOutcome.Rejected;
         try {
-        await PostgresPrivacyGate.LockAsync(db, ct);
+        var privacy = await PostgresPrivacyGate.LockAsync(db, ct);
         // Separate from D2: serialize recording file admission across hosts, while voice
         // remains free to renew its lease during encryption, directory IO and fsync.
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(1246906966, 1380270927)", ct);
@@ -79,7 +79,7 @@ public sealed class PostgresRecordingStore(IDbContextFactory<SessionDbContext> f
         var at = System.Diagnostics.Stopwatch.GetTimestamp();
         var sessions = new List<(Jarvis.Contracts.ConversationSession Before, Jarvis.Contracts.ConversationSession After)>();
         var result = await PostgresRuntimeStore.UpdateInTransactionAsync(db, async runtime => {
-            state.UpdateSession = new PostgresCoreTransaction.Writes(db, runtime, sessions, ct).UpdateSessionAsync;
+            state.UpdateSession = new PostgresCoreTransaction.Writes(db, runtime, sessions, privacy.Epoch, ct).UpdateSessionAsync;
             var value = await update(state, runtime, prepared);
             foreach (var id in recordings.Keys.Except(state.Sessions.Keys)) db.InterviewRecordings.Remove(new() { Id = id });
             foreach (var (id, session) in state.Sessions) {

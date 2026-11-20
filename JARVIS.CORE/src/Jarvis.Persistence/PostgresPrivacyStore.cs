@@ -32,6 +32,8 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
         var control = await db.PrivacyControls.AsNoTracking().SingleAsync(x => x.Id == 1, ct); RequireEpoch(control);
+        Guard.Require(!await db.ForgeCheckIns.AnyAsync(ct) && !await db.ForgeCapacity.AnyAsync(ct),
+            503, "Protected Forge export is not available. No partial export was produced.");
         var (_, state, _) = await Runtime(db, ct);
         var sessions = (await db.Sessions.AsNoTracking().Include(x => x.Checkpoints).OrderBy(x => x.Id).ToListAsync(ct)).Select(x => x.ToContract()).ToList();
         var runs = (await db.WorkflowRuns.AsNoTracking().ToListAsync(ct)).Select(x => x.ToContract()).ToList();
@@ -103,6 +105,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         await db.TravelMonitorState.ExecuteUpdateAsync(x => x.SetProperty(t => t.Json, "{}"), ct);
         await db.Sessions.ExecuteDeleteAsync(ct); await db.WorkflowRuns.ExecuteDeleteAsync(ct); await db.DeviceGrants.ExecuteDeleteAsync(ct); await db.PrivacyJobs.ExecuteDeleteAsync(ct);
         await db.DeviceCommands.ExecuteDeleteAsync(ct);
+        await db.ForgeCheckIns.ExecuteDeleteAsync(ct); await db.ForgeCapacity.ExecuteDeleteAsync(ct);
         await db.ForgeProgrammes.ExecuteDeleteAsync(ct);
         control.Epoch = checked(control.Epoch + 1); control.Revision++; control.Erased = true; control.ErasedAt = now;
         control.ErasureRequestId = request.RequestId; control.ErasureKeyFingerprint = keyFingerprint;

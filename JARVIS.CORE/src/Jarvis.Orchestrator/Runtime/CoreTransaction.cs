@@ -1,6 +1,7 @@
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Sessions;
 using Jarvis.Orchestrator.Domains;
+using Jarvis.Orchestrator.Forge;
 
 namespace Jarvis.Orchestrator.Runtime;
 
@@ -17,6 +18,9 @@ public interface ICoreTransactionWrites
     Task<ForgeProgramme?> ReadForgeProgrammeAsync(string ownerScope, Guid id);
     Task<int> CountForgeProgrammesAsync(string ownerScope);
     Task SaveForgeProgrammeAsync(ForgeProgramme programme);
+    Task<ForgeProtectedRecord?> ReadForgeProtectedRecordAsync(ForgeProtectedKind kind, string ownerScope, Guid programmeId, Guid id);
+    Task<ForgeProtectedRecord?> ReadForgeProtectedRequestAsync(ForgeProtectedKind kind, string ownerScope, Guid programmeId, Guid requestId);
+    Task AppendForgeProtectedRecordAsync(ForgeProtectedRecord record);
     Task<DomainResolved?> ReadActiveDomainAsync(string key) => Task.FromResult(DomainRegistryProjection.Active(Runtime.DomainRegistry, key));
     Task<SessionAudioState?> ReadAudioStateAsync(Guid sessionId);
     Task<ConversationSession?> UpdateSessionAsync(Guid sessionId, Func<ConversationSession, ConversationSession> update);
@@ -53,6 +57,7 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
     {
         private readonly Dictionary<Guid, ConversationSession> stagedSessions = [];
         private readonly Dictionary<(string Owner, Guid Id), ForgeProgramme> stagedForge = [];
+        private readonly List<ForgeProtectedRecord> stagedProtected = [];
         private Dictionary<Guid, DeviceGrant>? stagedGrants;
         private readonly Dictionary<Guid, DeviceCommand> stagedCommands = [];
         private readonly List<DeviceReceiptView> stagedReceipts = [];
@@ -66,6 +71,24 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
         public Task SaveForgeProgrammeAsync(ForgeProgramme programme) {
             stagedForge[(programme.OwnerScope, programme.Id)] = programme;
             return Task.CompletedTask;
+        }
+
+        private IEnumerable<ForgeProtectedRecord> ProtectedRecords(ForgeProtectedKind kind, string owner, Guid programme) =>
+            boundary.ForgeProtectedRecords.Concat(stagedProtected).Where(x => x.Kind == kind && x.OwnerScope == owner && x.ProgrammeId == programme);
+        public async Task<ForgeProtectedRecord?> ReadForgeProtectedRecordAsync(ForgeProtectedKind kind, string ownerScope, Guid programmeId, Guid id) =>
+            await ReadForgeProgrammeAsync(ownerScope, programmeId) is { DeletedAt: null }
+                ? ProtectedRecords(kind, ownerScope, programmeId).Where(x => x.Id == id).OrderByDescending(x => x.Revision).FirstOrDefault()?.CopyCiphertext() : null;
+        public async Task<ForgeProtectedRecord?> ReadForgeProtectedRequestAsync(ForgeProtectedKind kind, string ownerScope, Guid programmeId, Guid requestId) =>
+            await ReadForgeProgrammeAsync(ownerScope, programmeId) is { DeletedAt: null }
+                ? ProtectedRecords(kind, ownerScope, programmeId).SingleOrDefault(x => x.RequestId == requestId)?.CopyCiphertext() : null;
+        public async Task AppendForgeProtectedRecordAsync(ForgeProtectedRecord record) {
+            ct.ThrowIfCancellationRequested(); record.Validate(boundary.Status.Epoch);
+            Guard.Require(await ReadForgeProgrammeAsync(record.OwnerScope, record.ProgrammeId) is { DeletedAt: null }, 404, "Forge programme not found.");
+            var latest = await ReadForgeProtectedRecordAsync(record.Kind, record.OwnerScope, record.ProgrammeId, record.Id);
+            Guard.Require((latest?.Revision ?? 0) == record.ExpectedRevision, 409, "Protected Forge record changed. Reload before editing.");
+            Guard.Require(await ReadForgeProtectedRequestAsync(record.Kind, record.OwnerScope, record.ProgrammeId, record.RequestId) is null,
+                409, "Protected Forge request ID is already committed.");
+            stagedProtected.Add(record.CopyCiphertext());
         }
 
         public async Task<SessionAudioState?> ReadAudioStateAsync(Guid sessionId)
@@ -134,6 +157,9 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
         public void Commit()
         {
             foreach (var (key, programme) in stagedForge) boundary.ForgeProgrammes[key] = programme;
+            boundary.ForgeProtectedRecords.AddRange(stagedProtected);
+            // Remove every encrypted revision and its retry material, including newly staged values.
+            boundary.ForgeProtectedRecords.RemoveAll(x => boundary.ForgeProgrammes.GetValueOrDefault((x.OwnerScope, x.ProgrammeId)) is not { DeletedAt: null });
             if (stagedGrants is not null) boundary.DeviceGrants = stagedGrants;
             foreach (var (id, command) in stagedCommands) boundary.DeviceCommands[id] = command;
             foreach (var receipt in stagedReceipts)

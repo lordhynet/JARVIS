@@ -22,6 +22,146 @@ namespace Jarvis.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("ForgeCapacity", b =>
+                {
+                    b.Property<string>("OwnerScope")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("ProgrammeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("Ciphertext")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Epoch")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ExpectedRevision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("KeyId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<byte[]>("Nonce")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RetryKeyId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<byte[]>("RetryMac")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<int>("RetryVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("Tag")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("OwnerScope", "ProgrammeId", "Id", "Revision");
+
+                    b.HasIndex("OwnerScope", "ProgrammeId", "RequestId")
+                        .IsUnique();
+
+                    b.ToTable("ForgeCapacity", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ForgeCapacity_Envelope", "\"Revision\">0 AND \"ExpectedRevision\">=0 AND \"ExpectedRevision\"::bigint+1=\"Revision\" AND \"Epoch\">=0\nAND \"Version\"=1 AND \"RetryVersion\"=1 AND octet_length(\"Nonce\")=12 AND octet_length(\"Tag\")=16\nAND octet_length(\"Ciphertext\")<=65536 AND octet_length(\"RetryMac\")=32");
+                        });
+                });
+
+            modelBuilder.Entity("ForgeCheckIns", b =>
+                {
+                    b.Property<string>("OwnerScope")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("ProgrammeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("Ciphertext")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Epoch")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ExpectedRevision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("KeyId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<byte[]>("Nonce")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RetryKeyId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<byte[]>("RetryMac")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<int>("RetryVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("Tag")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("OwnerScope", "ProgrammeId", "Id", "Revision");
+
+                    b.HasIndex("OwnerScope", "ProgrammeId", "RequestId")
+                        .IsUnique();
+
+                    b.ToTable("ForgeCheckIns", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ForgeCheckIns_Envelope", "\"Revision\">0 AND \"ExpectedRevision\">=0 AND \"ExpectedRevision\"::bigint+1=\"Revision\" AND \"Epoch\">=0\nAND \"Version\"=1 AND \"RetryVersion\"=1 AND octet_length(\"Nonce\")=12 AND octet_length(\"Tag\")=16\nAND octet_length(\"Ciphertext\")<=65536 AND octet_length(\"RetryMac\")=32");
+                        });
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.CheckpointRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -997,6 +1137,24 @@ namespace Jarvis.Persistence.Migrations
                     b.HasIndex("CreatedAt");
 
                     b.ToTable("WorkflowRuns");
+                });
+
+            modelBuilder.Entity("ForgeCapacity", b =>
+                {
+                    b.HasOne("Jarvis.Persistence.ForgeProgrammeRow", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerScope", "ProgrammeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ForgeCheckIns", b =>
+                {
+                    b.HasOne("Jarvis.Persistence.ForgeProgrammeRow", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerScope", "ProgrammeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Jarvis.Persistence.CheckpointRow", b =>

@@ -18,6 +18,7 @@ public sealed class MemoryPrivacyBoundary
     public Dictionary<Guid, PrivacyJob> Jobs { get; } = [];
     public Dictionary<Guid, DeviceGrant> DeviceGrants { get; internal set; } = [];
     internal Dictionary<(string Owner, Guid Id), ForgeProgramme> ForgeProgrammes { get; } = [];
+    internal List<Jarvis.Orchestrator.Forge.ForgeProtectedRecord> ForgeProtectedRecords { get; } = [];
     public Jarvis.Orchestrator.Travel.TravelState Travel { get; internal set; } = new();
     public Jarvis.Orchestrator.Recordings.RecordingState Recordings { get; internal set; } = new();
     internal Dictionary<Guid, DeviceCommand> DeviceCommands { get; } = [];
@@ -136,6 +137,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
         lock(boundary.Sync)
         {
             RequireEpoch(); var snapshot = workflows.PrivacySnapshot();
+            Guard.Require(boundary.ForgeProtectedRecords.Count == 0, 503, "Protected Forge export is not available. No partial export was produced.");
             return Task.FromResult(PrivacyData.Export(boundary.Status, State(), Sessions(), snapshot.Runs, snapshot.Events, boundary.Jobs.Values.ToList(), now) with {
                 TravelRoutes = boundary.Travel.Routes.Values.ToArray(), TravelLineStates = boundary.Travel.Lines.Values.ToArray(), InterviewRecordings = boundary.Recordings.Sessions.Values.Select(r => r.View).ToArray(),
                 ForgeProgrammes = boundary.ForgeProgrammes.Count == 0 ? null : boundary.ForgeProgrammes.Values.OrderBy(x => x.Id).ToArray() });
@@ -191,6 +193,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             boundary.Travel = new();
             boundary.Recordings = new();
             boundary.ForgeProgrammes.Clear();
+            boundary.ForgeProtectedRecords.Clear();
             boundary.Status = new(boundary.Status.Epoch + 1, boundary.Status.Revision + 1, true, now, request.RequestId); boundary.ErasureKeyFingerprint = fingerprint;
             boundary.Jobs[request.RequestId] = new(request.RequestId, "erasure", PrivacyData.Hash("erasure:" + boundary.Status.Epoch), now, removed);
             return Task.FromResult(boundary.Status);

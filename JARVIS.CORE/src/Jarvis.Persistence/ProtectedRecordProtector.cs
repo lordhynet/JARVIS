@@ -17,7 +17,7 @@ public sealed class ProtectedRecordProtector(Func<ProtectedRecordKeyOptions> opt
 {
     private readonly ArrayPool<byte> plaintextBuffers = plaintextPool ?? ArrayPool<byte>.Shared;
     public const int FormatVersion = 1;
-    public const int MaximumPlaintextBytes = 65_536;
+    public const int MaximumPlaintextBytes = IProtectedRecordProtector.MaximumPlaintextBytes;
     private const string Unavailable = "Protected data key is not configured or available.";
     private const string InvalidEnvelope = "Protected record could not be opened.";
     private static bool Label(string? value, int maximum = 64) => value is { Length: > 0 } && value.Length <= maximum &&
