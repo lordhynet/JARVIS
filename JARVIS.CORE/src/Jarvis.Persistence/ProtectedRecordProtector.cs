@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -12,8 +13,9 @@ public sealed class ProtectedRecordKeyOptions
     public IReadOnlyDictionary<string, string>? Keys { get; init; }
 }
 
-public sealed class ProtectedRecordProtector(Func<ProtectedRecordKeyOptions> options) : IProtectedRecordProtector
+public sealed class ProtectedRecordProtector(Func<ProtectedRecordKeyOptions> options, ArrayPool<byte>? plaintextPool = null) : IProtectedRecordProtector
 {
+    private readonly ArrayPool<byte> plaintextBuffers = plaintextPool ?? ArrayPool<byte>.Shared;
     public const int FormatVersion = 1;
     public const int MaximumPlaintextBytes = 65_536;
     private const string Unavailable = "Protected data key is not configured or available.";
@@ -67,21 +69,43 @@ public sealed class ProtectedRecordProtector(Func<ProtectedRecordKeyOptions> opt
             return new(FormatVersion, id, nonce, ciphertext, tag);
         } finally { CryptographicOperations.ZeroMemory(root); if (key is not null) CryptographicOperations.ZeroMemory(key); }
     }
-    public byte[] Unprotect(ProtectedRecordContext context, ProtectedRecordEnvelope envelope)
+    private static void ValidateEnvelope(ProtectedRecordContext context, ProtectedRecordEnvelope envelope)
     {
         Validate(context, 0);
         Guard.Require(envelope is not null && envelope.Version == FormatVersion && Label(envelope.KeyId) &&
             envelope.Nonce is { Length: 12 } && envelope.Tag is { Length: 16 } && envelope.Ciphertext is { Length: <= MaximumPlaintextBytes },
             409, InvalidEnvelope);
-        var root = Key(Options(), envelope.KeyId); byte[]? key = null; byte[]? plaintext = null;
+    }
+    private void DecryptValidated(ProtectedRecordContext context, ProtectedRecordEnvelope envelope, Span<byte> plaintext)
+    {
+        var root = Key(Options(), envelope.KeyId); byte[]? key = null;
         try {
-            key = Derive(root, "encryption"); plaintext = new byte[envelope.Ciphertext.Length];
+            key = Derive(root, "encryption");
             using var aes = new AesGcm(key, 16); aes.Decrypt(envelope.Nonce, envelope.Ciphertext, envelope.Tag, plaintext, Aad(context, envelope.KeyId));
-            return plaintext;
         } catch (CryptographicException) {
-            if (plaintext is not null) CryptographicOperations.ZeroMemory(plaintext);
             throw new DomainException(409, InvalidEnvelope);
         } finally { CryptographicOperations.ZeroMemory(root); if (key is not null) CryptographicOperations.ZeroMemory(key); }
+    }
+    public byte[] Unprotect(ProtectedRecordContext context, ProtectedRecordEnvelope envelope)
+    {
+        ValidateEnvelope(context, envelope); var plaintext = new byte[envelope.Ciphertext.Length];
+        try { DecryptValidated(context, envelope, plaintext); return plaintext; }
+        catch { CryptographicOperations.ZeroMemory(plaintext); throw; }
+    }
+    public T Unprotect<T>(ProtectedRecordContext context, ProtectedRecordEnvelope envelope, Func<ReadOnlySpan<byte>, T> read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        ValidateEnvelope(context, envelope);
+        var buffer = plaintextBuffers.Rent(Math.Max(1, envelope.Ciphertext.Length));
+        try {
+            var plaintext = buffer.AsSpan(0, envelope.Ciphertext.Length);
+            DecryptValidated(context, envelope, plaintext);
+            return read(plaintext);
+        } finally {
+            // Clear the whole rental, including unused pool capacity, before any reuse.
+            CryptographicOperations.ZeroMemory(buffer);
+            plaintextBuffers.Return(buffer);
+        }
     }
     private static byte[] Mac(ProtectedRecordContext context, string id, byte[] root, ReadOnlySpan<byte> request)
     {

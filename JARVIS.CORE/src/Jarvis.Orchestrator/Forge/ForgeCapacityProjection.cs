@@ -54,6 +54,8 @@ public sealed class ForgeCapacityProjection
             throw new DomainException(400, "Capacity timezone is invalid.");
         }
         var localStart = day.ToDateTime(TimeOnly.MinValue); var localEnd = day.AddDays(1).ToDateTime(TimeOnly.MinValue);
+        // London midnight is unambiguous. Future zones with midnight transitions must
+        // supply an explicit day-boundary design instead of silently choosing a fold.
         Guard.Require(!zone.IsInvalidTime(localStart) && !zone.IsAmbiguousTime(localStart) && !zone.IsInvalidTime(localEnd) && !zone.IsAmbiguousTime(localEnd),
             400, "Capacity day boundary is ambiguous or unavailable.");
         var start = new DateTimeOffset(localStart, zone.GetUtcOffset(localStart)); var end = new DateTimeOffset(localEnd, zone.GetUtcOffset(localEnd));
