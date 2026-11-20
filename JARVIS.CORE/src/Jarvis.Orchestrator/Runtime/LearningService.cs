@@ -11,11 +11,47 @@ public sealed class LearningService(IRuntimeStore store, TimeProvider clock)
     // Validate before storage; generate identity and sample the supplied time only inside its write boundary.
     public static Func<DateTimeOffset, LearningItem> PrepareCreate(CreateLearningRequest request)
     {
+        var normalized = NormalizeCreate(request);
+        return now => new(Guid.NewGuid(), normalized.Domain, normalized.Prompt, normalized.Answer, 0, 5, now, now);
+    }
+
+    public static CreateLearningRequest NormalizeCreate(CreateLearningRequest request)
+    {
         Guard.Require(Enum.IsDefined(request.Domain), 400, "Unknown learning domain.");
-        var prompt = Guard.Text(request.Prompt, "Prompt", 2000);
-        var answer = Guard.Text(request.Answer, "Answer", 8000);
-        var domain = request.Domain;
-        return now => new(Guid.NewGuid(), domain, prompt, answer, 0, 5, now, now);
+        Guard.Require(request.RequestId != Guid.Empty, 400, "RequestId must not be empty.");
+        return request with { Prompt = Guard.Text(request.Prompt, "Prompt", 2000), Answer = Guard.Text(request.Answer, "Answer", 8000) };
+    }
+    public static long CreationEpoch(CreateLearningRequest request)
+    {
+        Guard.Require(request.RequestId is null || PrivacyContext.Epoch is >= 0, 400, "Idempotent creation requires a captured data epoch.");
+        return PrivacyContext.Epoch ?? 0;
+    }
+    public static LearningCreationChange DecideCreate(CreateLearningRequest request, TimeProvider clock, long epoch, LearningCreationReceipt? previous)
+    {
+        var normalized = NormalizeCreate(request);
+        Guard.Require(normalized.RequestId is null || CreationEpoch(normalized) == epoch, 409, "Creation request data epoch changed.");
+        if (previous is not null) {
+            previous.Validate();
+            Guard.Require(previous.RequestId == normalized.RequestId && previous.Epoch == epoch, 409, "Creation request belongs to another data generation.");
+            Guard.Require(previous.Status != LearningCreationReceipt.Retired, 410, "Creation request belongs to a deleted source.", "learning_creation_retired");
+            Guard.Require(previous.FingerprintVersion == LearningCreationReceipt.CurrentFingerprintVersion &&
+                previous.Fingerprint == LearningCreationReceipt.FingerprintFor(normalized), 409, "RequestId was used for different learning content.");
+            return new(previous.Result!, null);
+        }
+        var result = PrepareCreate(normalized)(clock.GetUtcNow());
+        var receipt = normalized.RequestId is { } id ? new LearningCreationReceipt(id, epoch, LearningCreationReceipt.Created,
+            LearningCreationReceipt.CurrentFingerprintVersion, LearningCreationReceipt.FingerprintFor(normalized), result, null) : null;
+        return new(result, receipt);
+    }
+    // Future scoped producers must resolve programme/source permissions in this same composite boundary.
+    public static LearningItem ApplyCreate(RuntimeState state, CreateLearningRequest request, TimeProvider clock, long epoch)
+    {
+        var previous = request.RequestId is { } id ? state.CreationReceipts.GetValueOrDefault(id) : null;
+        var change = DecideCreate(request, clock, epoch, previous);
+        if (previous is not null) return change.Result;
+        state.Learning.Add(change.Result.Id, change.Result);
+        if (change.Receipt is { } receipt) state.CreationReceipts.Add(receipt.RequestId, receipt);
+        return change.Result;
     }
 
     public Task<LearningItem> ReviewAsync(Guid id, ReviewLearningRequest request, CancellationToken ct)

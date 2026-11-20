@@ -9,7 +9,7 @@ namespace Jarvis.Persistence;
 internal sealed class PostgresRuntimeLearningState
 {
     private static readonly HashSet<string> Properties = [nameof(RuntimeState.Learning), nameof(RuntimeState.Reviews),
-        nameof(RuntimeState.TrainingBaselines), nameof(RuntimeState.TrainingBaselineReviews), nameof(RuntimeState.TrainingManualSequences), nameof(RuntimeState.NextTrainingSequence)];
+        nameof(RuntimeState.TrainingBaselines), nameof(RuntimeState.TrainingBaselineReviews), nameof(RuntimeState.TrainingManualSequences), nameof(RuntimeState.NextTrainingSequence), nameof(RuntimeState.CreationReceipts)];
     public static bool IsProperty(string name) => Properties.Contains(name);
     private readonly SessionDbContext db;
     private Dictionary<(string Kind, Guid Id), object>? before;
@@ -29,13 +29,17 @@ internal sealed class PostgresRuntimeLearningState
             x => JsonSerializer.Deserialize<T>(x.Json) is { } value ? value : throw new InvalidDataException("Null persisted learning record."));
         var learning = Read<LearningItem>(nameof(RuntimeState.Learning));
         var reviews = Read<LearningReview>(nameof(RuntimeState.Reviews));
+        var creations = Read<LearningCreationReceipt>(nameof(RuntimeState.CreationReceipts));
+        foreach (var (id, receipt) in creations) {
+            receipt.Validate(); if (id != receipt.RequestId) throw new InvalidDataException("Creation receipt identity differs from its row.");
+        }
         var baselines = Read<LearningItem>(nameof(RuntimeState.TrainingBaselines));
         var included = Read<HashSet<Guid>>(nameof(RuntimeState.TrainingBaselineReviews));
         var sequences = Read<long>(nameof(RuntimeState.TrainingManualSequences));
         if (learning.Any(x => x.Key != x.Value.Id) || baselines.Any(x => x.Key != x.Value.Id) || reviews.Any(x => x.Key != x.Value.RequestId))
             throw new InvalidDataException("Learning dictionary and record identities differ.");
         var sequenceControl = db.RuntimeLearningState.Single(x => x.Id == 1);
-        state.Learning = learning; state.Reviews = reviews; state.TrainingBaselines = baselines;
+        state.Learning = learning; state.Reviews = reviews; state.CreationReceipts = creations; state.TrainingBaselines = baselines;
         state.TrainingBaselineReviews = included; state.TrainingManualSequences = sequences; state.NextTrainingSequence = sequenceControl.NextTrainingSequence;
         return (Values(state, snapshot: true), sequenceControl);
     }
@@ -51,6 +55,10 @@ internal sealed class PostgresRuntimeLearningState
             }
         }
         Add(nameof(RuntimeState.Learning), state.Learning); Add(nameof(RuntimeState.Reviews), state.Reviews);
+        foreach (var (id, receipt) in state.CreationReceipts) {
+            receipt.Validate(); if (id != receipt.RequestId) throw new InvalidDataException("Creation receipt identity differs from its row.");
+        }
+        Add(nameof(RuntimeState.CreationReceipts), state.CreationReceipts);
         Add(nameof(RuntimeState.TrainingBaselines), state.TrainingBaselines); Add(nameof(RuntimeState.TrainingBaselineReviews), state.TrainingBaselineReviews);
         Add(nameof(RuntimeState.TrainingManualSequences), state.TrainingManualSequences);
         return result;

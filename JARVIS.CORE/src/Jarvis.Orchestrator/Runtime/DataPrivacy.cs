@@ -47,7 +47,7 @@ public static class PrivacyData
         policy.ProviderCacheDays, policy.ArtifactDays }.All(x => x is >= 1 and <= 3650) && policy.SweepMinutes is >= 1 and <= 1440,
         400, "Retention days must be 1–3650 and sweep minutes 1–1440.");
     public static CoreDataExport Export(PrivacyStatus status, RuntimeState state, IReadOnlyList<ConversationSession> sessions,
-        IReadOnlyList<WorkflowRun> workflows, IReadOnlyList<WorkflowEvent> events, IReadOnlyList<PrivacyJob> jobs, DateTimeOffset now, DomainRegistryExport? domains = null) => new(1, now, status,
+        IReadOnlyList<WorkflowRun> workflows, IReadOnlyList<WorkflowEvent> events, IReadOnlyList<PrivacyJob> jobs, DateTimeOffset now, DomainRegistryExport? domains = null) => new CoreDataExport(1, now, status,
         sessions, state.Stories.Values.ToList(), state.Learning.Values.ToList(), state.Reviews.Values.ToList(),
         state.TrainingAttempts.Values.Where(x => x.DeletedAt is null).ToList(), state.TrainingDrills.Values.ToList(),
         state.CoachingAttempts.Values.Where(x => x.DeletedAt is null).ToList(), state.AiCoachAssessments.Values.ToList(),
@@ -59,7 +59,8 @@ public static class PrivacyData
         state.UsageReservations.Values.ToList(), jobs, state.Goals.Values.Where(x => x.Status != GoalStatus.Deleted).ToList(),
         state.AgentTriggers.Values.ToList(), state.UsageReconciliations.Values.ToList(), state.ImportedDocuments.Values.Where(x => x.DeletedAt is null).ToList(), state.SourceClaims.Values.ToList(), state.VoiceRecalls.Values.ToList(),
         state.GbpCommitments.Values.ToList(), state.BudgetApprovals.Values.ToList(), state.BudgetReceipts.Values.ToList(), state.VoiceCoachings.Values.ToList(), state.ProviderAttempts.Values.ToList(), domains ?? state.DomainRegistry.Export(),
-        state.AgentToolGrants.Values.ToArray(), state.AgentToolInvocations.Values.ToArray(), state.AgentActions.Values.ToArray(), state.DeviceVoiceAuthorities, state.ContextMemories.Values.ToArray());
+        state.AgentToolGrants.Values.ToArray(), state.AgentToolInvocations.Values.ToArray(), state.AgentActions.Values.ToArray(), state.DeviceVoiceAuthorities, state.ContextMemories.Values.ToArray()) with {
+            CreationReceipts = state.CreationReceipts.Count == 0 ? null : state.CreationReceipts.Values.OrderBy(x => x.RequestId).Select(x => x.Export()).ToArray() };
     public static RuntimeState EmptyAfterErase(RuntimeState old) => new()
     {
         UsageReservations = old.UsageReservations, NextAudioFence = checked(old.NextAudioFence + 1), AgentControls = new(Paused: true, PaidAiPaused: true, AgentsPaused: true),

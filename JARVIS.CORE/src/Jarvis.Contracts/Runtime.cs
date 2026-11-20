@@ -14,7 +14,8 @@ public sealed record SessionHandoff(Guid Id, string FromDeviceId, string ToDevic
 public sealed record ChatMessage(Guid RequestId, string Role, string Text, DateTimeOffset At, bool IsVoice = false, double? SpeechSeconds = null, bool Restricted = false,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] SpeechTiming? Timing = null);
 public sealed record ChatRequest(Guid RequestId, string Text);
-public sealed record CreateLearningRequest(LearningDomain Domain, string Prompt, string Answer);
+public sealed record CreateLearningRequest(LearningDomain Domain, string Prompt, string Answer,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? RequestId = null);
 public sealed record ReviewLearningRequest(Guid RequestId, ReviewRating Rating, double ResponseSeconds);
 public sealed record LearningReview(Guid RequestId, ReviewEvent Event, LearningItem Result);
 public sealed record HomeActionRequest(Guid RequestId, Guid SessionId, string EntityId, string Action, bool TriggeredByExternalContent = false);
