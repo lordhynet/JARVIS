@@ -109,7 +109,7 @@ public static class PrivacyData
         // Source purges still need original receipt lineage before age retirement removes it.
         foreach (var id in selection.CreationReceipts) state.CreationReceipts[id] = state.CreationReceipts[id].Retire(at);
         var affected = new HashSet<Guid>();
-        foreach (var answer in state.TrainingAttempts.Values.Where(x => selection.Training.Contains(x.Id)).ToList())
+        foreach (var answer in state.TrainingAttempts.Values.Where(x => x.DeletedAt is null && selection.Training.Contains(x.Id)).ToList())
         {
             state.TrainingAttempts[answer.Id] = answer with { Answers = [], Assessments = [], CanonicalAssessmentId = null, DeletedAt = at, Revision = answer.Revision + 1 };
             ReasoningLifecycle.Retire(state, answer.Id);
