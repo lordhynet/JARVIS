@@ -32,6 +32,7 @@ public sealed class LearningService(IRuntimeStore store, TimeProvider clock)
     // Shared by the HTTP review and atomic voice-review state transition.
     internal static LearningItem Apply(RuntimeState s, Guid id, ReviewLearningRequest request, DateTimeOffset now, string timingSource = "user_reported")
     {
+        ValidateReview(request);
         s.Reviews.TryGetValue(request.RequestId, out var previous);
         // Replay never depends on the current card or its continued existence.
         var change = previous is not null
