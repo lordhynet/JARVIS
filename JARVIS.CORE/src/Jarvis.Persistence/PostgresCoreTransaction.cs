@@ -34,6 +34,14 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         List<(ConversationSession Before, ConversationSession After)> sessions, CancellationToken ct) : ICoreTransactionWrites
     {
         public RuntimeState Runtime => runtime;
+        public async Task<ForgeProgramme?> ReadForgeProgrammeAsync(string ownerScope, Guid id) =>
+            (await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == ownerScope && x.Id == id, ct))?.Contract();
+        public Task<int> CountForgeProgrammesAsync(string ownerScope) => db.ForgeProgrammes.CountAsync(x => x.OwnerScope == ownerScope, ct);
+        public async Task SaveForgeProgrammeAsync(ForgeProgramme programme) {
+            var row = await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == programme.OwnerScope && x.Id == programme.Id, ct);
+            if (row is null) { row = new() { OwnerScope = programme.OwnerScope, Id = programme.Id }; db.ForgeProgrammes.Add(row); }
+            row.Apply(programme);
+        }
         public async Task<DomainResolved?> ReadActiveDomainAsync(string key) => DomainRegistryProjection.Active(await PostgresDomainRegistryStore.Snapshot(db, ct), key);
 
         public Task<SessionAudioState?> ReadAudioStateAsync(Guid sessionId) =>

@@ -106,6 +106,7 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IDeviceReceiptReader, PostgresDeviceReceiptStore>();
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
     builder.Services.AddSingleton<ITravelStore, PostgresTravelStore>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Forge.IForgeProgrammeReader, PostgresForgeProgrammeReader>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingStore, PostgresRecordingStore>();
     builder.Services.AddSingleton<ICoreTransaction, PostgresCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
@@ -123,6 +124,7 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IDeviceReceiptReader, InMemoryDeviceReceiptStore>();
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
     builder.Services.AddSingleton<ITravelStore, MemoryTravelStore>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Forge.IForgeProgrammeReader, Jarvis.Orchestrator.Forge.MemoryForgeProgrammeReader>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingStore, Jarvis.Orchestrator.Recordings.MemoryRecordingStore>();
     builder.Services.AddSingleton<ICoreTransaction, MemoryCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
@@ -317,6 +319,7 @@ app.MapBudgetEndpoints();
 app.MapPrivacyEndpoints();
 app.MapBrowserAccessEndpoints();
 app.MapTravelEndpoints();
+app.MapForgeEndpoints();
 app.MapRecordingEndpoints();
 app.MapPost("/api/hubs/ticket", (HubTickets tickets, CancellationToken ct) => tickets.IssueAsync(ct)).RequireAuthorization(CorePolicies.Owner);
 app.MapImportEndpoints();

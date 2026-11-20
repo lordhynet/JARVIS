@@ -39,8 +39,10 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         var jobs = (await db.PrivacyJobs.AsNoTracking().ToListAsync(ct)).Select(x => x.Contract()).ToList();
         var travel = await PostgresTravelStore.Snapshot(db, ct);
         var recordings = await PostgresRecordingStore.Snapshot(db, ct);
+        var forge = (await db.ForgeProgrammes.AsNoTracking().OrderBy(x => x.Id).ToListAsync(ct)).Select(x => x.Contract()).ToArray();
         var export = PrivacyData.Export(control.Status(), state, sessions, runs, events, jobs, now, (await PostgresDomainRegistryStore.Snapshot(db, ct)).Export()) with {
-            TravelRoutes = travel.Routes.Values.ToArray(), TravelLineStates = travel.Lines.Values.ToArray(), InterviewRecordings = recordings.Sessions.Values.Select(r => r.View).ToArray() };
+            TravelRoutes = travel.Routes.Values.ToArray(), TravelLineStates = travel.Lines.Values.ToArray(), InterviewRecordings = recordings.Sessions.Values.Select(r => r.View).ToArray(),
+            ForgeProgrammes = forge.Length == 0 ? null : forge };
         await tx.CommitAsync(ct); return export;
     }
     public async Task<RetentionPreview> PreviewAsync(RetentionPolicy policy, DateTimeOffset asOf, CancellationToken ct = default)
@@ -86,7 +88,8 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         {
             DeviceGrants = await db.DeviceGrants.CountAsync(ct),
             DeviceCommands = await db.DeviceCommands.CountAsync(ct),
-            DeviceReceipts = await db.DeviceReceipts.CountAsync(ct)
+            DeviceReceipts = await db.DeviceReceipts.CountAsync(ct),
+            ForgeProgrammes = await db.ForgeProgrammes.CountAsync(ct)
         };
         counts = RecordingRetention.Counts(await PostgresRecordingStore.Snapshot(db, ct), counts);
         // The exclusive privacy gate also excludes a file publisher holding the shared D2 gate.
@@ -100,6 +103,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         await db.TravelMonitorState.ExecuteUpdateAsync(x => x.SetProperty(t => t.Json, "{}"), ct);
         await db.Sessions.ExecuteDeleteAsync(ct); await db.WorkflowRuns.ExecuteDeleteAsync(ct); await db.DeviceGrants.ExecuteDeleteAsync(ct); await db.PrivacyJobs.ExecuteDeleteAsync(ct);
         await db.DeviceCommands.ExecuteDeleteAsync(ct);
+        await db.ForgeProgrammes.ExecuteDeleteAsync(ct);
         control.Epoch = checked(control.Epoch + 1); control.Revision++; control.Erased = true; control.ErasedAt = now;
         control.ErasureRequestId = request.RequestId; control.ErasureKeyFingerprint = keyFingerprint;
         db.PrivacyJobs.Add(new() { Id = request.RequestId, Kind = "erasure", Fingerprint = PrivacyData.Hash("erasure:" + control.Epoch), CompletedAt = now, CountsJson = JsonSerializer.Serialize(counts) });

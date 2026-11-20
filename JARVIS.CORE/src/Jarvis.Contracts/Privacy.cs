@@ -7,7 +7,8 @@ public sealed record RetentionPolicy(bool Enabled = false, int SessionDays = 180
     int ProviderCacheDays = 7, int ArtifactDays = 30, int SweepMinutes = 60);
 public sealed record PrivacyCounts(int Sessions, int TrainingAnswers, int CoachingAnswers, int VoiceTurns, int ProviderResults,
     int WorkflowArtifacts, int AgentArtifacts, int Imports = 0, int DeviceGrants = 0, int DeviceCommands = 0, int DeviceReceipts = 0, int ContextMemories = 0,
-    int InterviewRecordings = 0, int RecordingChunks = 0, long RecordingAudioBytes = 0);
+    int InterviewRecordings = 0, int RecordingChunks = 0, long RecordingAudioBytes = 0,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)] int ForgeProgrammes = 0);
 public sealed record RetentionPreview(DateTimeOffset AsOf, string PolicyFingerprint, RetentionPolicy Policy, PrivacyCounts Eligible);
 public sealed record ApplyRetentionRequest(Guid RequestId, DateTimeOffset AsOf, string PolicyFingerprint, string Confirmation);
 public sealed record PrivacyJob(Guid Id, string Kind, string Fingerprint, DateTimeOffset CompletedAt, PrivacyCounts Removed);
@@ -30,4 +31,5 @@ public sealed record CoreDataExport(int SchemaVersion, DateTimeOffset ExportedAt
     IReadOnlyList<AgentActionProposal>? AgentActions = null, IReadOnlyDictionary<Guid, DeviceVoiceAuthority>? DeviceVoiceAuthorities = null,
     IReadOnlyList<ContextMemoryItem>? ContextMemories = null,
     IReadOnlyList<TravelRoute>? TravelRoutes = null, IReadOnlyList<TravelLineState>? TravelLineStates = null,
-    IReadOnlyList<InterviewRecording>? InterviewRecordings = null);
+    IReadOnlyList<InterviewRecording>? InterviewRecordings = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ForgeProgramme>? ForgeProgrammes = null);
