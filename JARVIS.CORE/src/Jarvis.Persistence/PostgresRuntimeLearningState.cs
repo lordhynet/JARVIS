@@ -12,7 +12,7 @@ internal sealed class PostgresRuntimeLearningState
         nameof(RuntimeState.TrainingBaselines), nameof(RuntimeState.TrainingBaselineReviews), nameof(RuntimeState.TrainingManualSequences), nameof(RuntimeState.NextTrainingSequence)];
     public static bool IsProperty(string name) => Properties.Contains(name);
     private readonly SessionDbContext db;
-    private Dictionary<(string Kind, Guid Id), string>? before;
+    private Dictionary<(string Kind, Guid Id), object>? before;
     private RuntimeLearningControlRow? control;
 
     public PostgresRuntimeLearningState(SessionDbContext db, RuntimeState state)
@@ -37,18 +37,35 @@ internal sealed class PostgresRuntimeLearningState
         control = db.RuntimeLearningState.Single(x => x.Id == 1);
         state.Learning = learning; state.Reviews = reviews; state.TrainingBaselines = baselines;
         state.TrainingBaselineReviews = included; state.TrainingManualSequences = sequences; state.NextTrainingSequence = control.NextTrainingSequence;
-        before = Values(state);
+        before = Values(state, snapshot: true);
     }
-    private static Dictionary<(string Kind, Guid Id), string> Values(RuntimeState state)
+    private static Dictionary<(string Kind, Guid Id), object> Values(RuntimeState state, bool snapshot = false)
     {
         if (state.Learning.Any(x => x.Key != x.Value.Id) || state.TrainingBaselines.Any(x => x.Key != x.Value.Id) || state.Reviews.Any(x => x.Key != x.Value.RequestId))
             throw new InvalidDataException("Learning dictionary and record identities differ.");
-        var result = new Dictionary<(string Kind, Guid Id), string>();
-        void Add<T>(string kind, Dictionary<Guid, T> values) { foreach (var (id, value) in values) result.Add((kind, id), JsonSerializer.Serialize(value)); }
+        var result = new Dictionary<(string Kind, Guid Id), object>();
+        void Add<T>(string kind, Dictionary<Guid, T> values) {
+            foreach (var (id, value) in values) {
+                if (value is null) throw new InvalidDataException("Null learning record.");
+                result.Add((kind, id), snapshot && value is HashSet<Guid> members ? new HashSet<Guid>(members) : value);
+            }
+        }
         Add(nameof(RuntimeState.Learning), state.Learning); Add(nameof(RuntimeState.Reviews), state.Reviews);
         Add(nameof(RuntimeState.TrainingBaselines), state.TrainingBaselines); Add(nameof(RuntimeState.TrainingBaselineReviews), state.TrainingBaselineReviews);
         Add(nameof(RuntimeState.TrainingManualSequences), state.TrainingManualSequences);
         return result;
+    }
+    private static string Json(object value) => JsonSerializer.Serialize(value, value.GetType());
+    private static bool Unchanged(object previous, object current)
+    {
+        // The closed record contracts are immutable. Only membership sets need defensive
+        // snapshots. Avoid serializing the whole history to detect one replaced card.
+        if (ReferenceEquals(previous, current)) return true;
+        if (previous is HashSet<Guid> members && current is HashSet<Guid> next) return members.SetEquals(next);
+        if (previous is long sequence && current is long nextSequence) return sequence == nextSequence;
+        // Record equality treats differently-offset DateTimeOffsets as equal instants;
+        // canonical JSON comparison preserves offset-only provenance changes as well.
+        return Json(previous) == Json(current);
     }
     public void Apply(RuntimeState state)
     {
@@ -58,9 +75,9 @@ internal sealed class PostgresRuntimeLearningState
         if (before is null) { var previous = new RuntimeState(); Load(previous); }
         var after = Values(state);
         foreach (var key in before!.Keys.Except(after.Keys)) db.RuntimeLearningRows.Remove(new() { Kind = key.Kind, Id = key.Id });
-        foreach (var (key, json) in after) {
-            if (before.TryGetValue(key, out var old) && old == json) continue;
-            var row = new RuntimeLearningRow { Kind = key.Kind, Id = key.Id, Json = json,
+        foreach (var (key, value) in after) {
+            if (before.TryGetValue(key, out var old) && Unchanged(old, value)) continue;
+            var row = new RuntimeLearningRow { Kind = key.Kind, Id = key.Id, Json = Json(value),
                 DueAt = key.Kind == nameof(RuntimeState.Learning) ? state.Learning[key.Id].DueAt.ToUniversalTime() : null };
             if (old is null) db.RuntimeLearningRows.Add(row); else db.RuntimeLearningRows.Update(row);
         }

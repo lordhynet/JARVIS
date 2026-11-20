@@ -94,6 +94,10 @@ public sealed partial class PostgresSessionTests
             Assert.False(s.AreLearningPropertiesLoaded); return true;
         });
         Assert.Equal(before, await Stamp());
+        // Equal instants with different offsets still carry different canonical provenance.
+        await store.UpdateAsync(s => { s.Learning[id] = s.Learning[id] with { DueAt = s.Learning[id].DueAt.ToOffset(TimeSpan.Zero) }; return true; });
+        Assert.Equal(TimeSpan.Zero, await store.ReadAsync(s => s.Learning[id].DueAt.Offset));
+        Assert.Equal(before, await Stamp());
         await store.UpdateAsync(s => { s.Learning[id] = s.Learning[id] with { Answer = "Must survive cold hydration" }; s.Goals = []; return true; });
         Assert.Equal("Must survive cold hydration", await store.ReadAsync(s => s.Learning[id].Answer));
         await using var verify = await contexts.CreateDbContextAsync();
