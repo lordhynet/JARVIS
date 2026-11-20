@@ -46,11 +46,13 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         if (await db.RuntimeLearningRows.AnyAsync(x => x.Kind == nameof(RuntimeState.Learning) && x.DueAt == null, ct))
             throw new InvalidDataException("A learning index timestamp is missing; repair the projection before paging.");
         var upper = LearningReadProjection.CandidateUpperBound(cutoff);
-        FormattableString query = after is null ? $"""
+        FormattableString query;
+        if (after is null) query = $"""
             SELECT "Kind","Id","Json","DueAt" FROM "RuntimeLearningRows"
             WHERE "Kind"='Learning' AND "DueAt"<={upper}
             ORDER BY "DueAt","Id" LIMIT {size + 1}
-            """ : $"""
+            """;
+        else query = $"""
             SELECT "Kind","Id","Json","DueAt" FROM "RuntimeLearningRows"
             WHERE "Kind"='Learning' AND "DueAt"<={upper} AND ("DueAt","Id")>({after.IndexedDueAt},{after.Id})
             ORDER BY "DueAt","Id" LIMIT {size + 1}
