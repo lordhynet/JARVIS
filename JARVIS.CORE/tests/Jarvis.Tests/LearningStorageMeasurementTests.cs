@@ -3,8 +3,11 @@ using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Persistence;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 
 namespace Jarvis.Tests;
@@ -18,7 +21,9 @@ public sealed partial class PostgresSessionTests
         await using var database = await TestDatabase.CreateAsync();
         var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString) { Pooling = true }.ConnectionString;
         try {
-            using var host = new PostgresApiFactory(connection, manualAgents: true); using var owner = host.AuthorisedClient();
+            using var baseHost = new PostgresApiFactory(connection, manualAgents: true);
+            using var host = baseHost.WithWebHostBuilder(builder => builder.ConfigureServices(services => services.RemoveAll<IHostedService>()));
+            using var client = host.CreateClient(); // Start only the isolated API; no maintenance sweep can enter a timed sample.
             var runtime = host.Services.GetRequiredService<IRuntimeStore>(); var now = DateTimeOffset.UtcNow;
             var first = Guid.NewGuid();
             await runtime.UpdateAsync(s => {
@@ -50,7 +55,7 @@ public sealed partial class PostgresSessionTests
             double P95(List<double> values) => values.Order().ElementAt((int)Math.Ceiling(values.Count * .95) - 1);
             var result = new { learningCards = 1000, reviews = 1000, unrelatedGoals = 200, samples = 50, warmup = 5, pooling = true,
                 learningUpdateP95Ms = P95(samples), hotControlP95Ms = P95(controls), coldDocumentBytes = coldBytes,
-                readingLearningLoadsColdDocument = coldLoaded, synthetic = true, observedAt = DateTimeOffset.UtcNow };
+                readingLearningLoadsColdDocument = coldLoaded, backgroundWorkers = false, synthetic = true, observedAt = DateTimeOffset.UtcNow };
             await File.WriteAllTextAsync(Environment.GetEnvironmentVariable("JARVIS_PERF_OUTPUT")!, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
         } finally { using var pool = new NpgsqlConnection(connection); NpgsqlConnection.ClearPool(pool); }
     }
