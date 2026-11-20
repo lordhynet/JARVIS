@@ -20,6 +20,7 @@ public static class DomainPolicy
         Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }
     };
     public static string Slug(string value) => Regex.Replace(value.Normalize(NormalizationForm.FormKC).ToLowerInvariant(), @"[^\p{L}\p{Nd}]+", "-").Trim('-');
+    public static bool IsValidKey(string? key) => !string.IsNullOrWhiteSpace(key) && key.Length <= 60 && Regex.IsMatch(key, "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$");
     public static Guid StableId(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes(value))[..16]);
     public static string WorkflowKey(string key) => "domain-" + key.Replace('.', '-') + "-practice";
     public static DomainManifest Parse(JsonElement json)
@@ -31,8 +32,7 @@ public static class DomainPolicy
     }
     public static DomainManifest Validate(DomainManifest manifest)
     {
-        Guard.Require(manifest is not null && manifest.SchemaVersion == 1 && !string.IsNullOrWhiteSpace(manifest.Key) && manifest.Key.Length <= 60 &&
-            Regex.IsMatch(manifest.Key, "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"), 400, "Domain key/schema is invalid.");
+        Guard.Require(manifest is not null && manifest.SchemaVersion == 1 && IsValidKey(manifest.Key), 400, "Domain key/schema is invalid.");
         var name = Guard.Text(manifest.DisplayName, "Domain name", 120); var description = Guard.Text(manifest.Description, "Domain description", 1200);
         Guard.Require(manifest.Aliases is { Count: <= 12 } && manifest.Roles is { Count: > 0 and <= 6 } &&
             manifest.Capabilities is { Count: > 0 and <= 24 } && manifest.PracticePrompts is { Count: > 0 and <= 3 } &&

@@ -9,6 +9,7 @@ namespace Jarvis.Orchestrator.Forge;
 // Whitespace padding hides exact JSON length within a bucket; cadence and bucket size remain observable.
 public static class ForgeProtectedJson
 {
+    private static readonly JsonSerializerOptions ReadOptions = new() { UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow };
     public const int BucketBytes = 512;
     // Utf8JsonWriter may request six bytes per UTF-16 character before it knows actual escaping cost.
     // Bound its scratch as well as the final output, while still accepting a full 64KiB ASCII JSON value.
@@ -43,7 +44,7 @@ public static class ForgeProtectedJson
     // Existing unpadded JSON remains valid. No raw buffer copy escapes this scoped callback.
     public static T Read<T>(IProtectedRecordProtector protector, ProtectedRecordContext context,
         ProtectedRecordEnvelope envelope) where T : class => protector.Unprotect(context, envelope, plaintext => {
-            try { return JsonSerializer.Deserialize<T>(plaintext) ?? throw new DomainException(409, "Protected payload could not be decoded."); }
+            try { return JsonSerializer.Deserialize<T>(plaintext, ReadOptions) ?? throw new DomainException(409, "Protected payload could not be decoded."); }
             catch (Exception error) when (error is JsonException or NotSupportedException) {
                 throw new DomainException(409, "Protected payload could not be decoded.");
             }
