@@ -46,10 +46,14 @@ public sealed class ForgeCapacityProjection
     // the current programme/privacy boundary. Construction itself confers no authority.
     public static ForgeCapacityProjection ForDay(ForgeProgramme programme, int capacityRevision, DateOnly day,
         int? netUsableMinutes, int bufferMinutes, IReadOnlyList<ForgeCapacityLocalInterval> fixedBlocks)
+        => ForDayCore(programme, capacityRevision, day, netUsableMinutes, bufferMinutes, fixedBlocks, 64);
+
+    private static ForgeCapacityProjection ForDayCore(ForgeProgramme programme, int capacityRevision, DateOnly day,
+        int? netUsableMinutes, int bufferMinutes, IReadOnlyList<ForgeCapacityLocalInterval> fixedBlocks, int maximumBlocks)
     {
         Guard.Require(programme is not null && programme.Id != Guid.Empty && programme.DeletedAt is null, 409, "Programme is unavailable.");
         Guard.Require(capacityRevision > 0 && programme.Revision > 0 && day > DateOnly.MinValue && day < DateOnly.MaxValue && day >= programme.Start && day <= programme.Graduation &&
-            fixedBlocks is { Count: <= 64 } && bufferMinutes >= 0 && (netUsableMinutes is null or >= 0), 400, "Capacity configuration is invalid.");
+            fixedBlocks is not null && fixedBlocks.Count <= maximumBlocks && bufferMinutes >= 0 && (netUsableMinutes is null or >= 0), 400, "Capacity configuration is invalid.");
         TimeZoneInfo zone;
         try { zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone); }
         catch (Exception error) when (error is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException) {
@@ -118,7 +122,8 @@ public sealed class ForgeCapacityProjection
             var from = TimeZoneInfo.ConvertTime(x.Start, zone); var until = TimeZoneInfo.ConvertTime(x.End, zone);
             return new ForgeCapacityLocalInterval(from.DateTime, until.DateTime, programme.TimeZone, from.Offset, until.Offset);
         }).ToArray();
-        return ForDay(programme, capacity.CapacityRevision, capacity.LocalDate, net, capacity.BufferMinutes, merged);
+        // Two separately bounded sets may yield 128 disjoint intervals. Public owner input stays capped at64.
+        return ForDayCore(programme, capacity.CapacityRevision, capacity.LocalDate, net, capacity.BufferMinutes, merged, 128);
     }
 }
 

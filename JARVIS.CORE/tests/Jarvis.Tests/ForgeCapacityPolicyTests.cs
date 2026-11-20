@@ -17,6 +17,18 @@ public sealed class ForgeCapacityPolicyTests
         Day.ToDateTime(TimeOnly.MinValue).AddMinutes(end), "Europe/London", TimeSpan.Zero, TimeSpan.Zero);
 
     [Fact]
+    public void ForgeCapacity_policy_accepts_128_disjoint_composed_blocks_but_owner_input_stays_at_64()
+    {
+        var programme = Programme(); var ownerBlocks = Enumerable.Range(0, 64).Select(i => Interval(i * 4, i * 4 + 1)).ToArray();
+        var policy = Enumerable.Range(0, 64).Select(i => Interval(i * 4 + 2, i * 4 + 3)).ToArray();
+        var owner = ForgeCapacityProjection.ForDay(programme, 1, Day, 1376, 0, ownerBlocks);
+        var composed = ForgeCapacityProjection.WithPolicyQuietHours(programme, owner, policy);
+        Assert.Equal(128, composed.FixedBlocks.Count); Assert.Equal(1312, composed.UsableMinutes); Assert.Equal(64, owner.FixedBlocks.Count);
+        Assert.Equal(400, Assert.Throws<DomainException>(() => ForgeCapacityProjection.ForDay(programme, 1, Day, 0, 0,
+            ownerBlocks.Concat([Interval(300, 301)]).ToArray())).StatusCode);
+    }
+
+    [Fact]
     public void ForgeCapacity_policy_identical_owner_quiet_is_counted_once()
     {
         var programme = Programme(); var owner = ForgeCapacityProjection.ForDay(programme, 2, Day, 1290, 30, [Interval(1320, 1440)]);
