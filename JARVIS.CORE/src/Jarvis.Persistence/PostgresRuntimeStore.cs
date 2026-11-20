@@ -11,6 +11,56 @@ namespace Jarvis.Persistence;
 // and transcript rows share this boundary without rewriting the cold document.
 public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges? audioChanges = null) : IRuntimeStore
 {
+    private static LearningItem LearningCard(RuntimeLearningRow row)
+    {
+        var card = JsonSerializer.Deserialize<LearningItem>(row.Json) ?? throw new InvalidDataException("Null persisted learning record.");
+        if (card.Id != row.Id) throw new InvalidDataException("Learning dictionary and record identities differ.");
+        return card;
+    }
+    public async Task<LearningItem?> ReadLearningItemAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        var row = await db.RuntimeLearningRows.AsNoTracking().SingleOrDefaultAsync(x => x.Kind == nameof(RuntimeState.Learning) && x.Id == id, ct);
+        var result = row is null ? null : LearningCard(row);
+        await tx.CommitAsync(ct); return result;
+    }
+    public async Task<IReadOnlyList<LearningItem>> ReadLearningItemsAsync(bool dueOnly, DateTimeOffset cutoff, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        var upper = LearningReadProjection.CandidateUpperBound(cutoff);
+        var rows = await db.RuntimeLearningRows.AsNoTracking().Where(x => x.Kind == nameof(RuntimeState.Learning) &&
+            (!dueOnly || x.DueAt == null || x.DueAt <= upper)).ToArrayAsync(ct);
+        var result = rows.Select(LearningCard).Where(x => !dueOnly || x.DueAt <= cutoff).OrderBy(x => x.DueAt).ToArray();
+        await tx.CommitAsync(ct); return result;
+    }
+    public async Task<LearningDuePage> ReadDueLearningPageAsync(DateTimeOffset cutoff, int size = 50, LearningDueCursor? after = null, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
+        var privacy = await PostgresPrivacyGate.LockAsync(db, ct);
+        LearningReadProjection.Validate(cutoff, size, after, privacy.Epoch);
+        if (await db.RuntimeLearningRows.AnyAsync(x => x.Kind == nameof(RuntimeState.Learning) && x.DueAt == null, ct))
+            throw new InvalidDataException("A learning index timestamp is missing; repair the projection before paging.");
+        var upper = LearningReadProjection.CandidateUpperBound(cutoff);
+        FormattableString query = after is null ? $"""
+            SELECT "Kind","Id","Json","DueAt" FROM "RuntimeLearningRows"
+            WHERE "Kind"='Learning' AND "DueAt"<={upper}
+            ORDER BY "DueAt","Id" LIMIT {size + 1}
+            """ : $"""
+            SELECT "Kind","Id","Json","DueAt" FROM "RuntimeLearningRows"
+            WHERE "Kind"='Learning' AND "DueAt"<={upper} AND ("DueAt","Id")>({after.IndexedDueAt},{after.Id})
+            ORDER BY "DueAt","Id" LIMIT {size + 1}
+            """;
+        var rows = await db.RuntimeLearningRows.FromSqlInterpolated(query).AsNoTracking().ToArrayAsync(ct);
+        var scanned = rows.Take(size).ToArray();
+        var items = scanned.Select(LearningCard).Where(x => x.DueAt <= cutoff).ToArray();
+        var next = rows.Length > size ? new LearningDueCursor(privacy.Epoch, cutoff, scanned[^1].DueAt!.Value, scanned[^1].Id) : null;
+        await tx.CommitAsync(ct); return new(items, next, rows.Length);
+    }
     public async Task<AudioLease?> ReadAudioLeaseAsync(CancellationToken ct = default)
     {
         var phase = Stopwatch.GetTimestamp();

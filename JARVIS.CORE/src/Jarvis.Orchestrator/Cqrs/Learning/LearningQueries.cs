@@ -10,8 +10,7 @@ public sealed class LearningQueryHandlers(IRuntimeReader reader, TimeProvider cl
     IQueryHandler<ListLearningItems, IReadOnlyList<LearningItem>>, IQueryHandler<GetReviewHistory, IReadOnlyList<ReviewEvent>>
 {
     public Task<IReadOnlyList<LearningItem>> HandleAsync(ListLearningItems query, CancellationToken ct = default) =>
-        reader.ReadAsync<IReadOnlyList<LearningItem>>(s => s.Learning.Values
-            .Where(i => !query.DueOnly || i.DueAt <= clock.GetUtcNow()).OrderBy(i => i.DueAt).ToList(), ct);
+        reader.ReadLearningItemsAsync(query.DueOnly, clock.GetUtcNow(), ct);
 
     public Task<IReadOnlyList<ReviewEvent>> HandleAsync(GetReviewHistory query, CancellationToken ct = default) =>
         reader.ReadAsync<IReadOnlyList<ReviewEvent>>(s => s.Reviews.Values.Where(r => r.Event.LearningItemId == query.ItemId)
