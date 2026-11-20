@@ -87,7 +87,11 @@ internal sealed record LearningMutationFixture(RuntimeState State, Guid Question
             Assert.Equal(3, corrected.Revision); Assert.Equal(2, corrected.Answers.Count); Assert.Null(corrected.CanonicalAssessment);
             timer.Restart(); var deleted = await service.DeleteAsync(Deletions[i], 2, default); var deletionMs = timer.Elapsed.TotalMilliseconds; Assert.True(deleted);
             double pureMs = 0; timer.Restart();
-            await store.UpdateAsync(s => { var projection = Stopwatch.StartNew(); TrainingProjection.Rebuild(s, Question); pureMs = projection.Elapsed.TotalMilliseconds; return true; });
+            await store.UpdateAsync(s => {
+                // Lazy unit hydration belongs to the transaction timer, not pure projection CPU time.
+                s.LoadColdProperties(); s.LoadLearningProperties();
+                var projection = Stopwatch.StartNew(); TrainingProjection.Rebuild(s, Question); pureMs = projection.Elapsed.TotalMilliseconds; return true;
+            });
             var rebuildMs = timer.Elapsed.TotalMilliseconds;
             var card = await store.ReadLearningItemAsync(Question); Assert.NotNull(card);
             Assert.Equal(4d, card.MasteryScore); Assert.Equal(i == Corrections.Length - 1 ? 1 : 2, card.StrongStreak); Assert.Equal(7, card.Difficulty);
