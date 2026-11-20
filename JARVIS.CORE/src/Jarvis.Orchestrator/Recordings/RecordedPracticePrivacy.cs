@@ -21,9 +21,20 @@ public static class RecordedPracticePrivacy
     public static IReadOnlyList<Guid> Purge(RuntimeState state, Guid recordingId, DateTimeOffset at)
     {
         var practices = state.VoiceCoachings.Values.Where(p => p.SourceRecordingId == recordingId).ToArray();
+        var questions = practices.SelectMany(p => p.RecordedQuestions ?? []).ToHashSet();
+        // Legacy deletion need not reparse transcripts. Only resolve extra lineage if an orphaned
+        // question-only creation result actually needs it; ordinary recording links are sufficient.
+        if (state.CreationReceipts.Values.Any(r => r.Result is { RecordedQuestionId: not null, SourceRecordingId: null }))
+            foreach (var document in state.ImportedDocuments.Values.Where(d => d.SourceRecordingId == recordingId && d.DeletedAt is null))
+                foreach (var question in RecordedInterviewPractice.Questions(state, document, matchStories: false)) questions.Add(question.Id);
+        foreach (var card in state.Learning.Values.Concat(state.Reviews.Values.Select(r => r.Result)).Where(c => c.SourceRecordingId == recordingId))
+            if (card.RecordedQuestionId is { } question) questions.Add(question);
         foreach (var practice in practices) PurgeSession(state, practice, at);
         var cardIds = state.Learning.Values.Where(c => c.SourceRecordingId == recordingId).Select(c => c.Id)
-            .Concat(state.Reviews.Values.Where(r => r.Result.SourceRecordingId == recordingId).Select(r => r.Event.LearningItemId)).ToHashSet();
+            .Concat(state.Reviews.Values.Where(r => r.Result.SourceRecordingId == recordingId).Select(r => r.Event.LearningItemId))
+            .Concat(state.CreationReceipts.Values.Where(r => r.Result is { } result &&
+                (result.SourceRecordingId == recordingId || result.RecordedQuestionId is { } question && questions.Contains(question))).Select(r => r.Result!.Id)).ToHashSet();
+        LearningCreationReceipt.Retire(state, cardIds, at);
         foreach (var cardId in cardIds) {
             AgentRuntime.InvalidateSource(state, "learning", cardId); state.Learning.Remove(cardId);
             foreach (var review in state.Reviews.Values.Where(r => r.Event.LearningItemId == cardId).ToArray()) state.Reviews.Remove(review.RequestId);

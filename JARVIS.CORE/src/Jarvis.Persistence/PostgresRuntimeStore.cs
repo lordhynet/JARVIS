@@ -14,22 +14,36 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
     public async Task<LearningItem> CreateLearningItemAsync(CreateLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {
         var started = Stopwatch.GetTimestamp();
-        var create = LearningService.PrepareCreate(request);
+        var normalized = LearningService.NormalizeCreate(request);
+        _ = LearningService.CreationEpoch(normalized);
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await PostgresPrivacyGate.LockAsync(db, ct);
+        var privacy = await PostgresPrivacyGate.LockAsync(db, ct);
         var stamps = await db.Database.SqlQueryRaw<RuntimeDocumentStamp>(
             "SELECT \"Id\", \"Fingerprint\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1 FOR UPDATE").ToListAsync(ct);
         _ = stamps.Single();
         CoreTelemetry.RuntimeLockWait.Record(Stopwatch.GetElapsedTime(started).TotalSeconds);
-        var item = create(clock.GetUtcNow());
-        db.RuntimeLearningRows.Add(new() { Kind = nameof(RuntimeState.Learning), Id = item.Id,
-            Json = JsonSerializer.Serialize(item), DueAt = item.DueAt.ToUniversalTime() });
-        await db.SaveChangesAsync(ct);
+        LearningCreationReceipt? previous = null;
+        if (normalized.RequestId is { } requestId) {
+            var row = await db.RuntimeLearningRows.AsNoTracking().SingleOrDefaultAsync(x => x.Kind == nameof(RuntimeState.CreationReceipts) && x.Id == requestId, ct);
+            if (row is not null) {
+                previous = JsonSerializer.Deserialize<LearningCreationReceipt>(row.Json) ?? throw new InvalidDataException("Null persisted creation receipt.");
+                if (previous.RequestId != row.Id) throw new InvalidDataException("Creation receipt identity differs from its row.");
+            }
+        }
+        var change = LearningService.DecideCreate(normalized, clock, privacy.Epoch, previous);
+        var item = change.Result;
+        if (previous is null) {
+            db.RuntimeLearningRows.Add(new() { Kind = nameof(RuntimeState.Learning), Id = item.Id,
+                Json = JsonSerializer.Serialize(item), DueAt = item.DueAt.ToUniversalTime() });
+            if (change.Receipt is { } receipt) db.RuntimeLearningRows.Add(new() { Kind = nameof(RuntimeState.CreationReceipts),
+                Id = receipt.RequestId, Json = JsonSerializer.Serialize(receipt) });
+            await db.SaveChangesAsync(ct);
+        }
         var phase = Stopwatch.GetTimestamp();
         await tx.CommitAsync(ct);
         CoreTelemetry.RecordStoragePhase(phase, "runtime.learning.create.commit");
-        CoreTelemetry.RuntimeWrites.Add(1);
+        if (previous is null) CoreTelemetry.RuntimeWrites.Add(1);
         return item;
     }
     public async Task<LearningItem> ReviewLearningItemAsync(Guid id, ReviewLearningRequest request, TimeProvider clock, CancellationToken ct = default)

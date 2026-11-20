@@ -104,6 +104,7 @@ public sealed class RuntimeState
     public Dictionary<string, RegisteredDevice> Devices { get; set; } = [];
     public Dictionary<Guid, LearningItem> Learning { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
     public Dictionary<Guid, LearningReview> Reviews { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
+    public Dictionary<Guid, LearningCreationReceipt> CreationReceipts { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
     public Dictionary<Guid, AuditedTool> Tools { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
 }
 
@@ -144,12 +145,9 @@ public interface IRuntimeStore : IRuntimeReader
 {
     Task<LearningItem> CreateLearningItemAsync(CreateLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {
-        var create = LearningService.PrepareCreate(request);
-        return UpdateAsync(s => {
-            var item = create(clock.GetUtcNow());
-            s.Learning.Add(item.Id, item);
-            return item;
-        }, ct);
+        var normalized = LearningService.NormalizeCreate(request);
+        var epoch = LearningService.CreationEpoch(normalized);
+        return UpdateAsync(s => LearningService.ApplyCreate(s, normalized, clock, epoch), ct);
     }
     Task<LearningItem> ReviewLearningItemAsync(Guid id, ReviewLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {
