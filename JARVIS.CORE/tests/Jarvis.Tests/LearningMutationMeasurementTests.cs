@@ -76,28 +76,39 @@ internal sealed record LearningMutationFixture(RuntimeState State, Guid Question
     });
     internal Task SeedSession(ISessionStore sessions) => sessions.AddAsync(new(Session, ActivityType.General, "Synthetic mutation benchmark",
         SessionStatus.Active, null, null, At, At, []));
-    internal async Task<object> Exercise(IRuntimeStore store, TrainingService service, int warmup)
+    internal async Task<object> Exercise(IRuntimeStore store, TrainingService service, int warmup, StoragePhaseCapture? phases = null)
     {
         var creationJson = JsonSerializer.Serialize(State.CreationReceipts[CreationRequest]);
         var corrections = new List<double>(); var deletions = new List<double>(); var rebuilds = new List<double>(); var pure = new List<double>();
+        var coldHydration = new List<double>(); var learningHydration = new List<double>();
         var requests = Corrections.Select(id => new CorrectTrainingAnswerRequest(Guid.NewGuid(), 2, "Corrected synthetic answer " + id)).ToArray();
         for (var i = 0; i < Corrections.Length; i++) {
-            var timer = Stopwatch.StartNew(); var corrected = await service.CorrectAsync(Corrections[i], requests[i], default);
-            var correctionMs = timer.Elapsed.TotalMilliseconds;
+            var timer = new Stopwatch(); TrainingAttempt corrected; double correctionMs;
+            using (phases?.Begin("correction", i >= warmup)) {
+                timer.Start(); corrected = await service.CorrectAsync(Corrections[i], requests[i], default); correctionMs = timer.Elapsed.TotalMilliseconds;
+            }
             Assert.Equal(3, corrected.Revision); Assert.Equal(2, corrected.Answers.Count); Assert.Null(corrected.CanonicalAssessment);
-            timer.Restart(); var deleted = await service.DeleteAsync(Deletions[i], 2, default); var deletionMs = timer.Elapsed.TotalMilliseconds; Assert.True(deleted);
-            double pureMs = 0; timer.Restart();
-            await store.UpdateAsync(s => {
-                // Lazy unit hydration belongs to the transaction timer, not pure projection CPU time.
-                s.LoadColdProperties(); s.LoadLearningProperties();
-                var projection = Stopwatch.StartNew(); TrainingProjection.Rebuild(s, Question); pureMs = projection.Elapsed.TotalMilliseconds; return true;
-            });
-            var rebuildMs = timer.Elapsed.TotalMilliseconds;
+            bool deleted; double deletionMs;
+            using (phases?.Begin("deletion", i >= warmup)) {
+                timer.Restart(); deleted = await service.DeleteAsync(Deletions[i], 2, default); deletionMs = timer.Elapsed.TotalMilliseconds;
+            }
+            Assert.True(deleted);
+            double pureMs = 0, coldMs = 0, learningMs = 0, rebuildMs;
+            using (phases?.Begin("rebuild", i >= warmup)) {
+                timer.Restart();
+                await store.UpdateAsync(s => {
+                    // Unit hydration stays inside the full transaction timer and outside pure CPU time.
+                    var hydration = Stopwatch.StartNew(); s.LoadColdProperties(); coldMs = hydration.Elapsed.TotalMilliseconds;
+                    hydration.Restart(); s.LoadLearningProperties(); learningMs = hydration.Elapsed.TotalMilliseconds;
+                    var projection = Stopwatch.StartNew(); TrainingProjection.Rebuild(s, Question); pureMs = projection.Elapsed.TotalMilliseconds; return true;
+                });
+                rebuildMs = timer.Elapsed.TotalMilliseconds;
+            }
             var card = await store.ReadLearningItemAsync(Question); Assert.NotNull(card);
             Assert.Equal(4d, card.MasteryScore); Assert.Equal(i == Corrections.Length - 1 ? 1 : 2, card.StrongStreak); Assert.Equal(7, card.Difficulty);
             Assert.Equal(i == Corrections.Length - 1 ? 17.5 : 35, card.Stability);
             Assert.Equal(At.AddDays(1).AddDays(card.Stability), card.DueAt);
-            if (i >= warmup) { corrections.Add(correctionMs); deletions.Add(deletionMs); rebuilds.Add(rebuildMs); pure.Add(pureMs); }
+            if (i >= warmup) { corrections.Add(correctionMs); deletions.Add(deletionMs); rebuilds.Add(rebuildMs); pure.Add(pureMs); coldHydration.Add(coldMs); learningHydration.Add(learningMs); }
             if ((i + 1) % 10 == 0) Console.WriteLine($"Mutation dataset {State.Learning.Count}: {i + 1}/{Corrections.Length} real correction/delete pairs complete.");
         }
         Assert.Equal(3, (await service.CorrectAsync(Corrections[0], requests[0], default)).Revision);
@@ -115,9 +126,15 @@ internal sealed record LearningMutationFixture(RuntimeState State, Guid Question
         Assert.Equal(State.TrainingAttempts.Count, final.trainingAttempts); Assert.Equal(Corrections.Length, final.correctionOperations); Assert.Equal(State.NextTrainingSequence, final.nextSequence);
         object Stats(List<double> values) => new { p50Ms = values.Order().ElementAt((int)Math.Ceiling(values.Count * .5) - 1),
             p95Ms = values.Order().ElementAt((int)Math.Ceiling(values.Count * .95) - 1), maxMs = values.Max(), samplesMs = values };
+        var phaseTimings = phases?.Report();
+        if (phaseTimings is not null) foreach (var lane in new[] { "correction", "deletion", "rebuild" })
+            foreach (var phase in new[] { "runtime.update.callback", "runtime.update.serialize_after", "runtime.update.save", "runtime.cold.hydrate",
+                "runtime.learning.hydrate", "runtime.cold.serialize_hash", "runtime.learning.diff" })
+                Assert.Equal(corrections.Count, phaseTimings[lane][phase].Count);
         return new { initialCards = State.Learning.Count, initialReviews = State.Reviews.Count, initialCreationReceipts = State.CreationReceipts.Count,
             initialTrainingAttempts = State.TrainingAttempts.Count, unrelatedTrainingAttempts = State.TrainingAttempts.Count - (Corrections.Length * 2 + 5),
-            warmup, samples = corrections.Count, correction = Stats(corrections), deletion = Stats(deletions), cohesiveIdempotentRebuild = Stats(rebuilds), pureRebuild = Stats(pure), final };
+            warmup, samples = corrections.Count, correction = Stats(corrections), deletion = Stats(deletions), cohesiveIdempotentRebuild = Stats(rebuilds), pureRebuild = Stats(pure),
+            explicitColdHydration = Stats(coldHydration), explicitLearningHydration = Stats(learningHydration), phaseTimings, final };
     }
 }
 
@@ -150,12 +167,13 @@ public sealed partial class PostgresSessionTests
                 var store = host.Services.GetRequiredService<IRuntimeStore>(); var fixture = LearningMutationFixture.Make(count, 55);
                 using var epoch = PrivacyContext.Enter(0); await fixture.SeedSession(host.Services.GetRequiredService<ISessionStore>()); await fixture.Seed(store);
                 var service = new TrainingService(store, host.Services.GetRequiredService<ISessionReader>(), new ForgeClock { Now = LearningMutationFixture.At.AddDays(20) });
-                reports.Add(await fixture.Exercise(store, service, 5));
+                using var phases = new StoragePhaseCapture(); reports.Add(await fixture.Exercise(store, service, 5, phases));
                 // Persist completed sizes incrementally, retaining evidence if a later size fails.
                 await File.WriteAllTextAsync(Environment.GetEnvironmentVariable("JARVIS_PERF_OUTPUT")!, JsonSerializer.Serialize(new {
                     generatedAt = DateTimeOffset.UtcNow, synthetic = true, pooled = true, backgroundWorkers = false, unrelatedGoals = 200,
                     operation = "Distinct correction and deletion per sample; no setup/reset in timers. Rebuild callback repeats an already current projection; pure timer excludes storage. Counts include retained training tombstones.",
-                    targetMs = 50, targetIsUnchanged = true, optimizationImplemented = false, reports
+                    targetMs = 50, targetIsUnchanged = true, optimizationImplemented = false,
+                    instrumentationOverheadIncluded = true, nestedPhasesOverlapOuterPhases = true, reports
                 }, new JsonSerializerOptions { WriteIndented = true }));
             } finally { using var pool = new NpgsqlConnection(connection); NpgsqlConnection.ClearPool(pool); }
         }
