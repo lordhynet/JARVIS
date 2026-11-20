@@ -117,6 +117,11 @@ public sealed record HubAccessTicket(string KeyFingerprint, long Epoch, DateTime
 // Callbacks are synchronous, pure state changes; no network I/O while holding a lock.
 public interface IRuntimeReader
 {
+    Task<LearningItem?> ReadLearningItemAsync(Guid id, CancellationToken ct = default) => ReadAsync(s => s.Learning.GetValueOrDefault(id), ct);
+    Task<IReadOnlyList<LearningItem>> ReadLearningItemsAsync(bool dueOnly, DateTimeOffset cutoff, CancellationToken ct = default) =>
+        ReadAsync<IReadOnlyList<LearningItem>>(s => s.Learning.Values.Where(i => !dueOnly || i.DueAt <= cutoff).OrderBy(i => i.DueAt).ToArray(), ct);
+    Task<LearningDuePage> ReadDueLearningPageAsync(DateTimeOffset cutoff, int size = 50, LearningDueCursor? after = null, CancellationToken ct = default) =>
+        ReadAsync(s => LearningReadProjection.Page(s, cutoff, size, after, 0), ct);
     Task<AudioLease?> ReadAudioLeaseAsync(CancellationToken ct = default) => ReadAsync(s => s.AudioLease, ct);
     Task<AudioLeaseState> ReadAudioLeaseStateAsync(CancellationToken ct = default) =>
         ReadAsync(s => new AudioLeaseState(s.AudioLease, s.AudioDrainUntil), ct);

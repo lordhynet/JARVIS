@@ -29,6 +29,8 @@ public sealed class MemoryPrivacyBoundary
 }
 public sealed class GuardedMemoryRuntime(InMemoryRuntimeStore inner, MemoryPrivacyBoundary boundary) : IRuntimeStore
 {
+    public Task<LearningDuePage> ReadDueLearningPageAsync(DateTimeOffset cutoff, int size = 50, LearningDueCursor? after = null, CancellationToken ct = default) =>
+        boundary.Run(() => inner.ReadAsync(s => LearningReadProjection.Page(s, cutoff, size, after, boundary.Status.Epoch), ct));
     public Task<UsageReservation> SettleUsageAsync(Guid id, decimal actual, int input, int output, CancellationToken ct = default,
         DateTimeOffset? completedAt = null)
     {
