@@ -11,6 +11,49 @@ namespace Jarvis.Persistence;
 // and transcript rows share this boundary without rewriting the cold document.
 public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges? audioChanges = null) : IRuntimeStore
 {
+    public async Task<LearningItem> ReviewLearningItemAsync(Guid id, ReviewLearningRequest request, TimeProvider clock, CancellationToken ct = default)
+    {
+        LearningService.ValidateReview(request);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        // The same D2 writer lock as UpdateInTransactionAsync, including cross-host voice/correction writers.
+        var stamps = await db.Database.SqlQueryRaw<RuntimeDocumentStamp>(
+            "SELECT \"Id\", \"Fingerprint\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1 FOR UPDATE").ToListAsync(ct);
+        _ = stamps.Single();
+        var now = clock.GetUtcNow();
+        var replayRow = await db.RuntimeLearningRows.AsNoTracking().SingleOrDefaultAsync(
+            x => x.Kind == nameof(RuntimeState.Reviews) && x.Id == request.RequestId, ct);
+        if (replayRow is not null) {
+            var replay = JsonSerializer.Deserialize<LearningReview>(replayRow.Json) ?? throw new InvalidDataException("Null persisted review.");
+            if (replay.RequestId != replayRow.Id) throw new InvalidDataException("Review dictionary and record identities differ.");
+            var result = LearningService.DecideReview(id, request, now, replay, null, null).Result;
+            await tx.CommitAsync(ct); return result;
+        }
+        var cardRow = await db.RuntimeLearningRows.SingleOrDefaultAsync(x => x.Kind == nameof(RuntimeState.Learning) && x.Id == id, ct);
+        Guard.Require(cardRow is not null, 404, "Learning item not found.");
+        var card = LearningCard(cardRow);
+        var baseline = await db.RuntimeLearningRows.AsNoTracking().SingleOrDefaultAsync(
+            x => x.Kind == nameof(RuntimeState.TrainingBaselines) && x.Id == id, ct);
+        RuntimeLearningControlRow? control = null;
+        if (baseline is not null) {
+            _ = LearningCard(baseline); // Retain the canonical baseline identity check.
+            control = await db.RuntimeLearningState.SingleAsync(x => x.Id == 1, ct);
+        }
+        var change = LearningService.DecideReview(id, request, now, null, card, control?.NextTrainingSequence);
+        cardRow.Json = JsonSerializer.Serialize(change.Result);
+        cardRow.DueAt = change.Result.DueAt.ToUniversalTime();
+        db.RuntimeLearningRows.Add(new() { Kind = nameof(RuntimeState.Reviews), Id = request.RequestId, Json = JsonSerializer.Serialize(change.AddedReview) });
+        if (change.ManualSequence is long sequence) {
+            // The existing composite PK rejects an orphan/duplicate sequence and rolls back the whole review.
+            db.RuntimeLearningRows.Add(new() { Kind = nameof(RuntimeState.TrainingManualSequences), Id = request.RequestId, Json = JsonSerializer.Serialize(sequence) });
+            control!.NextTrainingSequence = change.NextSequence!.Value;
+        }
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        CoreTelemetry.RuntimeWrites.Add(1);
+        return change.Result;
+    }
     private static LearningItem LearningCard(RuntimeLearningRow row)
     {
         var card = JsonSerializer.Deserialize<LearningItem>(row.Json) ?? throw new InvalidDataException("Null persisted learning record.");
