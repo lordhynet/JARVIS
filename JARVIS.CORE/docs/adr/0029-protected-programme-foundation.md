@@ -1,0 +1,27 @@
+# Protected programme records and private capacity projection
+
+JARVIS owns the protection primitive; Forge is its first planned consumer. This is the first PF-03 foundation slice following Claude's approved design and D1–D4 additions. No endpoint, database table, key configuration, DI registration, provider call or owner-data collection is introduced here. The existing recording interface/key and all interview/session/learning contracts stay intact.
+
+## Local authenticated envelope
+
+IProtectedRecordProtector lives alongside existing JARVIS runtime ports. ProtectedRecordProtector implements it in Persistence with a private, caller-supplied key-options snapshot. Missing active write keys fail closed; retained read keys can recover old envelopes/retries independently of the active write key. The implementation generates nonces, never root keys. Root keys are 32 bytes supplied through private configuration by a future adapter, not this slice.
+
+Version 1 uses the system [AesGcm API](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.aesgcm.encrypt) with a fresh random 12-byte nonce, a 16-byte tag and at most 65,536 plaintext bytes. [HKDF-SHA256](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.hkdf.derivekey) derives separate 32-byte encryption and retry-comparison keys using distinct info labels `jarvis:protected-records:v1:encryption` and `jarvis:protected-records:v1:retry-comparison`. Neither operation reuses the root key directly. Decoded/derived key buffers and failed-decryption buffers are cleared; successful plaintext buffers belong to the caller and must be cleared after typed consumption.
+
+AAD is the UTF-8 JSON array, no whitespace: `["jarvis-protected-record",1,keyId,purpose,ownerScope,scopeIdN,recordIdN,epoch,revision]`. GUIDs use lowercase N format. Labels are bounded ASCII opaque IDs; purpose is a fixed application label such as `forge.checkin`, never a private category or value. Owner, programme/scope, row, epoch, revision, format and key ID are authenticated. Copied/tampered/malformed envelopes fail generically. Payload JSON/schema validation remains the consuming service's responsibility.
+
+Retry proofs are HMAC-SHA256 over AAD followed by the caller's canonical request bytes, using the dedicated HKDF purpose. Proofs retain format/key ID for rotation and compare in fixed time. They are not plain hashes of private low-entropy values. This is a local primitive, not a new idempotency authority. Future writes still need operation/programme-scoped request IDs, revisions, shared transactions and privacy fences.
+
+## Key recovery is part of data recovery (D1)
+
+Before any real owner entry, the future protected writer must require verified recovery of every active/retained key needed by envelopes AND retry proofs alongside the database. A stopped-writer release backup must capture protected key configuration/recovery material, restore the database and keys into isolation, and decrypt a synthetic marker through the restored key path. A database-only restore is insufficient. Rotation cannot remove an old key while live records/proofs require it. This slice's in-memory synthetic key-copy test is not an operational backup rehearsal or permission to enable data collection.
+
+## Allocator handshake (D3/D4)
+
+ForgeCapacityProjection is a decrypted, owner-authorised **in-process** view in Orchestrator, not Jarvis.Contracts. The future protected reader creates it within the current privacy/programme boundary. Construction does not confer authorization. Default JSON serialization/deserialization of the projection and intervals throws; ordinary object string formatting does not print fields. No API, event, log, AI context, screensaver or watch may receive it. Explicit authorised privacy export must use a separate deliberate mapping from the canonical protected payload.
+
+Shape: programme ID/revision, capacity revision, local date/timezone, actual day minutes, nullable NET usable minutes, buffer, fixed local intervals with explicit start/end offsets, Known, ProgrammePaused, CanAllocate and AllocatableMinutes. UsableMinutes already excludes fixed blocks and buffer: the allocator must not subtract them again. Unknown remains null. Paused configuration edits are allowed, but AllocatableMinutes is zero for known paused capacity and CanAllocate is false. No allocator is started by this model; PF-08 must return no plan output while paused and recheck programme revision before writes.
+
+Fixed intervals represent normalized unavailable time. Global quiet hours remain JARVIS policy; do not turn overlapping quiet/sleep rules into duplicate unavailable minutes. The protected input service must detect contradictory work/sleep entries before normalization. Projection validation rejects overlapping fixed intervals, impossible offsets/clock gaps, invalid sizes/units and excessive capacity; it clips overnight blocks to the local day and uses actual DST day duration. Explicit fold offsets are preserved. A readonly collection snapshot prevents caller mutation. Official programme creation dates are unchanged.
+
+Next slices: protected table/write/read integration, installed owner scopes, verified key-recovery gate, privacy export/retention/erasure and project-deletion policy, capacity editing/browser integration, then allocator output. All must reuse the existing SessionDbContext/ICoreTransaction/privacy boundary. No sensitive plaintext persistence, private prompt context or native Android business queue is permitted meanwhile.
