@@ -10,6 +10,17 @@ public sealed record FxRefreshState(BudgetFxQuote? Quote = null, decimal? Unadju
 
 public sealed class RuntimeState
 {
+    private Action? learningLoader;
+    [System.Text.Json.Serialization.JsonIgnore] public bool AreLearningPropertiesLoaded => learningLoader is null;
+    public void DeferLearningProperties(Action loader) => learningLoader = loader;
+    public void LoadLearningProperties() {
+        if (learningLoader is not { } load) return;
+        learningLoader = null;
+        try { load(); } catch { learningLoader = load; throw; }
+    }
+    public void CloseLearningProperties() {
+        if (learningLoader is not null) learningLoader = () => throw new InvalidOperationException("Materialize learning projections inside the store callback.");
+    }
     private Action? coldLoader;
     [System.Text.Json.Serialization.JsonIgnore] public bool AreColdPropertiesLoaded => coldLoader is null;
     public void DeferColdProperties(Action loader) => coldLoader = loader;
@@ -85,14 +96,14 @@ public sealed class RuntimeState
     public Guid? ActiveProgrammeId { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
     public Dictionary<Guid, TrainingAttempt> TrainingAttempts { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, TrainingOperation> TrainingOperations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
-    public Dictionary<Guid, LearningItem> TrainingBaselines { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
-    public Dictionary<Guid, HashSet<Guid>> TrainingBaselineReviews { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
-    public Dictionary<Guid, long> TrainingManualSequences { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
-    public long NextTrainingSequence { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = 1;
+    public Dictionary<Guid, LearningItem> TrainingBaselines { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
+    public Dictionary<Guid, HashSet<Guid>> TrainingBaselineReviews { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
+    public Dictionary<Guid, long> TrainingManualSequences { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
+    public long NextTrainingSequence { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = 1;
     public Dictionary<Guid, Story> Stories { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<string, RegisteredDevice> Devices { get; set; } = [];
-    public Dictionary<Guid, LearningItem> Learning { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
-    public Dictionary<Guid, LearningReview> Reviews { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, LearningItem> Learning { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
+    public Dictionary<Guid, LearningReview> Reviews { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
     public Dictionary<Guid, AuditedTool> Tools { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
 }
 

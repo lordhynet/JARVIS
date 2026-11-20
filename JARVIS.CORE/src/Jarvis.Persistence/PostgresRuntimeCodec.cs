@@ -12,14 +12,14 @@ internal static class PostgresRuntimeCodec
     private static readonly HashSet<string> Hot = [nameof(RuntimeState.AudioLease), nameof(RuntimeState.AudioDrainLease),
         nameof(RuntimeState.AudioDrainUntil), nameof(RuntimeState.NextAudioFence), nameof(RuntimeState.VoiceTickets), nameof(RuntimeState.VoiceTurns),
         nameof(RuntimeState.AgentControls), nameof(RuntimeState.Devices), nameof(RuntimeState.DeviceCredentials), nameof(RuntimeState.WakeCandidateAttempts)];
-    public static bool IsHot(string name) => Hot.Contains(name);
+    public static bool IsHot(string name) => Hot.Contains(name) || PostgresRuntimeLearningState.IsProperty(name);
     private static readonly JsonSerializerOptions WriteOptions = Create();
     private static JsonSerializerOptions Create()
     {
         var resolver = new DefaultJsonTypeInfoResolver();
         resolver.Modifiers.Add(info => {
             if (info.Type != typeof(RuntimeState)) return;
-            foreach (var property in info.Properties.Where(p => Hot.Contains(p.Name)).ToArray()) info.Properties.Remove(property);
+            foreach (var property in info.Properties.Where(p => IsHot(p.Name)).ToArray()) info.Properties.Remove(property);
         });
         var options = new JsonSerializerOptions { TypeInfoResolver = resolver };
         options.Converters.Add(new OrderedMaps()); return options;
