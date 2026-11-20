@@ -18,9 +18,9 @@ internal sealed class PostgresRuntimeLearningState
     public PostgresRuntimeLearningState(SessionDbContext db, RuntimeState state)
     {
         this.db = db;
-        state.DeferLearningProperties(() => Load(state));
+        state.DeferLearningProperties(() => { (before, control) = Load(state); });
     }
-    private void Load(RuntimeState state)
+    private (Dictionary<(string Kind, Guid Id), object> Values, RuntimeLearningControlRow Control) Load(RuntimeState state)
     {
         var rows = db.RuntimeLearningRows.AsNoTracking().ToArray();
         if (rows.Any(x => !IsProperty(x.Kind) || x.Kind == nameof(RuntimeState.NextTrainingSequence)))
@@ -34,10 +34,10 @@ internal sealed class PostgresRuntimeLearningState
         var sequences = Read<long>(nameof(RuntimeState.TrainingManualSequences));
         if (learning.Any(x => x.Key != x.Value.Id) || baselines.Any(x => x.Key != x.Value.Id) || reviews.Any(x => x.Key != x.Value.RequestId))
             throw new InvalidDataException("Learning dictionary and record identities differ.");
-        control = db.RuntimeLearningState.Single(x => x.Id == 1);
+        var sequenceControl = db.RuntimeLearningState.Single(x => x.Id == 1);
         state.Learning = learning; state.Reviews = reviews; state.TrainingBaselines = baselines;
-        state.TrainingBaselineReviews = included; state.TrainingManualSequences = sequences; state.NextTrainingSequence = control.NextTrainingSequence;
-        before = Values(state, snapshot: true);
+        state.TrainingBaselineReviews = included; state.TrainingManualSequences = sequences; state.NextTrainingSequence = sequenceControl.NextTrainingSequence;
+        return (Values(state, snapshot: true), sequenceControl);
     }
     private static Dictionary<(string Kind, Guid Id), object> Values(RuntimeState state, bool snapshot = false)
     {
@@ -72,7 +72,7 @@ internal sealed class PostgresRuntimeLearningState
         if (!state.AreLearningPropertiesLoaded) return;
         // Erasure supplies a new empty state; load the previous rows separately so deleted
         // values cannot overwrite that empty state before applying its delta.
-        if (before is null) { var previous = new RuntimeState(); Load(previous); }
+        if (before is null) (before, control) = Load(new RuntimeState());
         var after = Values(state);
         foreach (var key in before!.Keys.Except(after.Keys)) db.RuntimeLearningRows.Remove(new() { Kind = key.Kind, Id = key.Id });
         foreach (var (key, value) in after) {

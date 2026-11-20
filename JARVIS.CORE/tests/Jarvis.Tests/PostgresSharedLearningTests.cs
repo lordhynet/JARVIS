@@ -154,6 +154,31 @@ public sealed partial class PostgresSessionTests
     }
 
     [PostgresFact]
+    public async Task Shared_learning_downgrade_refuses_missing_runtime_document_without_dropping_rows_or_sequence()
+    {
+        foreach (var retainRows in new[] { true, false }) {
+            await using var database = await TestDatabase.CreateAsync();
+            using (var host = new PostgresApiFactory(database.ConnectionString, manualAgents: true)) {
+                var original = LearningFixture();
+                await host.Services.GetRequiredService<IRuntimeStore>().UpdateAsync(s => {
+                    s.Learning = original.Learning; s.Reviews = original.Reviews; s.TrainingBaselines = original.TrainingBaselines;
+                    s.TrainingBaselineReviews = original.TrainingBaselineReviews; s.TrainingManualSequences = original.TrainingManualSequences;
+                    s.NextTrainingSequence = 43; return true;
+                });
+            }
+            var options = new DbContextOptionsBuilder<SessionDbContext>().UseNpgsql(database.ConnectionString).Options;
+            await using var db = new SessionDbContext(options);
+            if (!retainRows) await db.RuntimeLearningRows.ExecuteDeleteAsync();
+            await db.RuntimeDocuments.Where(x => x.Id == 1).ExecuteDeleteAsync();
+            var error = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => db.Database.GetService<IMigrator>().MigrateAsync(BeforeSharedLearning));
+            Assert.Contains("refusing destructive learning downgrade", error.MessageText);
+            Assert.Equal(retainRows ? 6 : 0, await db.RuntimeLearningRows.CountAsync());
+            Assert.Equal(43, (await db.RuntimeLearningState.AsNoTracking().SingleAsync()).NextTrainingSequence);
+            Assert.Contains("20261120041624_SharedLearningRows", await db.Database.GetAppliedMigrationsAsync());
+        }
+    }
+
+    [PostgresFact]
     public async Task Shared_learning_migration_rejects_null_review_members_without_removing_source_json()
     {
         await using var database = await TestDatabase.CreateAsync();

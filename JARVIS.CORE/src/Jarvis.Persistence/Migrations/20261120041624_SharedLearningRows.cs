@@ -110,6 +110,8 @@ namespace Jarvis.Persistence.Migrations
             // Stop writers and reconstruct their current state, not only the original backfill.
             migrationBuilder.Sql("""
                 DO $$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM "RuntimeDocuments" WHERE "Id"=1)
+                    THEN RAISE EXCEPTION 'Runtime document is missing; refusing destructive learning downgrade'; END IF;
                     IF NOT EXISTS (SELECT 1 FROM "RuntimeLearningState" WHERE "Id"=1)
                     THEN RAISE EXCEPTION 'Learning sequence state is missing; refusing destructive downgrade'; END IF;
                     IF EXISTS (SELECT 1 FROM "RuntimeLearningRows" WHERE "Kind" NOT IN
