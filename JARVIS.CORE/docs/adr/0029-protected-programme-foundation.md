@@ -14,6 +14,8 @@ Retry proofs are HMAC-SHA256 over AAD followed by the caller's canonical request
 
 ## Key recovery is part of data recovery (D1)
 
+Use the [owner-operated protected recovery checklist](../PROTECTED_RECOVERY.md), including re-applying post-backup privacy deletions before normal use of a restored instance. Restoring an older database also restores its source baselines and replay state; key/decrypt success alone does not establish privacy reconciliation.
+
 Before any real owner entry, the future protected writer must require verified recovery of every active/retained key needed by envelopes AND retry proofs alongside the database. A stopped-writer release backup must capture protected key configuration/recovery material, restore the database and keys into isolation, and decrypt a synthetic marker through the restored key path. A database-only restore is insufficient. Rotation cannot remove an old key while live records/proofs require it. This slice's in-memory synthetic key-copy test is not an operational backup rehearsal or permission to enable data collection.
 
 ## Allocator handshake (D3/D4)
