@@ -13,6 +13,7 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
 {
     public async Task<LearningItem> ReviewLearningItemAsync(Guid id, ReviewLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {
+        var started = Stopwatch.GetTimestamp();
         LearningService.ValidateReview(request);
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -21,6 +22,12 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         var stamps = await db.Database.SqlQueryRaw<RuntimeDocumentStamp>(
             "SELECT \"Id\", \"Fingerprint\" FROM \"RuntimeDocuments\" WHERE \"Id\"=1 FOR UPDATE").ToListAsync(ct);
         _ = stamps.Single();
+        CoreTelemetry.RuntimeLockWait.Record(Stopwatch.GetElapsedTime(started).TotalSeconds);
+        async Task CommitAsync() {
+            var phase = Stopwatch.GetTimestamp();
+            await tx.CommitAsync(ct);
+            CoreTelemetry.RecordStoragePhase(phase, "runtime.review.commit");
+        }
         var now = clock.GetUtcNow();
         var replayRow = await db.RuntimeLearningRows.AsNoTracking().SingleOrDefaultAsync(
             x => x.Kind == nameof(RuntimeState.Reviews) && x.Id == request.RequestId, ct);
@@ -28,7 +35,7 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
             var replay = JsonSerializer.Deserialize<LearningReview>(replayRow.Json) ?? throw new InvalidDataException("Null persisted review.");
             if (replay.RequestId != replayRow.Id) throw new InvalidDataException("Review dictionary and record identities differ.");
             var result = LearningService.DecideReview(id, request, now, replay, null, null).Result;
-            await tx.CommitAsync(ct); return result;
+            await CommitAsync(); return result;
         }
         var cardRow = await db.RuntimeLearningRows.SingleOrDefaultAsync(x => x.Kind == nameof(RuntimeState.Learning) && x.Id == id, ct);
         Guard.Require(cardRow is not null, 404, "Learning item not found.");
@@ -50,7 +57,7 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
             control!.NextTrainingSequence = change.NextSequence!.Value;
         }
         await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+        await CommitAsync();
         CoreTelemetry.RuntimeWrites.Add(1);
         return change.Result;
     }
