@@ -23,3 +23,13 @@
 - Commute audio windows (the capacity model has no commute block kind yet).
 - Briefing top three and Today view (PF-09).
 - Any calendar write, which still needs exact owner approval.
+
+## Candidate adapter (`ForgePlanCandidates`)
+
+`ForgePlanCandidates.Build(dayEnd, learning, goals)` is a pure function from existing canonical records to allocator candidates. The caller materialises cards and goals inside its own D2 boundary. It creates no store, history or identity and decides no capacity; the result type refuses JSON like the plan.
+
+- **Due recall:** cards due by `dayEnd` become one `Review` block per existing `LearningDomain` (`review.<domain>`), 2 minutes per card, clamped to 5–45 minutes. `DueBy` is the earliest due card.
+- **Goal work:** only `Active` goals with a Forge `DivisionKey` and `NextReviewAt <= dayEnd` (`goal.<id>`). Untagged goals stay JARVIS-only. CAREER becomes `InterviewPractice`; the optional RELATIONSHIPS division becomes `Optional`; the rest are `Practice`. Priority is days to deadline (0–100, nearer first); `DueBy` is the deadline (a soft sort). Session lengths default from Addendum V2 §3 cadences and are editable starting points, not obligations.
+- **Limit:** at most 64 candidates. Reviews are added first, so the limit never drops due recall for goal work; `Omitted` reports what was left out.
+
+Still open: the PF-08 caller that resolves fresh capacity and current quiet-hours policy, fences revision and epoch, applies the daily replan limit and persists or briefs the plan.
