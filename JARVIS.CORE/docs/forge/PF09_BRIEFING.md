@@ -10,3 +10,9 @@
 - **No paid AI:** cards come from the existing indexed learning read; goals from runtime state. No provider call, no write.
 
 Not in this slice: the PF-08 caller that produces a capacity-backed plan (so today it always speaks suggestions), the evening and weekly review projections, and the browser Today view.
+
+## Shared Today service and browser endpoint
+
+`ForgeTodayService` builds the block once for both consumers, so speech and screen can't disagree. It uses the newest live programme, cards due by the end of the programme's **local** day, and runtime goals. The records `ForgeBriefing`/`ForgeBriefingItem` live in `Jarvis.Contracts` because they're now returned over HTTP. They hold no private capacity and protected goal titles are already redacted.
+
+`GET /api/forge/today` is owner-only and Forge-gated (404 when off) and returns 404 until a programme exists. It's read-only: no write, provider call or plan. Android stays audio-only (`AGENTS.md`); this is the browser surface.

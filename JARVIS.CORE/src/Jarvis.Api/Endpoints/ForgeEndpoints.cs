@@ -29,5 +29,8 @@ public static class ForgeEndpoints
         // PF-02: installs division templates as registry drafts only; activation stays the owner's approval step.
         var divisions = app.MapGroup(Root + "/divisions").WithTags("Forge").RequireAuthorization(CorePolicies.Owner);
         divisions.MapPost("/drafts", (InstallForgeDivisionsRequest request, ICommandHandler<InstallForgeDivisionDrafts, IReadOnlyList<ForgeDivisionDraft>> h, CancellationToken ct) => h.HandleAsync(new(request), ct));
+        // PF-09: read-only Today view; the same block the spoken briefing uses, with protected goal titles redacted.
+        app.MapGet(Root + "/today", (IQueryHandler<GetForgeToday, ForgeBriefing> h, CancellationToken ct) => h.HandleAsync(new(), ct))
+            .WithTags("Forge").RequireAuthorization(CorePolicies.Owner);
     }
 }

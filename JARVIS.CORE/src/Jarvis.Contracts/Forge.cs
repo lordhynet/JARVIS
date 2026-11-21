@@ -35,3 +35,12 @@ public sealed record ForgeCalendarView(
 public sealed record InstallForgeDivisionsRequest(bool IncludeOptional = false);
 /// <summary>Status is "drafted", "existing" (left untouched) or "skipped-optional".</summary>
 public sealed record ForgeDivisionDraft(string Key, string Code, string Status, bool Protected, bool Optional, DomainRiskClass? Risk);
+
+/// <summary>One Forge "today" item. Labels never contain protected-division goal titles.</summary>
+public sealed record ForgeBriefingItem(string Label, int Minutes, string Why);
+/// <summary>
+/// The Forge "today" block shared by the spoken briefing and the browser Today view (PF-09). <c>Scheduled</c> is true
+/// only when a capacity-backed plan placed the items; otherwise they are suggestions and capacity is never assumed.
+/// </summary>
+public sealed record ForgeBriefing(string Status, int Day, int Days, string? Phase, int? StartsInDays, bool Scheduled,
+    IReadOnlyList<ForgeBriefingItem> Top, int DueReviews);

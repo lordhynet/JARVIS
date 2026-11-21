@@ -1,16 +1,32 @@
 using Jarvis.Contracts;
+using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Orchestrator.Forge;
 
-/// <summary>One spoken top-three item. Labels never contain protected-division goal titles.</summary>
-public sealed record ForgeBriefingItem(string Label, int Minutes, string Why);
-
 /// <summary>
-/// The Forge part of the existing spoken briefing (PF-09). <c>Scheduled</c> is true only when a real capacity-backed
-/// plan placed the items; otherwise they are suggestions in priority order and capacity stays unknown, never assumed.
+/// Builds the Forge "today" block once for both the spoken briefing and the owner's browser Today view, so the two
+/// can never disagree. Read-only: newest live programme, cards due by the end of the programme's local day, runtime
+/// goals. Returns null when Forge is disabled or no programme exists. No provider call, no write.
 /// </summary>
-public sealed record ForgeBriefing(string Status, int Day, int Days, string? Phase, int? StartsInDays, bool Scheduled,
-    IReadOnlyList<ForgeBriefingItem> Top, int DueReviews);
+public sealed class ForgeTodayService(IForgeAvailability feature, IForgeProgrammeReader programmes, IRuntimeReader runtime)
+{
+    public bool Enabled => feature.Enabled;
+
+    public async Task<ForgeBriefing?> BuildAsync(DateTimeOffset now, CancellationToken ct = default)
+    {
+        if (!feature.Enabled) return null;
+        var programme = (await programmes.ListAsync(ForgeProgrammePolicy.OwnerScope, ct)).FirstOrDefault();
+        if (programme is null) return null;
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
+        var local = TimeZoneInfo.ConvertTime(now, zone).Date.AddDays(1);
+        var endOfDay = new DateTimeOffset(local, zone.GetUtcOffset(local));
+        var calendar = ForgeProgrammePolicy.View(programme, now).Calendar;
+        var dueToday = await runtime.ReadLearningItemsAsync(true, endOfDay, ct);
+        var goals = await runtime.ReadAsync<IReadOnlyCollection<PersonalGoal>>(s => s.Goals.Values.ToArray(), ct);
+        var candidates = ForgePlanCandidates.Build(endOfDay, dueToday, goals);
+        return ForgeBriefingProjection.Build(programme, calendar, candidates, goals, dueToday.Count);
+    }
+}
 
 /// <summary>
 /// PF-09 core: a pure projection from the programme calendar, the PF-08 candidates and (optionally) a day plan into a

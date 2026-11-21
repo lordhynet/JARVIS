@@ -105,7 +105,27 @@ public sealed class ForgeBriefingTests
 
     private static VoiceBriefingService Service(JarvisApiFactory host, IReadOnlyList<CalendarEntry> entries, bool forge, params ForgeProgramme[] programmes) =>
         new(new Calendars(entries), new NoDue(), new NoCommands(), host.Services.GetRequiredService<IRuntimeReader>(), new Clock(Now),
-            null, new Availability(forge), new Programmes(programmes));
+            null, new ForgeTodayService(new Availability(forge), new Programmes(programmes), host.Services.GetRequiredService<IRuntimeReader>()));
+
+    [Fact]
+    public async Task Today_endpoint_is_owner_only_forge_gated_and_matches_the_briefing_shape()
+    {
+        using (var disabled = new ForgeApiFactory(enabled: false)) {
+            using var owner = disabled.Owner();
+            using var response = await owner.GetAsync("/api/forge/today");
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+        }
+        using var factory = new ForgeApiFactory(); using var client = factory.Owner();
+        using (var none = await client.GetAsync("/api/forge/today"))
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, none.StatusCode); // no programme yet
+        await LifeScenarioTests.Post<ForgeProgramme>(client, "/api/forge/programmes", new CreateForgeProgrammeRequest(Guid.NewGuid()));
+        var today = (await System.Net.Http.Json.HttpClientJsonExtensions.GetFromJsonAsync<ForgeBriefing>(client, "/api/forge/today", LifeScenarioTests.Json))!;
+        // The default test clock is 30 November, the day before the programme starts.
+        Assert.Equal("not-started", today.Status); Assert.Equal(1, today.StartsInDays); Assert.Empty(today.Top);
+        using var anonymous = factory.CreateClient();
+        using var refused = await anonymous.GetAsync("/api/forge/today");
+        Assert.False(refused.IsSuccessStatusCode);
+    }
 
     [Fact]
     public async Task Briefing_is_unchanged_without_forge_and_adds_a_redacted_block_when_enabled()
