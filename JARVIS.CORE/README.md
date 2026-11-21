@@ -20,12 +20,13 @@ Requires .NET 11 SDK (11.0.100 or newer within .NET 11) and Docker Desktop for P
 # Do not overwrite an existing appsettings.json.
 Copy-Item appsettings.example.json appsettings.json
 # Set Jarvis.ApiKey and Database.Password in appsettings.json before starting.
+.\scripts\migrate-schema.ps1
 .\scripts\start-server.ps1
 ```
 
 Open [the companion](http://localhost:5185), enter `Jarvis.ApiKey` from the private, Git-ignored root `appsettings.json`, and create a conversation. Preserve `Database.Password` after initializing the database volume. The server reads this JSON file as its sole deployment configuration; `.env`, user-secrets, environment-specific JSON and environment overrides are not runtime configuration sources.
 
-For local Windows execution, use the .NET 11 SDK and `dotnet run --no-launch-profile --project src/Jarvis.Api`. It uses the same root settings, including `Server.Windows`, and connects to the configured exposed PostgreSQL port. Cloud integrations remain unavailable until their keys are configured.
+For local Windows execution, use the .NET 11 SDK. With PostgreSQL ready, writers stopped and the backup verified, run `dotnet run --no-launch-profile --project src/Jarvis.Api -- --migrate-only`, then `dotnet run --no-launch-profile --project src/Jarvis.Api`. Both use the same root settings, including `Server.Windows`, and the configured exposed PostgreSQL port. See [schema compatibility](docs/SCHEMA_COMPATIBILITY.md). Cloud integrations remain unavailable until their keys are configured.
 
 Open the HTTP address above, not `index.html` directly from File Explorer: the stylesheet,
 JavaScript and API are served together. PostgreSQL uses local port 15432 to avoid other
@@ -108,9 +109,11 @@ Keep the existing private `appsettings.json`, including its API key and database
 .\scripts\restore-database.ps1 -BackupPath '<backup.dump>' -NewDatabaseName jarvis_restore_check
 ```
 
+Before a schema upgrade, stop all Core writers and verify the backup, then run `scripts/migrate-schema.ps1` with the intended build before starting Core. The script refuses a running API container in its Compose project; writers outside that project remain the operator's responsibility. Ordinary starts never migrate implicitly.
+
 The API and database ports bind to loopback. For other devices, use a trusted HTTPS reverse proxy/VPN and keep the API key private. The restore script always creates a separate database and fails if that name exists. Inspect restored data before switching the connection string. `docker compose down` preserves data; `docker compose down -v` deletes the volume.
 
-`/health` checks the process; `/health/ready` checks database connectivity. Migrations run during startup. Database commits precede SignalR notifications; there is no durable notification replay. The runtime document serializes updates and is suitable for a personal assistant, not a high-throughput multi-tenant service.
+`/health` checks the process; `/health/ready` checks database connectivity. Startup refuses unknown or pending migrations; the designated migration-only command applies schema changes separately. Database commits precede SignalR notifications; there is no durable notification replay. The runtime document serializes updates and is suitable for a personal assistant, not a high-throughput multi-tenant service.
 
 Custom clients can use the [API protocol reference](docs/API.md).
 

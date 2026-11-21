@@ -38,6 +38,9 @@ if (args.Contains("--health-probe", StringComparer.Ordinal))
     catch { Environment.ExitCode = 1; }
     return;
 }
+// Explicit operator command; strip the valueless flag before configuration parsing.
+var migrateOnly = args.Contains("--migrate-only", StringComparer.Ordinal);
+if (migrateOnly) args = args.Where(x => x != "--migrate-only").ToArray();
 var builder = WebApplication.CreateBuilder(args);
 var testing = builder.Environment.IsEnvironment("Testing");
 var fixtureOverrides = testing ? builder.Configuration.AsEnumerable().ToList() : null;
@@ -255,20 +258,15 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
 {
     await using var db = await app.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>()
         .CreateDbContextAsync();
-    if (app.Configuration.GetValue("Jarvis:MigrateOnStartup", true)) {
-        await db.Database.OpenConnectionAsync();
-        try {
-            // Database-scoped advisory lock also covers first-host migration history creation.
-            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_lock(746271590)");
-            try { await db.Database.MigrateAsync(); }
-            finally { await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_unlock(746271590)"); }
-        } finally { await db.Database.CloseConnectionAsync(); }
-    } else Guard.Require(!(await db.Database.GetPendingMigrationsAsync()).Any(), 503, "Run the designated migrator before starting this Core host.");
+    if (migrateOnly) await PostgresSchemaCompatibility.MigrateAsync(db);
+    else await PostgresSchemaCompatibility.RequireCurrentAsync(db);
 }
 else
 {
+    Guard.Require(!migrateOnly, 503, "The designated migrator requires PostgreSQL storage.");
     app.Logger.LogWarning("InMemory storage selected. Sessions will be lost when the API stops.");
 }
+if (migrateOnly) { await app.DisposeAsync(); return; }
 
 var startedAt = DateTimeOffset.UtcNow;
 var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";

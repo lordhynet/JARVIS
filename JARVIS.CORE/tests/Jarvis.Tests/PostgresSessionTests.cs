@@ -138,7 +138,7 @@ public sealed partial class PostgresSessionTests
     {
         public string ConnectionString => connection;
 
-        public static async Task<TestDatabase> CreateAsync()
+        public static async Task<TestDatabase> CreateAsync(bool initializeSchema = true)
         {
             var admin = Environment.GetEnvironmentVariable("JARVIS_TEST_POSTGRES")!;
             var name = "jarvis_test_" + Guid.NewGuid().ToString("N");
@@ -146,10 +146,19 @@ public sealed partial class PostgresSessionTests
             await db.OpenAsync();
             await using var command = new NpgsqlCommand($"CREATE DATABASE \"{name}\"", db);
             await command.ExecuteNonQueryAsync();
-            return new TestDatabase(admin, name, new NpgsqlConnectionStringBuilder(admin)
+            var database = new TestDatabase(admin, name, new NpgsqlConnectionStringBuilder(admin)
             {
                 Database = name, Pooling = false
             }.ConnectionString);
+            try {
+                if (initializeSchema) {
+                    await using var schema = new SessionDbContext(new DbContextOptionsBuilder<SessionDbContext>()
+                        .UseNpgsql(database.ConnectionString).Options);
+                    await PostgresSchemaCompatibility.MigrateAsync(schema);
+                }
+                return database;
+            }
+            catch { await database.DisposeAsync(); throw; }
         }
 
         public async ValueTask DisposeAsync()
