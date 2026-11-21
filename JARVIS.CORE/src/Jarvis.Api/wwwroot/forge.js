@@ -38,6 +38,14 @@ export function initForgeToday({ api, node, button }) {
     for (const d of week.divisions) list.append(node('li', `${d.code}: ${d.practised ? 'recorded practice' : 'no recorded practice'}${d.hasActiveGoal ? ' · current active goal' : ''}`, 'list-item'));
     if (week.divisions.length) card.append(list);
   }
+  // PF-09 evening review: the next day's suggestions (never a schedule until capacity is set).
+  function drawTomorrow(tomorrow) {
+    if (!tomorrow || !tomorrow.top.length) return;
+    card.append(node('h3', `Tomorrow · day ${tomorrow.day} of ${tomorrow.days}`));
+    const list = node('ol', '', 'list');
+    for (const item of tomorrow.top) list.append(node('li', `${item.label} · ${item.minutes} min · ${item.why}`, 'list-item'));
+    card.append(list);
+  }
   async function load() {
     const token = ++generation;
     try {
@@ -45,6 +53,7 @@ export function initForgeToday({ api, node, button }) {
       if (token !== generation) return; draw(today);
       try { const week = await api('/forge/week'); if (token === generation) drawWeek(week); }
       catch { if (token === generation) card.append(node('p', 'Weekly summary is unavailable. Reload to retry.', 'muted')); }
+      try { const evening = await api('/forge/evening'); if (token === generation) drawTomorrow(evening.tomorrow); } catch { /* evening view is optional */ }
     } catch (error) {
       // Forge is off by default, and 404 until a programme exists: show a calm state, not an error banner.
       if (token === generation) draw(null, error?.status === 404
@@ -54,4 +63,5 @@ export function initForgeToday({ api, node, button }) {
   }
   return { load, clear() { generation++; card.replaceChildren(); } };
 }
+
 

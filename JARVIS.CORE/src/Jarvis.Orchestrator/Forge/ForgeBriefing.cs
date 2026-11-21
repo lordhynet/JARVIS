@@ -32,14 +32,32 @@ public sealed class ForgeTodayService(IForgeAvailability feature, IForgeProgramm
     /// J4: the last seven local days ending today, in the programme's time zone. Reads existing canonical records once
     /// in a single runtime callback. Cold and learning hydration remains a cost of this on-demand view.
     /// </summary>
-    public async Task<ForgeWeek?> BuildWeekAsync(DateTimeOffset now, CancellationToken ct = default)
+    public Task<ForgeWeek?> BuildWeekAsync(DateTimeOffset now, CancellationToken ct = default) => BuildSpanAsync(now, 7, ct);
+
+    /// <summary>
+    /// PF-09 evening review: today's evidence (the same counting as the weekly summary over one local day) and
+    /// tomorrow's top three suggestions. Read-only; no plan, write or provider call.
+    /// </summary>
+    public async Task<ForgeEvening?> BuildEveningAsync(DateTimeOffset now, CancellationToken ct = default)
+    {
+        var today = await BuildSpanAsync(now, 1, ct);
+        if (today is null) return null;
+        var programme = (await programmes.ListAsync(ForgeProgrammePolicy.OwnerScope, ct)).FirstOrDefault();
+        if (programme is null) return null;
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
+        var tomorrow = today.To.AddDays(1).ToDateTime(TimeOnly.MinValue);
+        var tomorrowBriefing = await BuildAsync(new DateTimeOffset(tomorrow, zone.GetUtcOffset(tomorrow)), ct);
+        return tomorrowBriefing is null ? null : new ForgeEvening(today, tomorrowBriefing);
+    }
+
+    private async Task<ForgeWeek?> BuildSpanAsync(DateTimeOffset now, int days, CancellationToken ct)
     {
         if (!feature.Enabled) return null;
         var programme = (await programmes.ListAsync(ForgeProgrammePolicy.OwnerScope, ct)).FirstOrDefault();
         if (programme is null) return null;
         var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, zone).DateTime);
-        var fromDate = today.AddDays(-6);
+        var fromDate = today.AddDays(1 - days);
         DateTimeOffset Start(DateOnly day) { var local = day.ToDateTime(TimeOnly.MinValue); return new(local, zone.GetUtcOffset(local)); }
         // Publish counts only; do not carry private answers, review payloads or goal titles outside the callback.
         return await runtime.ReadAsync(s => ForgeWeeklySummary.Build(Start(fromDate), Start(today.AddDays(1)), fromDate, today,

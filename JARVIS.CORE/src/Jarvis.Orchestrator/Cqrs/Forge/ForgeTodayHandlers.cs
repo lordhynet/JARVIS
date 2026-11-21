@@ -33,3 +33,18 @@ public sealed class ForgeWeekQueries(ForgeTodayService today, IForgeAvailability
         return week!;
     }
 }
+
+public sealed record GetForgeEvening : IQuery<ForgeEvening>;
+
+/// <summary>The owner's evening review (PF-09): the day's evidence and the next day's suggestions; read-only.</summary>
+public sealed class ForgeEveningQueries(ForgeTodayService today, IForgeAvailability feature, TimeProvider clock) :
+    IQueryHandler<GetForgeEvening, ForgeEvening>
+{
+    public async Task<ForgeEvening> HandleAsync(GetForgeEvening query, CancellationToken ct = default)
+    {
+        ForgeProgrammePolicy.RequireEnabled(feature);
+        var evening = await today.BuildEveningAsync(clock.GetUtcNow(), ct);
+        Guard.Require(evening is not null, 404, "Create a Forge programme first.");
+        return evening!;
+    }
+}

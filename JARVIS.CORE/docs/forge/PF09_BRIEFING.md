@@ -26,3 +26,7 @@ The optional pure plan projection checks local date, programme/capacity revision
 The existing Daily briefing tab loads the read-only panel independently of Travel. It uses the same Today endpoint, renders labels as text, and keeps no Forge data in browser storage. A 404 shows the calm off/no-programme state; other HTTP/network failures clear old suggestions and offer a reload without displaying private server error text. Unscheduled items are suggestions, with no assertion about whether capacity exists. The programme calendar ending does not claim achieved mastery or completion of its activities.
 
 Overlapping reloads publish only their latest result. Disconnect and erasure clear the panel and invalidate pending loads; the tab handler also checks the connection generation before starting subsequent module work or showing late notices. Synthetic browser tests cover delayed Travel across disconnect/erasure, stale successes/failures, reload ordering, retry, safe text rendering and real HTTP status propagation on desktop and mobile layouts. These checks establish browser behavior, not app installation or physical-device acceptance.
+
+## Evening review
+
+`GET /api/forge/evening` (owner, Forge-gated) returns `ForgeEvening`: **Today** is the weekly-summary counting over the current local day (counts only, unknowns null), and **Tomorrow** is the same Today block computed for the next local day (suggestions; cards due by the end of tomorrow). The browser Today panel shows tomorrow's top three. Read-only: no plan, write or provider call.

@@ -54,6 +54,8 @@ public static class CqrsRegistration
         Query<Jarvis.Orchestrator.Cqrs.Forge.GetForgeToday, ForgeBriefing, Jarvis.Orchestrator.Cqrs.Forge.ForgeTodayQueries>(services);
         services.AddSingleton<Jarvis.Orchestrator.Cqrs.Forge.ForgeWeekQueries>();
         Query<Jarvis.Orchestrator.Cqrs.Forge.GetForgeWeek, ForgeWeek, Jarvis.Orchestrator.Cqrs.Forge.ForgeWeekQueries>(services);
+        services.AddSingleton<Jarvis.Orchestrator.Cqrs.Forge.ForgeEveningQueries>();
+        Query<Jarvis.Orchestrator.Cqrs.Forge.GetForgeEvening, ForgeEvening, Jarvis.Orchestrator.Cqrs.Forge.ForgeEveningQueries>(services);
         services.AddSingleton<TravelQueries>(); services.AddSingleton<TravelCommands>();
         Query<ListTravelRoutes, IReadOnlyList<TravelRoute>, TravelQueries>(services);
         Query<GetTravelCatalogue, IReadOnlyList<TravelLine>, TravelQueries>(services);

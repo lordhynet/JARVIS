@@ -35,5 +35,8 @@ public static class ForgeEndpoints
         // J4: read-only weekly summary; counts only, unknowns stay null.
         app.MapGet(Root + "/week", (IQueryHandler<GetForgeWeek, ForgeWeek> h, CancellationToken ct) => h.HandleAsync(new(), ct))
             .WithTags("Forge").RequireAuthorization(CorePolicies.Owner);
+        // PF-09 evening review: the day's evidence and the next day's suggestions; read-only.
+        app.MapGet(Root + "/evening", (IQueryHandler<GetForgeEvening, ForgeEvening> h, CancellationToken ct) => h.HandleAsync(new(), ct))
+            .WithTags("Forge").RequireAuthorization(CorePolicies.Owner);
     }
 }

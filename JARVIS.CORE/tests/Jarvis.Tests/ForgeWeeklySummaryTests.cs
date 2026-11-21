@@ -56,6 +56,30 @@ public sealed class ForgeWeeklySummaryTests
     }
 
     [Fact]
+    public async Task Evening_review_counts_today_and_suggests_tomorrow_from_programme_day_one()
+    {
+        using (var disabled = new ForgeApiFactory(enabled: false)) {
+            using var owner = disabled.Owner();
+            using var off = await owner.GetAsync("/api/forge/evening");
+            Assert.Equal(HttpStatusCode.NotFound, off.StatusCode);
+        }
+        using var factory = new ForgeApiFactory(); using var client = factory.Owner();
+        await LifeScenarioTests.Post<ForgeProgramme>(client, "/api/forge/programmes", new CreateForgeProgrammeRequest(Guid.NewGuid()));
+        // Test clock: 30 November 12:00, the day before the programme starts.
+        await LifeScenarioTests.Post<LearningItem>(client, "/api/learning", new CreateLearningRequest(LearningDomain.LeetCode, "Two sum", "Hash map"));
+        var now = DateTimeOffset.Parse("2026-11-30T12:00:00Z");
+        await LifeScenarioTests.Post<PersonalGoal>(client, "/api/goals", new SaveGoalRequest(Guid.NewGuid(), null, "Ship the payment API", "Brief",
+            "practice-reminder", false, now.AddHours(20), now.AddDays(10), DivisionKey: "forge.tech"));
+
+        var evening = (await client.GetFromJsonAsync<ForgeEvening>("/api/forge/evening", LifeScenarioTests.Json))!;
+        Assert.Equal(new DateOnly(2026, 11, 30), evening.Today.From); Assert.Equal(new DateOnly(2026, 11, 30), evening.Today.To);
+        Assert.Equal(0, evening.Today.Reviews);
+        Assert.Equal("active", evening.Tomorrow.Status); Assert.Equal(1, evening.Tomorrow.Day);
+        Assert.Equal(new[] { "Algorithms review", "TECH: Ship the payment API" }, evening.Tomorrow.Top.Select(x => x.Label).ToArray());
+        Assert.False(evening.Tomorrow.Scheduled);
+    }
+
+    [Fact]
     public async Task Week_endpoint_is_owner_only_forge_gated_and_covers_seven_local_days()
     {
         using (var disabled = new ForgeApiFactory(enabled: false)) {
