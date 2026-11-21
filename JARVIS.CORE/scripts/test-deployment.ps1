@@ -1,5 +1,42 @@
-param([int]$Port = 5198, [switch]$LiveTransit)
+param([int]$Port = 5198, [switch]$LiveTransit,
+    [ValidatePattern('^jarvis-verify-[0-9a-f]{10}$')][string]$CleanupProject = '')
 $ErrorActionPreference = 'Stop'
+if ($CleanupProject) {
+    if ($LiveTransit -or $PSBoundParameters.ContainsKey('Port')) { throw 'Cleanup-only mode cannot run a rehearsal.' }
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $directory = [IO.Path]::GetFullPath((Join-Path $temporaryRoot $CleanupProject))
+    $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if (![string]::Equals([IO.Path]::GetDirectoryName($directory), $temporaryRoot, $comparison)) { throw 'Verification directory is outside the temporary root.' }
+    if (!(Test-Path -LiteralPath $directory)) { Write-Output "No retained verification settings at $directory"; return }
+    $item = Get-Item -LiteralPath $directory -Force
+    if (!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Refusing a linked or non-directory verification path.' }
+    $files = @()
+    foreach ($name in @('appsettings.json','restored-appsettings.json')) {
+        $candidate = Join-Path $directory $name
+        if (Test-Path -LiteralPath $candidate) {
+            $file = Get-Item -LiteralPath $candidate -Force
+            if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Refusing linked or non-file verification settings.' }
+            $files += $file.FullName
+        }
+    }
+    if (!$files.Count) { Write-Output "No retained verification settings at $directory"; return }
+    $marker = Join-Path $directory 'verification-owner.json'
+    if (!(Test-Path -LiteralPath $marker -PathType Leaf)) { throw 'Verification ownership marker missing; no settings removed.' }
+    $markerFile = Get-Item -LiteralPath $marker -Force
+    if (($markerFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $markerFile.Length -gt 4096) { throw 'Invalid verification ownership marker; no settings removed.' }
+    try { $ownership = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw 'Invalid verification ownership marker; no settings removed.' }
+    if ($ownership.version -ne 1 -or $ownership.project -cne $CleanupProject -or $ownership.kind -cne 'jarvis-verification-fixture') {
+        throw 'Verification ownership marker mismatch; no settings removed.'
+    }
+    $containers = @(& docker ps -aq --filter ('label=com.docker.compose.project=' + $CleanupProject))
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect verification containers. Settings retained at $directory" }
+    if ($containers.Count) { throw "Verification containers still exist. Settings retained at $directory" }
+    foreach ($file in $files) { Remove-Item -LiteralPath $file -Force }
+    Remove-Item -LiteralPath $marker -Force
+    Write-Output "Removed retained verification settings from $directory"
+    return
+}
 $project = 'jarvis-verify-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
 $previous = @{}
 foreach ($name in @('JARVIS_VERIFY_DB_PASSWORD','JARVIS_VERIFY_API_KEY','JARVIS_VERIFY_PORT','JARVIS_VERIFY_SETTINGS_PATH','COMPOSE_DISABLE_ENV_FILE')) { $previous[$name] = [Environment]::GetEnvironmentVariable($name) }
@@ -12,8 +49,10 @@ $composeArgs = @('compose','-f','compose.verify.yaml','-p',$project)
 $checks = [System.Collections.Generic.List[string]]::new()
 $report = $null
 Push-Location (Split-Path $PSScriptRoot -Parent)
-$fixtureDirectory = Join-Path $env:TEMP $project
+$fixtureDirectory = Join-Path ([IO.Path]::GetTempPath()) $project
 New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+$ownershipMarker = Join-Path $fixtureDirectory 'verification-owner.json'
+@{version=1;project=$project;kind='jarvis-verification-fixture'} | ConvertTo-Json -Compress | Set-Content -LiteralPath $ownershipMarker
 $fixturePath = Join-Path $fixtureDirectory 'appsettings.json'
 $restoredFixturePath = Join-Path $fixtureDirectory 'restored-appsettings.json'
 $fixture = Get-Content appsettings.example.json -Raw | ConvertFrom-Json
@@ -150,7 +189,7 @@ try {
         & docker @composeArgs down --volumes
         $cleanupFailed = $LASTEXITCODE -ne 0
         if (!$cleanupFailed) {
-            foreach ($path in @($fixturePath,$restoredFixturePath)) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
+            foreach ($path in @($fixturePath,$restoredFixturePath,$ownershipMarker)) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
         }
         if ($null -ne $report) {
             $report.cleanup = if ($cleanupFailed) { 'Failed' } else { 'Passed' }
@@ -162,5 +201,5 @@ try {
         foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
         Pop-Location
     }
-    if ($cleanupFailed) { throw 'Synthetic project cleanup failed; generated settings retained for recovery.' }
+    if ($cleanupFailed) { throw "Synthetic project cleanup failed. Settings retained at $fixtureDirectory. After its containers are removed, run scripts/test-deployment.ps1 -CleanupProject $project" }
 }

@@ -99,6 +99,8 @@ npm run test:browser
 
 [Verification and live scenarios](docs/TESTING.md) distinguish automated, simulated-provider, live-service and physical-device checks. Database tests create randomly named test databases and drop only those databases. The deployment script creates a random Compose project, then removes only its own containers and test volume. Native test clusters are stopped and their logs retained in the temporary directory.
 
+If verification cleanup fails, use the reported project/path and [retained fixture cleanup](docs/VERIFICATION_CLEANUP.md); the cleanup-only flag preserves backups and refuses active or remaining containers.
+
 ## Deploy and back up
 
 Keep the existing private `appsettings.json`, including its API key and database password, then:
