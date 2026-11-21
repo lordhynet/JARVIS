@@ -189,8 +189,16 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
   });
   async function loadStories() {
     stories = await api('/stories'); storyList.replaceChildren();
+    // Deterministic readiness checklist (no AI); optional, so a failure never blocks the Story Bank.
+    let readiness = new Map(); try { readiness = new Map((await api('/stories/readiness')).map(r => [r.storyId, r])); } catch { /* optional */ }
     stories.forEach(story => {
       const card = el('div', '', storyList, 'list-item'); el('h3', story.content.title, card); el('small', `${story.content.companyProject} · version ${story.version}`, card);
+      const ready = readiness.get(story.id);
+      if (ready && ready.version === story.version) {
+        el('p', `Interview readiness ${ready.score}% · ${ready.level}${ready.followUps.length ? ` · next: ${ready.followUps[0]}` : ''}`, card);
+        const details = el('details', '', card); el('summary', 'Readiness checklist', details);
+        for (const check of ready.checks) el('p', `${check.status === 'ready' ? '✓' : check.status === 'weak' ? '~' : '✗'} ${check.label}${check.status === 'ready' ? '' : ` · ${check.advice}`}`, details);
+      }
       action(card, 'Edit story', () => { editStory = story; for (const [key, input] of storyFields) input.value = Array.isArray(story.content[key]) ? story.content[key].join('\n') : story.content[key] || ''; storySave.textContent = `Save changes · v${story.version}`; storyForm.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
       action(card, 'Delete story', async () => {
         if (!confirm('Delete this story and its linked coaching answers?')) return;
