@@ -52,6 +52,7 @@ public sealed partial class PostgresSessionTests
                 INSERT INTO "Sessions" ("Id","Activity","Title","Status","CreatedAt","UpdatedAt")
                 VALUES ({id},0,'Existing milestone two session',0,{now},{now})
                 """);
+            await PostgresSchemaCompatibility.MigrateAsync(db);
         }
         using var host = new PostgresApiFactory(database.ConnectionString); using var client = host.AuthorisedClient();
         var session = await client.GetFromJsonAsync<ConversationSession>($"/api/sessions/{id}", Json);

@@ -34,7 +34,13 @@ function Post([string]$Path, $Body) {
     Invoke-RestMethod "$base/api$Path" -Headers $headers -Method Post -ContentType 'application/json' -Body ($Body | ConvertTo-Json -Depth 10) -TimeoutSec 30
 }
 try {
-    & docker @composeArgs up -d --build --wait
+    & docker @composeArgs up -d --wait postgres
+    if ($LASTEXITCODE -ne 0) { throw 'Isolated PostgreSQL start failed.' }
+    & docker @composeArgs build api
+    if ($LASTEXITCODE -ne 0) { throw 'Isolated API/migrator image build failed.' }
+    & docker @composeArgs run --rm --no-deps api --migrate-only
+    if ($LASTEXITCODE -ne 0) { throw 'Isolated explicit schema migration failed.' }
+    & docker @composeArgs up -d --wait api
     if ($LASTEXITCODE -ne 0) { throw 'Container build/start failed.' }
     Wait-Ready
     $checks.Add('Container build and database readiness')

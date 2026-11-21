@@ -11,6 +11,8 @@ Keep the existing database password when restarting or upgrading.
 
 Run these commands from the repository root:
 
+For first initialization or a schema upgrade, use [the designated migrator](SCHEMA_COMPATIBILITY.md): stop all writers, verify the backup, then run `scripts/migrate-schema.ps1` with the intended build. It checks for a running API container in its Compose project and does not start Core. Normal startup refuses pending or unknown migrations; `MigrateOnStartup=true` no longer bypasses this check. Do not run a live migration without the existing release/owner gates.
+
 ```powershell
 # Start, or rebuild after changing application code
 ./scripts/start-server.ps1

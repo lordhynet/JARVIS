@@ -65,6 +65,9 @@ public sealed class RuntimeMeasurementHarnessTests
         };
         try
         {
+            await using (var schema = new SessionDbContext(new DbContextOptionsBuilder<SessionDbContext>()
+                .UseNpgsql(databaseConnection.ConnectionString).Options))
+                await PostgresSchemaCompatibility.MigrateAsync(schema);
             await MeasureDatabaseAsync(databaseConnection.ConnectionString, outputPath, voiceProfile, recordingLoad);
         }
         finally

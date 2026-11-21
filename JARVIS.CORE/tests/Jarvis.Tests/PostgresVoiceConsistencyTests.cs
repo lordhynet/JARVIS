@@ -28,6 +28,7 @@ public sealed partial class PostgresSessionTests
                 VALUES ({legacyId}, 'legacy-fixture', 'homeassistant.turn', '1.0.0', CAST({emptyConstraints} AS jsonb),
                     'old-hash', {now}, {now.AddDays(1)})
                 """);
+            await PostgresSchemaCompatibility.MigrateAsync(legacy);
         }
         var request = DeviceGrantTests.GrantRequest();
         Guid grantId;
@@ -193,6 +194,7 @@ public sealed partial class PostgresSessionTests
                     'previous-hash', {now}, {now.AddDays(1)}, 'fixture-owner', 'Stale grant')
                 """);
             await before.SaveChangesAsync();
+            await PostgresSchemaCompatibility.MigrateAsync(before);
         }
 
         using var host = new PostgresApiFactory(database.ConnectionString);
