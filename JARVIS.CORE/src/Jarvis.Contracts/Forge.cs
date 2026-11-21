@@ -44,3 +44,14 @@ public sealed record ForgeBriefingItem(string Label, int Minutes, string Why);
 /// </summary>
 public sealed record ForgeBriefing(string Status, int Day, int Days, string? Phase, int? StartsInDays, bool Scheduled,
     IReadOnlyList<ForgeBriefingItem> Top, int DueReviews);
+
+/// <summary>One division's evidence in the weekly summary: counts of existing canonical records only, no titles.</summary>
+public sealed record ForgeWeekDivision(string Key, string Code, int Reviews, int TrainingAnswers, int CoachingAnswers, bool HasActiveGoal, bool Practised);
+/// <summary>
+/// J4 weekly summary for the owner (PF-09 base). Coverage is the share of focus divisions (active tagged goals or any
+/// evidence) that have evidence this week; null when there is nothing to judge ("unknown", never 0).
+/// Minutes are not tracked yet, and planned minutes need capacity, so both are null rather than invented.
+/// </summary>
+public sealed record ForgeWeek(DateOnly From, DateOnly To, int Reviews, int TrainingAnswers, int CoachingAnswers,
+    int FocusDivisions, int PractisedDivisions, decimal? Coverage, int? ActualMinutes, int? PlannedMinutes,
+    IReadOnlyList<ForgeWeekDivision> Divisions);

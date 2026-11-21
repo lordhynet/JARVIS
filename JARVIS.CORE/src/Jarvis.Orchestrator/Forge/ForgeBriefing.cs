@@ -27,6 +27,26 @@ public sealed class ForgeTodayService(IForgeAvailability feature, IForgeProgramm
         var candidates = ForgePlanCandidates.Build(endOfDay, dueToday, goals.Where(g => g.NextReviewAt < endOfDay), now);
         return ForgeBriefingProjection.Build(programme, calendar, candidates, goals, dueToday.Length);
     }
+
+    /// <summary>
+    /// J4: the last seven local days ending today, in the programme's time zone. Reads existing canonical records once
+    /// in a single runtime snapshot (this loads the learning unit; acceptable for an on-demand weekly view).
+    /// </summary>
+    public async Task<ForgeWeek?> BuildWeekAsync(DateTimeOffset now, CancellationToken ct = default)
+    {
+        if (!feature.Enabled) return null;
+        var programme = (await programmes.ListAsync(ForgeProgrammePolicy.OwnerScope, ct)).FirstOrDefault();
+        if (programme is null) return null;
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, zone).DateTime);
+        var fromDate = today.AddDays(-6);
+        DateTimeOffset Start(DateOnly day) { var local = day.ToDateTime(TimeOnly.MinValue); return new(local, zone.GetUtcOffset(local)); }
+        var snapshot = await runtime.ReadAsync(s => (
+            Reviews: s.Reviews.Values.ToArray(), Training: s.TrainingAttempts.Values.ToArray(),
+            Coaching: s.CoachingAttempts.Values.ToArray(), Goals: s.Goals.Values.ToArray()), ct);
+        return ForgeWeeklySummary.Build(Start(fromDate), Start(today.AddDays(1)), fromDate, today,
+            snapshot.Reviews, snapshot.Training, snapshot.Coaching, snapshot.Goals);
+    }
 }
 
 /// <summary>

@@ -25,11 +25,23 @@ export function initForgeToday({ api, node, button }) {
     for (const item of today.top) list.append(node('li', `${item.label} · ${item.minutes} min · ${item.why}`, 'list-item'));
     card.append(list);
   }
+  // J4: counts of existing records per division; coverage stays "unknown" when there is nothing to judge.
+  function drawWeek(week) {
+    if (!week) return;
+    card.append(node('h3', 'This week'));
+    const coverage = week.coverage === null || week.coverage === undefined ? 'unknown' : `${Math.round(week.coverage * 100)}%`;
+    card.append(node('p', `${week.from} to ${week.to} · ${week.reviews} reviews · ${week.trainingAnswers} technical answers · ${week.coachingAnswers} coaching answers · coverage ${coverage}`));
+    card.append(node('p', 'Minutes are not tracked yet and planned time needs your capacity, so neither is shown.', 'muted'));
+    const list = node('ul', '', 'list');
+    for (const d of week.divisions) list.append(node('li', `${d.code}: ${d.practised ? 'practised' : 'no evidence yet'}${d.hasActiveGoal ? ' · active goal' : ''}`, 'list-item'));
+    if (week.divisions.length) card.append(list);
+  }
   async function load() {
     const token = ++generation;
     try {
       const today = await api('/forge/today');
-      if (token === generation) draw(today);
+      if (token !== generation) return; draw(today);
+      try { const week = await api('/forge/week'); if (token === generation) drawWeek(week); } catch { /* weekly view is optional */ }
     } catch (error) {
       // Forge is off by default, and 404 until a programme exists: show a calm state, not an error banner.
       if (token === generation) draw(null, error?.status === 404
@@ -39,3 +51,4 @@ export function initForgeToday({ api, node, button }) {
   }
   return { load, clear() { generation++; card.replaceChildren(); } };
 }
+

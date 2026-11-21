@@ -18,3 +18,18 @@ public sealed class ForgeTodayQueries(ForgeTodayService today, IForgeAvailabilit
         return briefing!;
     }
 }
+
+public sealed record GetForgeWeek : IQuery<ForgeWeek>;
+
+/// <summary>Owner's weekly summary (J4): counts of existing records per division; unknowns stay null.</summary>
+public sealed class ForgeWeekQueries(ForgeTodayService today, IForgeAvailability feature, TimeProvider clock) :
+    IQueryHandler<GetForgeWeek, ForgeWeek>
+{
+    public async Task<ForgeWeek> HandleAsync(GetForgeWeek query, CancellationToken ct = default)
+    {
+        ForgeProgrammePolicy.RequireEnabled(feature);
+        var week = await today.BuildWeekAsync(clock.GetUtcNow(), ct);
+        Guard.Require(week is not null, 404, "Create a Forge programme first.");
+        return week!;
+    }
+}

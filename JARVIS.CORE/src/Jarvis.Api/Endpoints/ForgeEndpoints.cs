@@ -32,5 +32,8 @@ public static class ForgeEndpoints
         // PF-09: read-only Today view; the same block the spoken briefing uses, with protected goal titles redacted.
         app.MapGet(Root + "/today", (IQueryHandler<GetForgeToday, ForgeBriefing> h, CancellationToken ct) => h.HandleAsync(new(), ct))
             .WithTags("Forge").RequireAuthorization(CorePolicies.Owner);
+        // J4: read-only weekly summary; counts only, unknowns stay null.
+        app.MapGet(Root + "/week", (IQueryHandler<GetForgeWeek, ForgeWeek> h, CancellationToken ct) => h.HandleAsync(new(), ct))
+            .WithTags("Forge").RequireAuthorization(CorePolicies.Owner);
     }
 }
