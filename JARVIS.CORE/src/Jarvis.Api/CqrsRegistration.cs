@@ -232,6 +232,8 @@ public static class CqrsRegistration
         Query<GetReviewHistory, IReadOnlyList<ReviewEvent>, LearningQueryHandlers>(services);
         Query<ListStories, IReadOnlyList<Story>, StoryQueryHandlers>(services);
         Query<GetStory, Story, StoryQueryHandlers>(services);
+        Query<GetStoryReadiness, StoryReadiness, StoryQueryHandlers>(services);
+        Query<ListStoryReadiness, IReadOnlyList<StoryReadiness>, StoryQueryHandlers>(services);
         Query<ListToolActions, IReadOnlyList<AuditedTool>, ToolQueryHandler>(services);
         Query<ListIntegrations, IReadOnlyList<IntegrationStatus>, IntegrationQueryHandlers>(services);
         Query<GetTransit, IReadOnlyList<TransitLine>, IntegrationQueryHandlers>(services);

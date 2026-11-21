@@ -13,6 +13,11 @@ public static class StoryEndpoints
             handler.HandleAsync(new ListStories(), ct));
         group.MapGet("/{id:guid}", (Guid id, IQueryHandler<GetStory, Story> handler, CancellationToken ct) =>
             handler.HandleAsync(new GetStory(id), ct));
+        // Deterministic interview-readiness checklist (no AI, read-only); the list is least-ready first.
+        group.MapGet("/readiness", (IQueryHandler<ListStoryReadiness, IReadOnlyList<StoryReadiness>> handler, CancellationToken ct) =>
+            handler.HandleAsync(new ListStoryReadiness(), ct));
+        group.MapGet("/{id:guid}/readiness", (Guid id, IQueryHandler<GetStoryReadiness, StoryReadiness> handler, CancellationToken ct) =>
+            handler.HandleAsync(new GetStoryReadiness(id), ct));
         group.MapPost("/", (CreateStoryRequest request, ICommandHandler<CreateStory, Story> handler, CancellationToken ct) =>
             handler.HandleAsync(new CreateStory(request), ct));
         group.MapPut("/{id:guid}", (Guid id, UpdateStoryRequest request, ICommandHandler<UpdateStory, Story> handler, CancellationToken ct) =>
