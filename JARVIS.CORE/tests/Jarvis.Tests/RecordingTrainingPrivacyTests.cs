@@ -49,14 +49,14 @@ internal sealed record RecordingTrainingFixture(Guid Recording, Guid Document, G
         return new(recording, document, question, attempt, correction.RequestId, review, receipt, unrelated, unrelatedAttempt, correction);
     }
     internal void Purge(RuntimeState s) => ImportService.Purge(s, s.ImportedDocuments[Document], At);
-    internal void AssertPurged(RuntimeState s) {
+    internal void AssertPurged(RuntimeState s, long expectedNextSequence = 99) {
         Assert.False(s.Learning.ContainsKey(Question)); Assert.False(s.TrainingBaselines.ContainsKey(Question));
         Assert.False(s.TrainingBaselineReviews.ContainsKey(Question)); Assert.False(s.Reviews.ContainsKey(Review)); Assert.False(s.TrainingManualSequences.ContainsKey(Review));
         var retired = s.TrainingAttempts[Attempt]; Assert.NotNull(retired.DeletedAt); Assert.Empty(retired.Answers); Assert.Empty(retired.Assessments); Assert.Null(retired.CanonicalAssessmentId);
         Assert.Equal(4, retired.Revision); Assert.Equal("", s.TrainingOperations[Operation].Fingerprint); Assert.Contains(Attempt, s.RetiredReasoningScopes);
         Assert.DoesNotContain(s.ProviderResults.Values, x => x.ScopeId == Attempt);
         Assert.Equal(LearningCreationReceipt.Retired, s.CreationReceipts[Receipt].Status); Assert.Null(s.CreationReceipts[Receipt].Result);
-        Assert.Equal(99, s.NextTrainingSequence); Assert.Equal("Unrelated answer", s.Learning[UnrelatedQuestion].Answer);
+        Assert.Equal(expectedNextSequence, s.NextTrainingSequence); Assert.Equal("Unrelated answer", s.Learning[UnrelatedQuestion].Answer);
         Assert.Null(s.TrainingAttempts[UnrelatedAttempt].DeletedAt); Assert.Equal("Keep unrelated answer", s.TrainingAttempts[UnrelatedAttempt].CurrentAnswer);
         Assert.DoesNotContain(Marker, JsonSerializer.Serialize(s));
         Assert.Throws<KeyNotFoundException>(() => TrainingProjection.Rebuild(s, Question)); Assert.False(s.Learning.ContainsKey(Question));

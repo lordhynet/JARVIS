@@ -92,7 +92,7 @@ public sealed class LearningService(IRuntimeStore store, TimeProvider clock)
         if (previous is not null)
         {
             Guard.Require(previous.Event.LearningItemId == id && previous.Event.Rating == request.Rating &&
-                previous.Event.ResponseTime.TotalSeconds == request.ResponseSeconds && previous.Event.TimingSource == timingSource,
+                previous.Event.ResponseTime == TimeSpan.FromSeconds(request.ResponseSeconds) && previous.Event.TimingSource == timingSource,
                 409, "RequestId was used for a different review.");
             return new(previous.Result, null, null, null);
         }
