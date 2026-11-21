@@ -14,6 +14,9 @@ public sealed partial class AgentRuntime
         Guard.Require(request.RequestId != Guid.Empty, 400, "A goal ID and supported workflow are required.");
         Guard.Require(request.Status is GoalStatus.Active or GoalStatus.Paused or GoalStatus.Completed or GoalStatus.Cancelled, 400, "Invalid goal state.");
         Guard.Require(request.Deadline > request.NextReviewAt && request.Deadline <= clock.GetUtcNow().AddYears(5), 400, "Review must precede the goal deadline (within five years).");
+        // A division tag is inert planning metadata: it must name a code-owned Forge division, but grants no
+        // workflow, capability or consent and does not require Forge to be enabled.
+        var division = request.DivisionKey is null ? null : Jarvis.Orchestrator.Forge.ForgeDivisions.RequireKey(request.DivisionKey);
         var descriptor = await workflowCatalog.ResolveAsync(request.Workflow, ct);
         RequireConsent(descriptor, request.AllowCloudProcessing);
         return await store.UpdateAsync(s =>
@@ -23,14 +26,15 @@ public sealed partial class AgentRuntime
             if (prior is not null && request.ExpectedRevision is null)
             {
                 Guard.Require(prior.Title == title && prior.Brief == brief && prior.Workflow == request.Workflow && prior.AllowCloudProcessing == request.AllowCloudProcessing &&
-                    prior.NextReviewAt == request.NextReviewAt && prior.Deadline == request.Deadline && prior.Status == request.Status, 409, "Goal ID was reused. Reload before editing.");
+                    prior.NextReviewAt == request.NextReviewAt && prior.Deadline == request.Deadline && prior.Status == request.Status &&
+                    prior.DivisionKey == division, 409, "Goal ID was reused. Reload before editing.");
                 return prior;
             }
             Guard.Require(prior is null ? request.ExpectedRevision is null : request.ExpectedRevision == prior.Revision, 409, "Goal changed. Reload before editing.");
             Guard.Require(prior is not null || s.Goals.Count < 200, 409, "Goal capacity reached.");
             if (prior?.LastRunId is Guid runId) Supersede(s, runId, "goal_changed");
             var goal = new PersonalGoal(request.RequestId, (prior?.Revision ?? 0) + 1, title, brief, request.Workflow,
-                request.AllowCloudProcessing, request.NextReviewAt.ToUniversalTime(), request.Deadline.ToUniversalTime(), request.Status, prior?.CreatedAt ?? now, now);
+                request.AllowCloudProcessing, request.NextReviewAt.ToUniversalTime(), request.Deadline.ToUniversalTime(), request.Status, prior?.CreatedAt ?? now, now, DivisionKey: division);
             s.Goals[goal.Id] = goal; return goal;
         }, ct);
     }
@@ -41,7 +45,7 @@ public sealed partial class AgentRuntime
         Guard.Require(goal.Revision == revision, 409, "Goal changed. Reload before deleting.");
         if (goal.LastRunId is Guid runId) Supersede(s, runId, "goal_deleted");
         // Retain a content-free tombstone so stale clients cannot recreate the goal.
-        s.Goals[id] = goal with { Title = "", Brief = "", Status = GoalStatus.Deleted, Revision = goal.Revision + 1, UpdatedAt = clock.GetUtcNow() };
+        s.Goals[id] = goal with { Title = "", Brief = "", DivisionKey = null, Status = GoalStatus.Deleted, Revision = goal.Revision + 1, UpdatedAt = clock.GetUtcNow() };
         return true;
     }, ct);
 

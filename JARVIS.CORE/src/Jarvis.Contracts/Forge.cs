@@ -30,3 +30,8 @@ public sealed record ForgeCalendarView(
     decimal CalendarProgress,
     ForgePhase? Phase,
     ForgePhase? NextPhase);
+
+/// <summary>Install the code-owned Forge division templates as Domain Registry drafts (never activates them).</summary>
+public sealed record InstallForgeDivisionsRequest(bool IncludeOptional = false);
+/// <summary>Status is "drafted", "existing" (left untouched) or "skipped-optional".</summary>
+public sealed record ForgeDivisionDraft(string Key, string Code, string Status, bool Protected, bool Optional, DomainRiskClass? Risk);

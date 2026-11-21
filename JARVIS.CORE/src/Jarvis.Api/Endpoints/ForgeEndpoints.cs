@@ -26,5 +26,8 @@ public static class ForgeEndpoints
         group.MapGet("/{id:guid}", (Guid id, IQueryHandler<GetForgeProgramme, ForgeProgrammeView> h, CancellationToken ct) => h.HandleAsync(new(id), ct));
         group.MapPatch("/{id:guid}/preferences", (Guid id, PauseForgeProgrammeRequest request, ICommandHandler<PauseForgeProgramme, ForgeProgramme> h, CancellationToken ct) => h.HandleAsync(new(id, request), ct));
         group.MapDelete("/{id:guid}", (Guid id, int revision, ICommandHandler<DeleteForgeProgramme, bool> h, CancellationToken ct) => h.HandleAsync(new(id, revision), ct));
+        // PF-02: installs division templates as registry drafts only; activation stays the owner's approval step.
+        var divisions = app.MapGroup(Root + "/divisions").WithTags("Forge").RequireAuthorization(CorePolicies.Owner);
+        divisions.MapPost("/drafts", (InstallForgeDivisionsRequest request, ICommandHandler<InstallForgeDivisionDrafts, IReadOnlyList<ForgeDivisionDraft>> h, CancellationToken ct) => h.HandleAsync(new(request), ct));
     }
 }
