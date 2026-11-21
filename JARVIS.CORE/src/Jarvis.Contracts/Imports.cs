@@ -20,3 +20,8 @@ public sealed record SourceClaim(Guid Id, Guid DocumentId, int DocumentRevision,
 public sealed record AttachSourceClaimRequest(Guid RequestId, Guid StoryId, int ExpectedStoryVersion, int ExpectedDocumentRevision, int Start, int Length);
 public sealed record InterviewArchiveReview(Guid DocumentId, IReadOnlyList<string> Questions, int WordCount,
     double? TimedUserWordsPerMinute, int? UserPausesAtLeastOneSecond, string TimingSource, IReadOnlyList<string> SuggestedDrills);
+/// <summary>B3-5 v0: a deterministic, read-only interview prep pack computed from an imported job advert.</summary>
+public sealed record PrepStoryMatch(Guid StoryId, string Title);
+public sealed record PrepRequirement(string Key, string Title, string AdvertQuote, IReadOnlyList<PrepStoryMatch> Stories, bool Gap);
+public sealed record InterviewPrepPack(Guid DocumentId, string Title, IReadOnlyList<PrepRequirement> Requirements,
+    IReadOnlyList<string> LikelyQuestions, int Gaps, string Note);

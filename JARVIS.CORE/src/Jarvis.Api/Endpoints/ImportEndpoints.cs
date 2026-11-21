@@ -20,5 +20,7 @@ public static class ImportEndpoints
         group.MapPost("/{id:guid}/claims", (Guid id, AttachSourceClaimRequest request, ICommandHandler<AttachImportClaim, SourceClaim> handler, CancellationToken ct) => handler.HandleAsync(new(id, request), ct));
         group.MapGet("/{id:guid}/claims", (Guid id, IQueryHandler<ListImportClaims, IReadOnlyList<SourceClaim>> handler, CancellationToken ct) => handler.HandleAsync(new(id), ct));
         group.MapGet("/{id:guid}/review", (Guid id, IQueryHandler<GetImportReview, InterviewArchiveReview> handler, CancellationToken ct) => handler.HandleAsync(new(id), ct));
+        // B3-5 v0: deterministic, read-only prep pack from a job advert; no AI, nothing stored.
+        group.MapGet("/{id:guid}/prep-pack", (Guid id, IQueryHandler<GetImportPrepPack, InterviewPrepPack> handler, CancellationToken ct) => handler.HandleAsync(new(id), ct));
     }
 }
