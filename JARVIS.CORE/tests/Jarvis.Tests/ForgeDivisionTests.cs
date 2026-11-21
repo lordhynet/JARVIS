@@ -4,6 +4,7 @@ using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Domains;
 using Jarvis.Orchestrator.Forge;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Jarvis.Tests;
 
@@ -69,6 +70,47 @@ public sealed class ForgeDivisionTests
         var optional = await LifeScenarioTests.Post<List<ForgeDivisionDraft>>(owner, Drafts, new InstallForgeDivisionsRequest(IncludeOptional: true));
         Assert.Equal("drafted", optional.Single(x => x.Key == "forge.relationships").Status);
         Assert.Equal(15, optional.Count(x => x.Status == "existing"));
+    }
+
+    [Fact]
+    public async Task Install_never_overwrites_an_owner_edited_definition_and_concurrent_installs_deduplicate()
+    {
+        using var factory = new ForgeApiFactory(); using var owner = factory.Owner();
+        var tech = ForgeDivisions.All.Single(d => d.Code == "TECH");
+        var edited = ForgeDivisions.Manifest(tech) with { Description = "Owner wording for engineering practice." };
+        var ownerDraft = await LifeScenarioTests.Post<DomainPreview>(owner, "/api/domains/drafts",
+            new SaveDomainDraftRequest(Guid.NewGuid(), null, JsonSerializer.SerializeToElement(edited, DomainPolicy.Json)));
+
+        // Two installs racing: the registry's per-request replay must keep one draft per division.
+        var racing = await Task.WhenAll(
+            LifeScenarioTests.Post<List<ForgeDivisionDraft>>(owner, Drafts, new InstallForgeDivisionsRequest()),
+            LifeScenarioTests.Post<List<ForgeDivisionDraft>>(owner, Drafts, new InstallForgeDivisionsRequest()));
+        Assert.All(racing, result => Assert.Equal("existing", result.Single(x => x.Key == "forge.tech").Status));
+
+        var forge = (await owner.GetFromJsonAsync<List<DomainPreview>>("/api/domains", LifeScenarioTests.Json))!
+            .Where(d => d.Definition.Key.StartsWith(ForgeDivisions.KeyPrefix, StringComparison.Ordinal)).ToArray();
+        Assert.Equal(15, forge.Length);
+        Assert.Equal(15, forge.Select(d => d.Definition.Key).Distinct(StringComparer.Ordinal).Count());
+        var kept = forge.Single(d => d.Definition.Key == "forge.tech");
+        Assert.Equal(ownerDraft.Definition.Revision, kept.Definition.Revision); // no new version added
+        Assert.Equal(ownerDraft.Version.Id, kept.Version.Id);
+        Assert.Equal("Owner wording for engineering practice.", kept.Version.Manifest.Description);
+        Assert.NotEqual(ForgeDivisions.DraftActor, kept.Version.CreatedBy);
+    }
+
+    [Fact]
+    public async Task Goal_deletion_tombstone_clears_the_division_tag()
+    {
+        using var factory = new ForgeApiFactory(); using var owner = factory.Owner();
+        var now = DateTimeOffset.Parse("2026-11-30T12:00:00Z");
+        var goal = await LifeScenarioTests.Post<PersonalGoal>(owner, "/api/goals", new SaveGoalRequest(Guid.NewGuid(), null, "Tagged",
+            "Division tombstone", "practice-reminder", false, now.AddDays(1), now.AddDays(8), "Paused", DivisionKey: "forge.voice"));
+        using var deleted = await owner.DeleteAsync($"/api/goals/{goal.Id}?revision={goal.Revision}");
+        Assert.True(deleted.IsSuccessStatusCode);
+        var tombstone = await factory.Services.GetRequiredService<Jarvis.Orchestrator.Runtime.IRuntimeReader>().ReadAsync(s => s.Goals[goal.Id]);
+        Assert.Equal(GoalStatus.Deleted, tombstone.Status);
+        Assert.Null(tombstone.DivisionKey);
+        Assert.Equal("", tombstone.Title); Assert.Equal("", tombstone.Brief);
     }
 
     [Fact]
