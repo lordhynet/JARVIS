@@ -93,7 +93,7 @@ public static class PrivacyData
         return new(deadSessions, training, coaching,
             state.VoiceTurns.Values.Where(x => x.At < at.AddDays(-p.VoiceDays) || deadSessions.Contains(x.SessionId)).Select(x => x.Id).ToHashSet(),
             state.ProviderResults.Values.Where(x => x.At < at.AddDays(-p.ProviderCacheDays) || training.Contains(x.ScopeId) || coaching.Contains(x.ScopeId) || deadSessions.Contains(x.ScopeId) || taskIds.Contains(x.ScopeId)).Select(x => x.Id).ToHashSet(),
-            workflows.Where(x => x.DeletedAt is null && Finished(x) && x.UpdatedAt < at.AddDays(-p.ArtifactDays)).Select(x => x.Id).ToHashSet(), agents, state.ImportedDocuments.Values.Where(x => x.DeletedAt is null && x.Kind == "interview" && x.ImportedAt < at.AddDays(-p.ArtifactDays)).Select(x => x.Id).ToHashSet(),
+            workflows.Where(x => x.DeletedAt is null && Finished(x) && x.UpdatedAt < at.AddDays(-p.ArtifactDays)).Select(x => x.Id).ToHashSet(), agents, state.ImportedDocuments.Values.Where(x => x.DeletedAt is null && x.Kind is "interview" or "job-advert" && x.ImportedAt < at.AddDays(-p.ArtifactDays)).Select(x => x.Id).ToHashSet(),
             state.ContextMemories.Values.Where(x => x.ExpiresAt <= at || x.SessionId is Guid session && deadSessions.Contains(session) ||
                 x.Source.Kind == "voice" && state.VoiceTurns.TryGetValue(x.Source.Id, out var turn) && turn.At < at.AddDays(-p.VoiceDays) ||
                 x.Source.Kind == "import" && state.ImportedDocuments.TryGetValue(x.Source.Id, out var document) && document.Kind == "interview" && document.ImportedAt < at.AddDays(-p.ArtifactDays))

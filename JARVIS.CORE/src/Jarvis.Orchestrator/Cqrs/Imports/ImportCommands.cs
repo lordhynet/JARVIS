@@ -11,6 +11,7 @@ public sealed record GetImport(Guid Id) : IQuery<ImportedDocument>;
 public sealed record ListImportClaims(Guid DocumentId) : IQuery<IReadOnlyList<SourceClaim>>;
 public sealed record ListImportAssessments(Guid DocumentId) : IQuery<IReadOnlyList<AiCoachAssessment>>;
 public sealed record GetImportReview(Guid Id) : IQuery<InterviewArchiveReview>;
+public sealed record GetImportPrepPack(Guid Id) : IQuery<InterviewPrepPack>;
 
 public sealed class ImportCommandHandlers(ImportService imports) :
     ICommandHandler<ImportDocument, ImportedDocument>, ICommandHandler<DeleteImport, bool>, ICommandHandler<AttachImportClaim, SourceClaim>
@@ -23,8 +24,15 @@ public sealed class ImportCommandHandlers(ImportService imports) :
 public sealed class ImportQueryHandlers(IRuntimeReader reader) :
     IQueryHandler<ListImports, IReadOnlyList<ImportedDocumentSummary>>, IQueryHandler<GetImport, ImportedDocument>,
     IQueryHandler<ListImportClaims, IReadOnlyList<SourceClaim>>, IQueryHandler<ListImportAssessments, IReadOnlyList<AiCoachAssessment>>,
-    IQueryHandler<GetImportReview, InterviewArchiveReview>
+    IQueryHandler<GetImportReview, InterviewArchiveReview>, IQueryHandler<GetImportPrepPack, InterviewPrepPack>
 {
+    // B3-5 v0: recomputed on read from the advert and the current Story Bank; nothing derived is stored.
+    public Task<InterviewPrepPack> HandleAsync(GetImportPrepPack query, CancellationToken ct = default) => reader.ReadAsync(s =>
+    {
+        Guard.Require(s.ImportedDocuments.TryGetValue(query.Id, out var document), 404, "Import not found.");
+        return Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values);
+    }, ct);
+
     public Task<IReadOnlyList<ImportedDocumentSummary>> HandleAsync(ListImports query, CancellationToken ct = default) =>
         reader.ReadAsync<IReadOnlyList<ImportedDocumentSummary>>(s => s.ImportedDocuments.Values
             .Where(x => x.DeletedAt is null).OrderByDescending(x => x.ImportedAt)

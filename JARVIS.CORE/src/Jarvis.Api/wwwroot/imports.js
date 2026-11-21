@@ -4,7 +4,7 @@ export function initImports({ api, node, button, notice }) {
   const card = node('div', '', 'card'); panel.append(card); card.append(node('h2', 'Import your evidence'), node('p', 'Import CV text or an authorised interview transcript. Source quotes establish provenance, not independent verification of a claim. Plain text stays in Core unless you separately request cloud processing.'));
   const form = document.createElement('form');
   function field(label, tag, props = {}) { const wrap = node('label', label); const value = document.createElement(tag); Object.assign(value, props); value.setAttribute('aria-label', label); wrap.append(value); form.append(wrap); return value; }
-  const kind = field('Import type', 'select'); for (const value of ['cv', 'interview']) { const option = node('option', value); option.value = value; kind.append(option); }
+  const kind = field('Import type', 'select'); for (const value of ['cv', 'interview', 'job-advert']) { const option = node('option', value); option.value = value; kind.append(option); }
   const title = field('Document title', 'input', { required: true, maxLength: 200 });
   const file = field('Load a plain text file', 'input', { type: 'file', accept: '.txt,.md,text/plain,text/markdown' });
   const text = field('Source text or interview transcript', 'textarea', { required: true, maxLength: 100000, rows: 10 });
@@ -27,6 +27,23 @@ export function initImports({ api, node, button, notice }) {
     detail.replaceChildren(node('h3', record.title));
     const source = document.createElement('textarea'); source.readOnly = true; source.rows = 10; source.value = record.text; source.setAttribute('aria-label', 'Imported source text'); detail.append(source);
     detail.append(node('small', `Source hash ${record.contentHash}`));
+    if (record.kind === 'job-advert') {
+      // B3-5 v0: untrusted third-party text. No AI analysis and no CV claims; only the deterministic prep pack.
+      const pack = await api(`/imports/${id}/prep-pack`); if (!current()) return;
+      detail.append(node('h3', 'Interview prep pack'), node('p', pack.note, 'muted'),
+        node('p', `${pack.requirements.length} requirements found · ${pack.gaps} without a matching story`));
+      for (const requirement of pack.requirements) {
+        const row = node('div', '', 'list-item');
+        row.append(node('h4', `${requirement.title}${requirement.gap ? ' · gap: prepare a story' : ''}`), node('blockquote', requirement.advertQuote));
+        for (const story of requirement.stories) row.append(node('p', `Story: ${story.title}`));
+        detail.append(row);
+      }
+      if (pack.likelyQuestions.length) {
+        detail.append(node('h3', 'Likely questions'));
+        const questions = node('ol', '', 'list'); for (const question of pack.likelyQuestions) questions.append(node('li', question)); detail.append(questions);
+      }
+      return;
+    }
     const cloudWrap = node('label', 'I consent to sending this source to the cloud coach'); const cloud = document.createElement('input'); cloud.type = 'checkbox'; cloud.setAttribute('aria-label', 'Allow AI source analysis'); cloudWrap.append(cloud); let assessmentId = null;
     detail.append(cloudWrap, button('Analyse source with AI coach', async () => {
       if (!cloud.checked) throw Error('Explicit cloud-processing consent is required.');
