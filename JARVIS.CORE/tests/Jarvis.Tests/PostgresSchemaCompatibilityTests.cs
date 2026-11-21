@@ -95,8 +95,36 @@ public sealed partial class PostgresSessionTests
         await db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\"={UnknownMigration}");
         await using var other = SchemaContext(database.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await other.Database.OpenConnectionAsync(timeout.Token);
+        Assert.True(await other.Database.SqlQueryRaw<bool>("SELECT pg_try_advisory_lock(746271590) AS \"Value\"").SingleAsync(timeout.Token));
+        await other.Database.ExecuteSqlRawAsync("SELECT pg_advisory_unlock(746271590)", timeout.Token);
+        // The next migrator requires quiescence, independently of the lock-release assertion.
+        await db.Database.CloseConnectionAsync();
         await PostgresSchemaCompatibility.MigrateAsync(other, timeout.Token);
         await PostgresSchemaCompatibility.RequireCurrentAsync(other, timeout.Token);
+    }
+
+    [PostgresTheory]
+    [InlineData("")]
+    [InlineData("synthetic-legacy-core")]
+    public async Task Schema_migrator_refuses_other_idle_sessions_even_when_untagged_but_normal_startup_stays_compatible(string applicationName)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        await using var db = SchemaContext(database.ConnectionString);
+        var before = await SchemaStamp(db);
+        var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString) { ApplicationName = applicationName };
+        await using var idle = new NpgsqlConnection(connection.ConnectionString);
+        await idle.OpenAsync();
+        var error = await Assert.ThrowsAsync<DomainException>(() => PostgresSchemaCompatibility.MigrateAsync(db));
+        Assert.Equal(503, error.StatusCode); Assert.Equal("schema_other_sessions", error.Code);
+        Assert.DoesNotContain(database.ConnectionString, error.Message);
+        if (applicationName.Length > 0) Assert.DoesNotContain(applicationName, error.Message);
+        Assert.Equal(before, await SchemaStamp(db));
+        await PostgresSchemaCompatibility.RequireCurrentAsync(db); // Compatible API hosts may coexist.
+        Assert.Equal(System.Data.ConnectionState.Open, idle.State); // Refusal does not terminate clients.
+        await idle.CloseAsync();
+        await PostgresSchemaCompatibility.MigrateAsync(db);
+        Assert.Equal(before, await SchemaStamp(db));
     }
 
     [PostgresFact]

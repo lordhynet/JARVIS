@@ -16,6 +16,12 @@ public static class PostgresSchemaCompatibility
     public static Task MigrateAsync(SessionDbContext db, CancellationToken ct = default) =>
         WithMigrationLock(db, async () => {
             _ = await KnownHistory(db, ct); // Never mutate a schema belonging to a newer/different assembly.
+            // Count other clients, including idle/untagged legacy hosts. Never kill clients.
+            var others = await db.Database.SqlQueryRaw<int>("""
+                SELECT count(*)::integer AS "Value" FROM pg_stat_activity
+                WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid()
+                """).SingleAsync(ct);
+            Guard.Require(others == 0, 503, "Stop all other clients connected to this database, including starting Core hosts and concurrent migrators, before running the designated migrator.", "schema_other_sessions");
             await db.Database.MigrateAsync(ct);
             var (known, applied) = await KnownHistory(db, ct);
             RequireAllApplied(known, applied);
