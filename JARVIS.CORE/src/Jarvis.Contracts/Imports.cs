@@ -25,3 +25,7 @@ public sealed record PrepStoryMatch(Guid StoryId, string Title);
 public sealed record PrepRequirement(string Key, string Title, string AdvertQuote, IReadOnlyList<PrepStoryMatch> Stories, bool Gap);
 public sealed record InterviewPrepPack(Guid DocumentId, string Title, IReadOnlyList<PrepRequirement> Requirements,
     IReadOnlyList<string> LikelyQuestions, int Gaps, string Note);
+/// <summary>Turn selected prep-pack questions (by index) into review cards. Repeats never duplicate a card.</summary>
+public sealed record CreatePrepPackCardsRequest(IReadOnlyList<int> Questions);
+/// <summary>Cards are the original creation results; Existing counts questions already turned into cards before.</summary>
+public sealed record PrepPackCards(int Created, int Existing, int Retired, IReadOnlyList<LearningItem> Cards);

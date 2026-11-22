@@ -209,6 +209,8 @@ public static class CqrsRegistration
         Query<ListImportAssessments, IReadOnlyList<AiCoachAssessment>, ImportQueryHandlers>(services);
         Query<GetImportReview, InterviewArchiveReview, ImportQueryHandlers>(services);
         Query<GetImportPrepPack, InterviewPrepPack, ImportQueryHandlers>(services);
+        services.AddSingleton<PrepPackCardCommands>();
+        Command<CreateImportPrepPackCards, PrepPackCards, PrepPackCardCommands>(services);
         Command<ProposeDomain, DomainProposal, DomainCommandHandlers>(services);
         Command<SaveDomainDraft, DomainPreview, DomainCommandHandlers>(services);
         Command<ActivateDomain, DomainOperationReceipt, DomainCommandHandlers>(services);

@@ -179,3 +179,47 @@ public sealed class InterviewPrepPackTests
         using (var gone = await client.GetAsync($"/api/imports/{advert.Id}/prep-pack")) Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
     }
 }
+
+public sealed class PrepPackCardTests
+{
+    private const string Advert = "You will build payment services in C# and .NET. Strong PostgreSQL skills are required.";
+
+    [Fact]
+    public async Task Selected_questions_become_cards_once_and_repeats_return_the_same_cards()
+    {
+        using var host = new JarvisApiFactory(); using var client = host.CreateAuthorisedClient();
+        var advert = await LifeScenarioTests.Post<ImportedDocument>(client, "/api/imports", new ImportDocumentRequest(Guid.NewGuid(), "job-advert", "Role", Advert, true));
+        var pack = (await client.GetFromJsonAsync<InterviewPrepPack>($"/api/imports/{advert.Id}/prep-pack", LifeScenarioTests.Json))!;
+        Assert.True(pack.LikelyQuestions.Count >= 2);
+
+        var first = await LifeScenarioTests.Post<PrepPackCards>(client, $"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([1, 0]));
+        Assert.Equal(2, first.Created); Assert.Equal(0, first.Existing); Assert.Equal(0, first.Retired);
+        Assert.Equal(new[] { pack.LikelyQuestions[0], pack.LikelyQuestions[1] }, first.Cards.Select(c => c.Prompt).ToArray());
+        Assert.All(first.Cards, c => { Assert.Equal(LearningDomain.InterviewStory, c.Domain); Assert.Equal(PrepPackCardCommandsGuide, c.Answer); });
+
+        var again = await LifeScenarioTests.Post<PrepPackCards>(client, $"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0, 1]));
+        Assert.Equal(0, again.Created); Assert.Equal(2, again.Existing);
+        Assert.Equal(first.Cards.Select(c => c.Id), again.Cards.Select(c => c.Id));
+        var cards = (await client.GetFromJsonAsync<List<LearningItem>>("/api/learning", LifeScenarioTests.Json))!;
+        Assert.Equal(2, cards.Count(c => c.Domain == LearningDomain.InterviewStory));
+    }
+
+    private static string PrepPackCardCommandsGuide => Jarvis.Orchestrator.Cqrs.Imports.PrepPackCardCommands.AnswerGuide;
+
+    [Fact]
+    public async Task Invalid_selections_and_non_adverts_are_refused_without_creating_cards()
+    {
+        using var host = new JarvisApiFactory(); using var client = host.CreateAuthorisedClient();
+        var advert = await LifeScenarioTests.Post<ImportedDocument>(client, "/api/imports", new ImportDocumentRequest(Guid.NewGuid(), "job-advert", "Role", Advert, true));
+        foreach (var bad in new[] { Array.Empty<int>(), [0, 0], [-1], [999], Enumerable.Range(0, 21).ToArray() })
+            using (var response = await client.PostAsJsonAsync($"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest(bad)))
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var cv = await LifeScenarioTests.Post<ImportedDocument>(client, "/api/imports", new ImportDocumentRequest(Guid.NewGuid(), "cv", "CV", "I built payments in C#.", true));
+        using (var wrong = await client.PostAsJsonAsync($"/api/imports/{cv.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0])))
+            Assert.Equal(HttpStatusCode.NotFound, wrong.StatusCode);
+        using (var deleted = await client.DeleteAsync($"/api/imports/{advert.Id}?revision={advert.Revision}")) Assert.True(deleted.IsSuccessStatusCode);
+        using (var gone = await client.PostAsJsonAsync($"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0])))
+            Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
+        Assert.Empty((await client.GetFromJsonAsync<List<LearningItem>>("/api/learning", LifeScenarioTests.Json))!);
+    }
+}
