@@ -130,7 +130,7 @@ const privacy = initPrivacy({ api, node, button, notice, onErased: () => {
   connectionGeneration++;
   clearBrowserAccess(true);
   stopAudio(); liveVoice.clear(); intelligence.clear(); extraModules.clear(); planning.clear(); travel.clear(); recordings.clear(); imports.clear(); notifications.clear(); state.session = null; state.devices = []; state.registered = false;
-  for (const id of ['session-list', 'device-list', 'learning-list', 'tool-list', 'device-command-list', 'messages', 'checkpoints', 'briefing-content', 'integration-list']) $(id)?.replaceChildren();
+  for (const id of ['session-list', 'device-list', 'learning-list', 'learning-overview', 'tool-list', 'device-command-list', 'messages', 'checkpoints', 'briefing-content', 'integration-list']) $(id)?.replaceChildren();
   for (const field of document.querySelectorAll('[data-panel] input,[data-panel] textarea')) { if (field.type === 'checkbox' || field.type === 'radio') field.checked = false; else field.value = ''; }
   for (const id of ['selected-title', 'owner', 'handoff-state']) $(id).textContent = '';
   for (const id of ['session-controls', 'chat-form', 'checkpoint-panel', 'handoff-controls']) $(id).hidden = true;
@@ -295,7 +295,23 @@ on('test-device', 'click', async () => {
 });
 on('handoff', 'click', async () => { const target = $('target-device').value; if (!target) throw new Error('Choose an online, verified target device.'); const summary = $('checkpoint-summary').value || selected().currentTask || 'Continue the current conversation and saved transcript.'; state.session = await api(`/sessions/${selected().id}/handoff`, { fromDeviceId: deviceId, toDeviceId: target, summary }); renderSession(); });
 for (const [id, action] of [['handoff-ready', 'ready'], ['handoff-complete', 'complete'], ['handoff-cancel', 'cancel']]) on(id, 'click', async () => { state.session = await api(`/sessions/${selected().id}/handoff/${action}`, { handoffId: selected().handoff.id, deviceId }); renderSession(); });
+// Deterministic overview from Core: due load, a 7-day forecast and last-week recall; text only, no AI.
+async function renderLearningOverview() {
+  const overview = await api('/learning/overview'); let box = $('learning-overview');
+  if (!box) { box = node('div', '', 'card'); box.id = 'learning-overview'; $('learning-list').before(box); }
+  box.replaceChildren(node('h3', 'Your learning this week'));
+  if (!overview.cards) { box.append(node('p', 'No cards yet.', 'muted')); return; }
+  box.append(node('p', `${overview.dueNow} due now of ${overview.cards} cards. Next 7 days: ${overview.forecast.join(' · ')}.`));
+  box.append(node('p', overview.reviewed7Days
+    ? `Last 7 days: ${overview.reviewed7Days} reviews, ${Math.round(overview.recallRate7Days * 100)}% recalled (Again ${overview.again7Days}, Hard ${overview.hard7Days}, Good ${overview.good7Days}, Easy ${overview.easy7Days}).`
+    : 'No reviews in the last 7 days.', 'muted'));
+  if (overview.focus) box.append(node('p', `Focus: ${overview.focus} had the most forgotten cards this week.`));
+  const list = node('ul', '', 'list');
+  for (const d of overview.domains) list.append(node('li', `${d.domain}: ${d.dueNow} due now, ${d.dueNext7Days} this week, ${d.cards} cards`));
+  box.append(list);
+}
 async function loadLearning() {
+  await renderLearningOverview();
   const cards = await api('/learning?due=true'); $('learning-list').replaceChildren();
   if (!cards.length) $('learning-list').append(node('p', 'All caught up. Add a card or come back when one is due.', 'muted'));
   for (const card of cards) { const div = node('div', '', 'list-item'); const started = Date.now(); div.append(node('small', card.domain), node('p', card.prompt));

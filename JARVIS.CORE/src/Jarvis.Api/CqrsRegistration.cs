@@ -230,6 +230,7 @@ public static class CqrsRegistration
         Query<ListDevices, IReadOnlyList<DeviceView>, DeviceQueryHandler>(services);
         Query<ListLearningItems, IReadOnlyList<LearningItem>, LearningQueryHandlers>(services);
         Query<GetReviewHistory, IReadOnlyList<ReviewEvent>, LearningQueryHandlers>(services);
+        Query<GetLearningOverview, LearningOverview, LearningQueryHandlers>(services);
         Query<ListStories, IReadOnlyList<Story>, StoryQueryHandlers>(services);
         Query<GetStory, Story, StoryQueryHandlers>(services);
         Query<ListToolActions, IReadOnlyList<AuditedTool>, ToolQueryHandler>(services);

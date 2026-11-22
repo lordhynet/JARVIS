@@ -51,3 +51,14 @@ public sealed record ReviewEvent(
 public sealed record VoiceRecall(Guid Id, Guid SessionId, Guid CardId, string CardFingerprint, string Status,
     Guid StartUtteranceId, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     Guid? AnswerUtteranceId = null, Guid? RatingUtteranceId = null, ReviewRating? Rating = null);
+
+/// <summary>Per-domain learning load: what is due and how the last seven days of reviews went.</summary>
+public sealed record LearningDomainOverview(LearningDomain Domain, int Cards, int DueNow, int DueNext7Days,
+    int Reviewed7Days, int Again7Days, double? RecallRate7Days);
+/// <summary>
+/// Deterministic learning overview. Forecast[0] is everything due within 24 hours (overdue included); Forecast[1..6] are
+/// the following 24-hour windows. RecallRate is the share of last-7-day reviews not rated Again; null when none.
+/// </summary>
+public sealed record LearningOverview(DateTimeOffset AsOf, int Cards, int DueNow, IReadOnlyList<int> Forecast,
+    int Reviewed7Days, int Again7Days, int Hard7Days, int Good7Days, int Easy7Days, double? RecallRate7Days,
+    LearningDomain? Focus, IReadOnlyList<LearningDomainOverview> Domains);
