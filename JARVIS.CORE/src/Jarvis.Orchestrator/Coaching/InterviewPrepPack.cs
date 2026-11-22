@@ -66,22 +66,25 @@ public static class InterviewPrepPackBuilder
             "How do you break a large piece of work into safe, shippable steps?")
     ]);
 
-    public static InterviewPrepPack Build(ImportedDocument advert, IEnumerable<Story> stories)
+    /// <param name="sourceQuotes">Attached CV quotes per story, used by the readiness check; missing means none.</param>
+    public static InterviewPrepPack Build(ImportedDocument advert, IEnumerable<Story> stories, IReadOnlyDictionary<Guid, int>? sourceQuotes = null)
     {
         Guard.Require(advert is { DeletedAt: null, Kind: "job-advert" }, 404, "Job advert not found.");
         ArgumentNullException.ThrowIfNull(stories);
-        var storyText = stories.Select(s => (s.Id, s.Content.Title, Text: StoryText(s.Content))).ToArray();
+        var storyText = stories.Select(s => (s.Id, s.Content.Title, Text: StoryText(s.Content),
+            Ready: StoryReadinessChecker.Check(s, sourceQuotes?.GetValueOrDefault(s.Id) ?? 0))).ToArray();
         var requirements = new List<PrepRequirement>();
         foreach (var competency in Catalogue) {
             var match = competency.Pattern.Match(advert.Text);
             if (!match.Success) continue;
             var matched = storyText.Where(s => competency.Pattern.IsMatch(s.Text))
                 .OrderBy(s => s.Title, StringComparer.Ordinal).ThenBy(s => s.Id)
-                .Take(MaxStoriesPerRequirement).Select(s => new PrepStoryMatch(s.Id, Clean(s.Title, 80))).ToArray();
-            requirements.Add(new(competency.Key, competency.Title, Quote(advert.Text, match.Index, match.Length), matched, matched.Length == 0));
+                .Take(MaxStoriesPerRequirement).Select(s => new PrepStoryMatch(s.Id, Clean(s.Title, 80), s.Ready.Score, s.Ready.Level)).ToArray();
+            requirements.Add(new(competency.Key, competency.Title, Quote(advert.Text, match.Index, match.Length), matched, matched.Length == 0,
+                matched.Length > 0 && matched.All(m => m.Level == "draft")));
         }
-        // Gaps first: those are the stories to prepare before the interview.
-        var questions = requirements.OrderByDescending(r => r.Gap).SelectMany(r => {
+        // Gaps first, then requirements backed only by draft stories: those are what to prepare before the interview.
+        var questions = requirements.OrderByDescending(r => r.Gap).ThenByDescending(r => r.NeedsWork).SelectMany(r => {
             var competency = Catalogue.Single(x => x.Key == r.Key);
             return new[] { competency.Behavioural, competency.Technical };
         }).Take(MaxQuestions).ToArray();

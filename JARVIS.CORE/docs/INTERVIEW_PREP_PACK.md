@@ -22,3 +22,10 @@ No action is ever proposed from it.
 
 ## Not in this slice
 Company research, AI-predicted questions, per-claim evidence checks and a generated mock-interview scenario all wait for items 6 and 8, with run cloud consent and the existing budget, exactly as planned.
+
+## Story readiness in the pack (22 Nov)
+
+- Each matched story carries `Readiness` (0–100) and `Level` (draft, usable, interview-ready) from `StoryReadinessChecker`, using the story's attached CV quotes. These are the same numbers as `/api/stories/{id}/readiness`.
+- `NeedsWork` is true when stories match a requirement but every match is still a draft. `Gap` keeps its meaning: no story matches.
+- Likely questions are ordered gaps first, then needs-work, then covered requirements. Review-card IDs come from the question text, not its position, so reordering never duplicates a card.
+- All contract changes are additive with defaults (`Readiness = 0`, `Level = "draft"`, `NeedsWork = false`).

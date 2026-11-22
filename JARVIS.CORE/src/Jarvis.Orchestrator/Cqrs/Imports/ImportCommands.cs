@@ -1,5 +1,6 @@
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
+using static Jarvis.Orchestrator.Cqrs.Imports.PrepPackReads;
 
 namespace Jarvis.Orchestrator.Cqrs.Imports;
 
@@ -30,7 +31,7 @@ public sealed class ImportQueryHandlers(IRuntimeReader reader) :
     public Task<InterviewPrepPack> HandleAsync(GetImportPrepPack query, CancellationToken ct = default) => reader.ReadAsync(s =>
     {
         Guard.Require(s.ImportedDocuments.TryGetValue(query.Id, out var document), 404, "Import not found.");
-        return Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values) with { DataEpoch = PrivacyContext.Epoch };
+        return Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values, QuoteCounts(s)) with { DataEpoch = PrivacyContext.Epoch };
     }, ct);
 
     public Task<IReadOnlyList<ImportedDocumentSummary>> HandleAsync(ListImports query, CancellationToken ct = default) =>
@@ -82,7 +83,7 @@ public sealed class PrepPackCardCommands(IRuntimeStore store, TimeProvider clock
         var epoch = command.Request.DataEpoch.Value;
         return store.UpdateAsync<PrepPackCards>(s => {
             Guard.Require(s.ImportedDocuments.TryGetValue(command.DocumentId, out var document), 404, "Import not found.");
-            var pack = Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values);
+            var pack = Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values, QuoteCounts(s));
             Guard.Require(pack.Fingerprint == command.Request.ExpectedPackFingerprint, 409, "Prep pack questions changed. Reload before creating cards.");
             Guard.Require(picked.All(i => i >= 0 && i < pack.LikelyQuestions.Count), 400, "A selected question is not in this prep pack.");
             var cards = new List<LearningItem>(); int created = 0, existing = 0, retired = 0;
@@ -110,4 +111,9 @@ public sealed class PrepPackCardCommands(IRuntimeStore store, TimeProvider clock
             return new(created, existing, retired, cards.AsReadOnly());
         }, ct);
     }
+}
+internal static class PrepPackReads
+{
+    public static IReadOnlyDictionary<Guid, int> QuoteCounts(RuntimeState s) =>
+        s.SourceClaims.Values.GroupBy(x => x.StoryId).ToDictionary(g => g.Key, g => g.Count());
 }

@@ -224,3 +224,37 @@ public sealed class PrepPackCardTests
         Assert.Empty((await client.GetFromJsonAsync<List<LearningItem>>("/api/learning", LifeScenarioTests.Json))!);
     }
 }
+
+public sealed class PrepPackReadinessTests
+{
+    private static Story Make(StoryContent content) => new(Guid.NewGuid(), content, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+
+    [Fact]
+    public void Draft_only_matches_mark_a_requirement_as_needing_work_and_order_questions_after_gaps()
+    {
+        var strong = Make(new StoryContent("Idempotent payments", "Acme", "Checkout",
+            Context: "Customers were charged twice during provider timeouts.", Problem: "Retries were not idempotent.",
+            PersonalOwnership: "I designed and shipped the idempotency key and led the rollout.",
+            TechnicalDecisions: "Store an idempotency key per payment intent.",
+            TradeOffs: "I chose a unique key instead of a distributed lock because it was simpler to operate.",
+            Result: "Duplicate charges stopped.", Metrics: "Duplicates fell from 40 to 0 per month.",
+            FailureModes: "A provider could still time out after charging; we reconcile nightly.",
+            ChangeToday: "I would add the reconciliation alert earlier."));
+        var thin = Make(new StoryContent("Consumer lag", "Acme", "Events", TechnicalDecisions: "Added Kafka partitions."));
+        var advert = new ImportedDocument(Guid.NewGuid(), "job-advert", "Role",
+            "You will build payment services. Experience with Kafka is essential. You will deploy on Azure.", "hash", 1, DateTimeOffset.UtcNow, []);
+        var pack = InterviewPrepPackBuilder.Build(advert, [strong, thin], new Dictionary<Guid, int> { [strong.Id] = 1 });
+
+        var payments = pack.Requirements.Single(r => r.Key == "payments");
+        var match = Assert.Single(payments.Stories);
+        Assert.Equal(strong.Id, match.StoryId); Assert.Equal("interview-ready", match.Level); Assert.Equal(100, match.Readiness);
+        Assert.False(payments.Gap); Assert.False(payments.NeedsWork);
+        var events = pack.Requirements.Single(r => r.Key == "distributed-systems");
+        Assert.Equal("draft", Assert.Single(events.Stories).Level); Assert.False(events.Gap); Assert.True(events.NeedsWork);
+        var cloud = pack.Requirements.Single(r => r.Key == "cloud");
+        Assert.True(cloud.Gap); Assert.False(cloud.NeedsWork);
+
+        int At(string key) => pack.LikelyQuestions.ToList().IndexOf(InterviewPrepPackBuilder.Catalogue.Single(c => c.Key == key).Behavioural);
+        Assert.True(At("cloud") < At("distributed-systems")); Assert.True(At("distributed-systems") < At("payments"));
+    }
+}

@@ -18,6 +18,7 @@ test('job advert import shows a prep pack and never offers AI analysis', async (
   await expect(panel).toContainText('Payments and fintech');
   await expect(panel).toContainText('You will build payment services in C# and .NET on Azure.');
   await expect(panel).toContainText('Likely questions');
+  await expect(panel).toContainText('gap: prepare a story');
   await expect(panel.getByRole('button', { name: 'Analyse source with AI coach' })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: 'Attach selected CV claim to story' })).toHaveCount(0);
   await expect(panel.locator('img')).toHaveCount(0); // advert text is never interpreted as HTML

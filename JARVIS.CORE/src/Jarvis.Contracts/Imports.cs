@@ -21,8 +21,11 @@ public sealed record AttachSourceClaimRequest(Guid RequestId, Guid StoryId, int 
 public sealed record InterviewArchiveReview(Guid DocumentId, IReadOnlyList<string> Questions, int WordCount,
     double? TimedUserWordsPerMinute, int? UserPausesAtLeastOneSecond, string TimingSource, IReadOnlyList<string> SuggestedDrills);
 /// <summary>B3-5 v0: a deterministic, read-only interview prep pack computed from an imported job advert.</summary>
-public sealed record PrepStoryMatch(Guid StoryId, string Title);
-public sealed record PrepRequirement(string Key, string Title, string AdvertQuote, IReadOnlyList<PrepStoryMatch> Stories, bool Gap);
+/// <summary>Readiness and Level come from the deterministic Story readiness checker (0-100; draft, usable, interview-ready).</summary>
+public sealed record PrepStoryMatch(Guid StoryId, string Title, int Readiness = 0, string Level = "draft");
+/// <summary>Gap: no story matches. NeedsWork: stories match but every one is still a draft.</summary>
+public sealed record PrepRequirement(string Key, string Title, string AdvertQuote, IReadOnlyList<PrepStoryMatch> Stories, bool Gap,
+    bool NeedsWork = false);
 public sealed record InterviewPrepPack(Guid DocumentId, string Title, IReadOnlyList<PrepRequirement> Requirements,
     IReadOnlyList<string> LikelyQuestions, int Gaps, string Note, string? Fingerprint = null, long? DataEpoch = null);
 /// <summary>Turn selected prep-pack questions (by index) into review cards. Repeats never duplicate a card.</summary>
