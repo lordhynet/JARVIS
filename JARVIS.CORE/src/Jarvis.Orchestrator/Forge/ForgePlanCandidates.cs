@@ -13,7 +13,7 @@ public sealed record ForgeCandidateSet(IReadOnlyList<ForgePlanCandidate> Candida
 /// creates no store, history or identity, and never decides capacity. Keys reuse existing identities:
 /// <c>review.&lt;domain&gt;</c> for due cards grouped by the existing LearningDomain, <c>goal.&lt;id&gt;</c> for goals.
 /// Only active goals tagged with a Forge division are included; untagged goals stay JARVIS-only.
-/// Default session lengths are editable starting points derived from Addendum V2 §3 cadences, not obligations.
+/// Default session lengths are proposals derived from Addendum V2 §3 cadences, not obligations or persisted owner settings.
 /// </summary>
 public static class ForgePlanCandidates
 {
@@ -27,7 +27,10 @@ public static class ForgePlanCandidates
     };
 
     /// <param name="dayEnd">The instant the local plan day ends; cards due by then and goals whose review is due by then qualify.</param>
-    public static ForgeCandidateSet Build(DateTimeOffset dayEnd, IEnumerable<LearningItem> learning, IEnumerable<PersonalGoal> goals)
+    /// <param name="notBefore">The same earliest-start instant passed to ForgeDayAllocator.Plan.</param>
+    /// <param name="nextInterviewAt">The same confirmed interview instant passed to Plan, if any.</param>
+    public static ForgeCandidateSet Build(DateTimeOffset dayEnd, IEnumerable<LearningItem> learning, IEnumerable<PersonalGoal> goals,
+        DateTimeOffset notBefore, DateTimeOffset? nextInterviewAt = null)
     {
         ArgumentNullException.ThrowIfNull(learning); ArgumentNullException.ThrowIfNull(goals);
         var candidates = new List<ForgePlanCandidate>();
@@ -39,7 +42,7 @@ public static class ForgePlanCandidates
                 Math.Min(minutes, MinReviewBlockMinutes), 0, group.Min(x => x.DueAt)));
         }
 
-        // Active, division-tagged goals that are due for attention by the end of the day. Nearer deadlines rank first.
+        // Active, division-tagged goals due for attention by the end of the day. Deadline priority is within kind rank.
         var goalCandidates = goals
             .Where(g => g.Status == GoalStatus.Active && g.DivisionKey is { } key && ForgeDivisions.IsDivisionKey(key) && g.NextReviewAt <= dayEnd)
             .Select(g => {
@@ -49,12 +52,12 @@ public static class ForgePlanCandidates
                     : division.Key == "forge.career" ? ForgePlanTaskKind.InterviewPractice : ForgePlanTaskKind.Practice;
                 var days = (int)Math.Clamp(Math.Floor((g.Deadline - dayEnd).TotalDays), 0, 100);
                 return new ForgePlanCandidate("goal." + g.Id.ToString("N"), kind, minutes, Math.Min(minutes, 15), days, g.Deadline);
-            })
-            .OrderBy(c => c.Priority).ThenBy(c => c.DueBy).ThenBy(c => c.Key, StringComparer.Ordinal);
+            });
         candidates.AddRange(goalCandidates);
 
-        // Reviews come first, so a limit never drops due recall in favour of goal work.
-        var kept = candidates.Take(ForgeDayAllocator.MaximumCandidates).ToArray();
+        // Apply the allocator's policy before truncation, so it cannot lose higher-ranked work at admission.
+        var kept = ForgeDayAllocator.OrderForSelection(candidates, notBefore, nextInterviewAt)
+            .Take(ForgeDayAllocator.MaximumCandidates).ToArray();
         return new(Array.AsReadOnly(kept), candidates.Count - kept.Length);
     }
 }
