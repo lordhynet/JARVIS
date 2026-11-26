@@ -47,6 +47,8 @@ public static class CqrsRegistration
         Command<Jarvis.Orchestrator.Cqrs.Forge.DeleteForgeProgramme, bool, Jarvis.Orchestrator.Cqrs.Forge.ForgeCommands>(services);
         Query<Jarvis.Orchestrator.Cqrs.Forge.GetForgeProgramme, ForgeProgrammeView, Jarvis.Orchestrator.Cqrs.Forge.ForgeQueries>(services);
         Query<Jarvis.Orchestrator.Cqrs.Forge.ListForgeProgrammes, IReadOnlyList<ForgeProgrammeView>, Jarvis.Orchestrator.Cqrs.Forge.ForgeQueries>(services);
+        services.AddSingleton<Jarvis.Orchestrator.Cqrs.Forge.ForgeDivisionCommands>();
+        Command<Jarvis.Orchestrator.Cqrs.Forge.InstallForgeDivisionDrafts, IReadOnlyList<ForgeDivisionDraft>, Jarvis.Orchestrator.Cqrs.Forge.ForgeDivisionCommands>(services);
         services.AddSingleton<TravelQueries>(); services.AddSingleton<TravelCommands>();
         Query<ListTravelRoutes, IReadOnlyList<TravelRoute>, TravelQueries>(services);
         Query<GetTravelCatalogue, IReadOnlyList<TravelLine>, TravelQueries>(services);
