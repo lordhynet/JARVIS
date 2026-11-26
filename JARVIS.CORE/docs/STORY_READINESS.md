@@ -6,3 +6,4 @@
 - **Score:** ready = 1, weak = 0.5, missing = 0; levels are draft (<50), usable (50–84) and interview-ready (≥85). Up to six targeted follow-up questions.
 - **Honesty rule:** following the Story Bank's "blank metrics are better than invented ones", an explicit "not measured" or "unknown" counts as ready, and the advice never asks for invented numbers or facts. It checks shape, **not truth**.
 - No AI, no storage, no writes. It's recomputed on read, so it always matches the current story version (the browser ignores a result for an older version).
+- Browser refreshes render one local story/checklist snapshot only while that refresh is current. Newer refreshes and the existing clear operation invalidate older work, preventing duplicate cards or repopulation after clear. Checklist failure still allows the current stories to load without a score.

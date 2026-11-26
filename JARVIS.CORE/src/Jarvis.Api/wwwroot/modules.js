@@ -179,6 +179,7 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
   const storySave = el('button', 'Save real story', storyForm, 'primary');
   action(storyPanel, 'New story / clear editor', () => { editStory = null; storyForm.reset(); storySave.textContent = 'Save real story'; });
   const storyList = el('div', '', storyPanel, 'list');
+  let storyLoadEpoch = 0;
   storyForm.addEventListener('submit', async event => {
     event.preventDefault(); storySave.disabled = true;
     try {
@@ -188,10 +189,14 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
     } catch (error) { notice(error.message, true); } finally { storySave.disabled = false; }
   });
   async function loadStories() {
-    stories = await api('/stories'); storyList.replaceChildren();
+    const epoch = ++storyLoadEpoch;
+    const loadedStories = await api('/stories');
+    if (epoch !== storyLoadEpoch) return;
     // Deterministic readiness checklist (no AI); optional, so a failure never blocks the Story Bank.
     let readiness = new Map(); try { readiness = new Map((await api('/stories/readiness')).map(r => [r.storyId, r])); } catch { /* optional */ }
-    stories.forEach(story => {
+    if (epoch !== storyLoadEpoch) return;
+    stories = loadedStories; storyList.replaceChildren();
+    loadedStories.forEach(story => {
       const card = el('div', '', storyList, 'list-item'); el('h3', story.content.title, card); el('small', `${story.content.companyProject} · version ${story.version}`, card);
       const ready = readiness.get(story.id);
       if (ready && ready.version === story.version) {
@@ -412,6 +417,6 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
       if (tab === 'training') { questions = await api('/training/questions'); const old = questionInput.value; questionInput.replaceChildren(); questions.forEach(x => option(questionInput, `${x.domain} · ${x.title}`, x.id)); if (questions.some(x => x.id === old)) questionInput.value = old; questionBox.textContent = questions.find(x => x.id === questionInput.value)?.prompt || ''; modeCatalog = await api('/training/modes'); const selectedMode = guideMode.value; guideMode.replaceChildren(); modeCatalog.forEach(x => option(guideMode, x.title, x.mode)); if (modeCatalog.some(x => x.mode === selectedMode)) guideMode.value = selectedMode; guideDescription.textContent = modeCatalog.find(x => x.mode === guideMode.value)?.description || ''; await loadGuidedHistory(); }
       if (tab === 'programme') await loadProgramme(); if (tab === 'workflows') await loadWorkflows(); if (tab === 'modules') await loadModules();
     },
-    clear() { guideEpoch++; guided = null; guideDrafts.clear(); guideBody.replaceChildren(); guideHistory.replaceChildren(); guideMode.replaceChildren(); modeCatalog = []; guideDescription.textContent = ""; pending.clear(); drafts.clear(); contextId = null; exercises = []; stories = []; questions = []; prompt = coach = drill = report = programme = editStory = null; coachingForm.reset(); answerForm.reset(); storyForm.reset(); drillForm.reset(); [exerciseInput, storyInput, claimInput, questionInput, promptBox, feedback, history, reportBox, deliveryBox, scenarioBox, storyList, questionBox, drillResult, programmeBody, workBody, moduleList].forEach(x => x.replaceChildren()); promptBox.hidden = answerForm.hidden = true; }
+    clear() { storyLoadEpoch++; guideEpoch++; guided = null; guideDrafts.clear(); guideBody.replaceChildren(); guideHistory.replaceChildren(); guideMode.replaceChildren(); modeCatalog = []; guideDescription.textContent = ""; pending.clear(); drafts.clear(); contextId = null; exercises = []; stories = []; questions = []; prompt = coach = drill = report = programme = editStory = null; coachingForm.reset(); answerForm.reset(); storyForm.reset(); drillForm.reset(); [exerciseInput, storyInput, claimInput, questionInput, promptBox, feedback, history, reportBox, deliveryBox, scenarioBox, storyList, questionBox, drillResult, programmeBody, workBody, moduleList].forEach(x => x.replaceChildren()); promptBox.hidden = answerForm.hidden = true; }
   };
 }
