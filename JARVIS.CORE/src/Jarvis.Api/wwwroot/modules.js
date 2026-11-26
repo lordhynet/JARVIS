@@ -192,10 +192,11 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
     const epoch = ++storyLoadEpoch;
     const loadedStories = await api('/stories');
     if (epoch !== storyLoadEpoch) return;
+    stories = loadedStories;
     // Deterministic readiness checklist (no AI); optional, so a failure never blocks the Story Bank.
     let readiness = new Map(); try { readiness = new Map((await api('/stories/readiness')).map(r => [r.storyId, r])); } catch { /* optional */ }
     if (epoch !== storyLoadEpoch) return;
-    stories = loadedStories; storyList.replaceChildren();
+    storyList.replaceChildren();
     loadedStories.forEach(story => {
       const card = el('div', '', storyList, 'list-item'); el('h3', story.content.title, card); el('small', `${story.content.companyProject} · version ${story.version}`, card);
       const ready = readiness.get(story.id);

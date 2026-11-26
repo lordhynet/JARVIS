@@ -2,7 +2,7 @@ const { test, expect } = require('@playwright/test');
 
 // Exercise the actual module with native DOM and deferred synthetic API fixtures.
 // No owner records or provider calls; awaiting both loads makes the old-response race deterministic.
-for (const mode of ['overlap', 'clear', 'unavailable', 'older-version']) {
+for (const mode of ['overlap', 'clear', 'unavailable', 'older-version', 'coaching-overlap']) {
   test(`story readiness refresh preserves the current view: ${mode}`, async ({ page }) => {
     await page.goto('/');
     const result = await page.evaluate(async mode => {
@@ -27,7 +27,7 @@ for (const mode of ['overlap', 'clear', 'unavailable', 'older-version']) {
         api: async path => {
           if (path === '/stories') {
             storyCalls++;
-            return [mode === 'overlap' && storyCalls === 1 ? story('Older snapshot', 1) : story('Current snapshot', 2)];
+            return [(mode === 'overlap' || mode === 'coaching-overlap') && storyCalls === 1 ? story('Older snapshot', 1) : story('Current snapshot', 2)];
           }
           if (path === '/stories/readiness') {
             readinessCalls++;
@@ -36,27 +36,35 @@ for (const mode of ['overlap', 'clear', 'unavailable', 'older-version']) {
             if (readinessCalls === 1) { firstStarted(); return firstResponse; }
             return readiness(2, 50);
           }
+          if (path === '/coaching/exercises') return [{ id: 'fixture', area: 'Communication', title: 'Fixture', requiresStory: true, requiresClaim: false }];
+          if (path === '/coaching/delivery' || path === '/coaching/scenarios') return [];
           throw Error(`Unexpected fixture API: ${path}`);
         },
         node, notice() {}, on() {}, selectedSession: () => null, ensureSession: async () => null,
         button: (text, run) => { const b = node('button', text); b.type = 'button'; b.addEventListener('click', run); return b; }
       });
       const first = module.load('stories');
-      if (mode === 'overlap' || mode === 'clear') {
+      if (mode === 'overlap' || mode === 'clear' || mode === 'coaching-overlap') {
         await started;
         if (mode === 'clear') module.clear();
-        else await module.load('stories');
+        else await module.load(mode === 'coaching-overlap' ? 'coaching' : 'stories');
         releaseFirst(readiness(1, 6));
       }
       await first;
       const panel = document.querySelector('[data-panel="stories"]');
-      return { titles: [...panel.querySelectorAll('h3')].map(x => x.textContent), text: panel.textContent };
+      const exercise = document.querySelector('[data-panel="coaching"] [aria-label="Exercise"]');
+      exercise.dispatchEvent(new Event('change'));
+      const sourceOptions = [...document.querySelector('[aria-label="Source story"]').options].map(x => x.textContent);
+      return { titles: [...panel.querySelectorAll('h3')].map(x => x.textContent), text: panel.textContent, sourceOptions };
     }, mode);
 
-    expect(result.titles).toEqual(mode === 'clear' ? [] : ['Current snapshot']);
+    expect(result.titles).toEqual(mode === 'clear' ? [] : [mode === 'coaching-overlap' ? 'Older snapshot' : 'Current snapshot']);
     if (mode === 'overlap') {
       expect(result.text.match(/Interview readiness/g)).toHaveLength(1);
       expect(result.text).toContain('Interview readiness 50%');
+    } else if (mode === 'coaching-overlap') {
+      expect(result.sourceOptions).toContain('Current snapshot');
+      expect(result.sourceOptions).not.toContain('Older snapshot');
     } else expect(result.text).not.toContain('Interview readiness');
   });
 }
