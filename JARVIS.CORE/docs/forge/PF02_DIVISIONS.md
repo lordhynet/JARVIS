@@ -6,6 +6,8 @@ The sixteen Addendum V2 §3 divisions are code-owned **Domain Registry templates
 
 `POST /api/forge/divisions/drafts` with `{ "includeOptional": false }` saves each division through the existing registry draft path (`IDomainRegistry.SaveDraftAsync`) with a deterministic request ID, so repeats and concurrent installs replay instead of duplicating. It never activates anything. Existing definitions, including any the owner edited, disabled or activated, are reported as `existing` and left untouched. Activation stays the owner's existing per-domain approval step. With Forge disabled the route is 404.
 
+The install is **not all-or-nothing**. Each division is a separate registry draft. Concurrent self-installs deduplicate through the registry's request replay. If another creator saves a `forge.*` definition between the install's initial list and its own save, that division can fail with a `409` and the batch stops part-way. Nothing is overwritten, and simply retrying completes the remaining divisions, because completed or existing keys are skipped.
+
 - **Template mode** with the installed `core_template_practice` capability only: no paid AI, no external action, `UsesPersonalContext = false` for every division.
 - **Protected privacy classes:** WEALTH, HEALTH, GLOBAL, RELATIONSHIPS. Their practice prompts never ask for private values (amounts, symptoms, partners). Private values belong in the PF-03 encrypted check-ins, not in domain text.
 - **RELATIONSHIPS is optional** and skipped unless `includeOptional` is true.
