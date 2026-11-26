@@ -12,6 +12,8 @@ A job advert is third-party text. It is **only** regex-matched against the fixed
 - domain knowledge (`DomainFactory` refuses `job-advert` references);
 - paid AI assessment input (`AiCoach.ImportedAsync` returns 409; the browser hides the button).
 
+The existing `AgentRuntime.SourceCurrent` import fence also accepts only a live CV with the matching content hash. This closes the manual-domain path: an owner-authored manifest may contain an import reference, but a job advert, transcript or unknown future import kind cannot be used as agent knowledge. `AgentExecutor` checks all selected source references before provider dispatch; an unsupported reference rejects the run before provider calls, usage reservations or results. This protection also applies to later tool/publication source checks and does not depend on using DomainFactory to create the draft. Existing CV context remains available under its existing domain, cloud-consent, privacy and budget gates.
+
 No action is ever proposed from it.
 
 ## Not in this slice
