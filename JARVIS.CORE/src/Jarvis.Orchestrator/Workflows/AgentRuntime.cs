@@ -216,7 +216,9 @@ public sealed partial class AgentRuntime(IRuntimeStore store, TimeProvider clock
     {
         "story" => s.Stories.TryGetValue(source.Id, out var story) && story.Version.ToString(CultureInfo.InvariantCulture) == source.Version,
         "learning" => s.Learning.TryGetValue(source.Id, out var item) && item.SourceRecordingId is null && LearningVersion(item) == source.Version,
-        "import" => s.ImportedDocuments.TryGetValue(source.Id, out var document) && document.DeletedAt is null && document.Kind != "interview" && document.ContentHash == source.Version,
+        // Only owner CV evidence is agent knowledge. Adverts/transcripts/future import kinds fail closed even
+        // when an owner authored the domain manifest directly instead of using DomainFactory.
+        "import" => s.ImportedDocuments.TryGetValue(source.Id, out var document) && document.DeletedAt is null && document.Kind == "cv" && document.ContentHash == source.Version,
         "voice" => s.VoiceTurns.TryGetValue(source.Id, out var turn) && !turn.Restricted && turn.Role == ChatRoles.User && !s.RetiredSessions.Contains(turn.SessionId) &&
             !Jarvis.Orchestrator.Recordings.RecordedPracticePrivacy.PrivateSession(s, turn.SessionId) &&
             PrivacyData.Hash(System.Text.Json.JsonSerializer.Serialize(turn)) == source.Version,
