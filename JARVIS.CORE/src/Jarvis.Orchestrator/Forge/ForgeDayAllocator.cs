@@ -64,9 +64,8 @@ public static class ForgeDayAllocator
     {
         Guard.Require(capacity is not null, 400, "Capacity is required.");
         var items = Validate(candidates);
-        var interviewIn = nextInterviewAt is { } at && at >= notBefore ? at - notBefore : (TimeSpan?)null;
-        var ordered = items.OrderBy(x => Rank(x, interviewIn)).ThenBy(x => x.Priority)
-            .ThenBy(x => x.DueBy ?? DateTimeOffset.MaxValue).ThenBy(x => x.Key, StringComparer.Ordinal).ToArray();
+        var interviewIn = TimeToInterview(notBefore, nextInterviewAt);
+        var ordered = OrderForSelection(items, notBefore, nextInterviewAt).ToArray();
 
         ForgeDayPlan Empty(ForgePlanStatus status, ForgeDeferReason reason) => new(status, capacity.LocalDate, capacity.ProgrammeRevision,
             capacity.CapacityRevision, capacity.AllocatableMinutes, 0, [], ordered.Select(x => new ForgeDeferredItem(x.Key, x.Kind, reason)).ToArray());
@@ -104,7 +103,20 @@ public static class ForgeDayAllocator
             capacity.AllocatableMinutes, planned, scheduled.OrderBy(x => x.Start).ToArray(), deferred);
     }
 
-    // Lower rank goes first in ALLOCATION SELECTION. Due reviews are considered first (delayed recall is the mastery
+    // Admission must use this same order before dropping candidates at the limit; otherwise optional work can
+    // evict interview/core practice before Plan ever sees it. Both stages require the same explicit time context.
+    internal static IOrderedEnumerable<ForgePlanCandidate> OrderForSelection(IEnumerable<ForgePlanCandidate> items,
+        DateTimeOffset notBefore, DateTimeOffset? nextInterviewAt)
+    {
+        var interviewIn = TimeToInterview(notBefore, nextInterviewAt);
+        return items.OrderBy(x => Rank(x, interviewIn)).ThenBy(x => x.Priority)
+            .ThenBy(x => x.DueBy ?? DateTimeOffset.MaxValue).ThenBy(x => x.Key, StringComparer.Ordinal);
+    }
+
+    private static TimeSpan? TimeToInterview(DateTimeOffset notBefore, DateTimeOffset? nextInterviewAt) =>
+        nextInterviewAt is { } at && at >= notBefore ? at - notBefore : null;
+
+    // Lower rank goes first in ADMISSION AND ALLOCATION SELECTION. Due reviews are considered first (delayed recall is the mastery
     // signal) and interview practice moves ahead of other work when an interview is within seven days. This is not a
     // chronological promise: an intact long higher-ranked item can land in a later window while a lower-ranked item
     // fills an earlier gap. Callers must supply only genuinely due reviews resolved from canonical sources.
