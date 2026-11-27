@@ -6,7 +6,11 @@ namespace Jarvis.Api.Integrations;
 
 // What a Forge speaking turn needs from transcription: text plus whatever explicit quality and language evidence the
 // configured model actually returns. Missing evidence stays null so the turn gate refuses rather than assumes.
-public sealed record ForgeTurnTranscript(string Text, double? Confidence, string? DetectedLanguage, string ConfidenceMethod);
+// The result is bound to the model it was requested from, so evidence admission cannot drift from model capability.
+public sealed record ForgeTurnTranscript(string Text, double? Confidence, string? DetectedLanguage, string ConfidenceMethod, string Model)
+{
+    public bool QualityEvidenceAvailable => ForgeTranscriptionProtocol.ReturnsConfidence(Model);
+}
 
 // Pure request/response shaping for OpenAI /v1/audio/transcriptions (documented 27 Nov 2026). No dispatch, reservation
 // or caller here. Evidence by model family:
@@ -34,12 +38,15 @@ public static class ForgeTranscriptionProtocol
         return [new("language", language)];
     }
 
-    public static ForgeTurnTranscript Parse(JsonElement result)
+    // `model` is the reviewed model the request was built for. Confidence is derived only for models whose reviewed
+    // contract supplies logprobs; unexpected logprobs from any other or unknown model are ignored, never admitted.
+    public static ForgeTurnTranscript Parse(JsonElement result, string model)
     {
+        Guard.Require(!string.IsNullOrWhiteSpace(model), 503, "A reviewed transcription model is required.");
         if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("text", out var text) || text.ValueKind != JsonValueKind.String)
             throw new DomainException(502, "Transcription provider returned no text.");
-        var confidence = Confidence(result);
-        return new(text.GetString()!, confidence, Detected(result), confidence is null ? NoConfidenceMethod : LogprobConfidenceMethod);
+        var confidence = ReturnsConfidence(model) ? Confidence(result) : null;
+        return new(text.GetString()!, confidence, Detected(result), confidence is null ? NoConfidenceMethod : LogprobConfidenceMethod, model);
     }
 
     // Geometric-mean token probability, exp(mean logprob). Any malformed or out-of-range entry voids the whole signal:
@@ -67,6 +74,27 @@ public static class ForgeTranscriptionProtocol
             return null;
         var only = languages[0];
         return only.ValueKind == JsonValueKind.Object && only.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String &&
-            code.GetString() is { Length: >= 2 and <= 16 } value ? value : null;
+            code.GetString() is { } value && WellFormedCode(value) ? Normalize(value) : null;
+    }
+
+    // ISO 639-2/3 forms of the starter languages become their ISO 639-1 primary so "fra" is not a false mismatch against fr-FR.
+    // Any other three-letter code names a different language and is kept, so genuine mismatches remain mismatches.
+    private static readonly IReadOnlyDictionary<string, string> StarterThreeLetter = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        { ["fra"] = "fr", ["fre"] = "fr", ["eng"] = "en", ["spa"] = "es" };
+    private static string Normalize(string value)
+    {
+        var dash = value.IndexOf('-');
+        var primary = dash < 0 ? value : value[..dash];
+        return StarterThreeLetter.TryGetValue(primary, out var two) ? two + (dash < 0 ? "" : value[dash..]) : value;
+    }
+
+    // Documented code forms: ISO 639-1 ("fr"), ISO 639-3 ("eng") and a regional subtag ("zh-cn"). Anything else
+    // (whitespace, punctuation, control characters, full names like "english") is not an observation; it stays unknown
+    // instead of becoming a false language mismatch.
+    internal static bool WellFormedCode(string value)
+    {
+        var parts = value.Split('-');
+        return parts.Length is 1 or 2 && parts[0].Length is 2 or 3 && parts[0].All(char.IsAsciiLetter) &&
+            (parts.Length == 1 || parts[1].Length is >= 2 and <= 4 && parts[1].All(char.IsAsciiLetterOrDigit));
     }
 }
