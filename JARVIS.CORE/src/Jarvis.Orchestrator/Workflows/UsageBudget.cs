@@ -4,7 +4,7 @@ using Jarvis.Orchestrator.Runtime;
 namespace Jarvis.Orchestrator.Workflows;
 
 public sealed record BudgetLimits(decimal DailyUsd, decimal MonthlyUsd, decimal BackgroundUsd, decimal VoiceUsd = 30,
-    decimal InteractiveUsd = 5, decimal? VoiceSeriousDailyGbp = null);
+    decimal InteractiveUsd = 5, decimal? VoiceSeriousDailyGbp = null, decimal? ForgeMonthlyGbp = null);
 
 // The existing PostgreSQL runtime row lock serializes reservations across hosts/devices.
 // Unknown outcomes retain their maximum charge; a crashed caller never refunds money.
@@ -19,19 +19,21 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
     }
 
     public Task<UsageReservation> ReserveAsync(Guid id, Guid runId, string model, decimal maximum,
-        BudgetLimits limits, CancellationToken ct, UsageLane lane = UsageLane.Background, string provider = ProviderIds.Anthropic) =>
-        ReserveCoreAsync(id, runId, model, maximum, limits, ct, lane, provider, null, null, null);
+        BudgetLimits limits, CancellationToken ct, UsageLane lane = UsageLane.Background, string provider = ProviderIds.Anthropic,
+        string? programme = null) =>
+        ReserveCoreAsync(id, runId, model, maximum, limits, ct, lane, provider, null, null, null, programme);
 
     public Task<UsageReservation> ReserveAsync(Guid id, Guid sessionId, ModelRoute route, VoiceMode mode, decimal maximum,
-        BudgetLimits limits, CancellationToken ct, decimal? confirmedWindowGbp = null) =>
-        ReserveCoreAsync(id, sessionId, route.Model, maximum, limits, ct, UsageLane.Voice, route.Provider, mode, route, confirmedWindowGbp);
+        BudgetLimits limits, CancellationToken ct, decimal? confirmedWindowGbp = null, string? programme = null) =>
+        ReserveCoreAsync(id, sessionId, route.Model, maximum, limits, ct, UsageLane.Voice, route.Provider, mode, route, confirmedWindowGbp, programme);
 
     private Task<UsageReservation> ReserveCoreAsync(Guid id, Guid runId, string model, decimal maximum,
         BudgetLimits limits, CancellationToken ct, UsageLane lane, string provider, VoiceMode? mode, ModelRoute? route,
-        decimal? confirmedWindowGbp) => store.UpdateAsync(s =>
+        decimal? confirmedWindowGbp, string? programme) => store.UpdateAsync(s =>
     {
         Guard.Require(maximum > 0 && limits.DailyUsd > 0 && limits.MonthlyUsd > 0,
             503, "Configure positive paid AI budgets and token rates before enabling the provider.");
+        Guard.Require(programme is null or UsageProgrammes.Forge, 400, "Unknown usage programme attribution.");
         Guard.Require(!s.AgentControls.EffectivePaidAiPaused, 503, "Paid AI is globally paused.");
         Guard.Require(!s.UsageReservations.ContainsKey(id), 409, "This provider dispatch was already reserved; do not replay it.");
         Guard.Require(route is null || !s.ProviderAttempts.ContainsKey(id), 409, "This voice provider attempt already exists.");
@@ -56,6 +58,20 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
         }
         Guard.Require(GbpBudgetRules.Committed(s, policy, now) + gbp <= GbpBudgetRules.Ceiling(s, policy, now),
             429, "GBP AI budget exhausted. A valid production approval is required above £100; £200 is the hard maximum.", VoiceEndReasons.GbpBudgetCeiling);
+        if (programme == UsageProgrammes.Forge)
+        {
+            // The Forge allowance is a narrower sub-cap checked under the same runtime lock as the global ceiling above;
+            // it can only refuse work, never raise what the global policy permits. Unsettled charges count at their maximum.
+            Guard.Require(limits.ForgeMonthlyGbp is > 0 and <= 200, 503,
+                "Configure a positive Forge monthly GBP allowance before paid Forge practice. Offline and unpaid practice remain available.");
+            var forgeMonth = GbpBudgetRules.Month(now);
+            var forgeGbp = s.UsageReservations.Values.Where(entry => entry.Programme == UsageProgrammes.Forge)
+                .Select(entry => s.GbpCommitments.GetValueOrDefault(entry.Id))
+                .Where(entry => entry is not null && entry.ScopeId == policy.ScopeId && entry.Environment == policy.Environment && entry.Month == forgeMonth)
+                .Sum(entry => entry!.AccountedGbp ?? entry.ReservedGbp);
+            Guard.Require(forgeGbp + gbp <= limits.ForgeMonthlyGbp, 429,
+                "Forge monthly AI allowance reached. Offline and unpaid practice remain available.", UsageProgrammes.ForgeAllowanceReached);
+        }
         decimal Cost(UsageReservation r) => r.ActualUsd ?? r.ReservedUsd;
         var month = s.UsageReservations.Values.Where(r => r.At.Year == now.Year && r.At.Month == now.Month).Sum(Cost);
         var day = s.UsageReservations.Values.Where(r => r.At.UtcDateTime.Date == now.UtcDateTime.Date).Sum(Cost);
@@ -63,7 +79,7 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
         var laneLimit = lane switch { UsageLane.Voice => limits.VoiceUsd, UsageLane.Interactive => limits.InteractiveUsd, _ => limits.BackgroundUsd };
         Guard.Require(laneLimit > 0 && day + maximum <= limits.DailyUsd && month + maximum <= limits.MonthlyUsd && laneCost + maximum <= laneLimit,
             429, "Paid AI budget exhausted. Existing results and unpaid practice remain available.");
-        var reservation = new UsageReservation(id, runId, model, now, maximum, Lane: lane, Provider: provider, VoiceMode: mode);
+        var reservation = new UsageReservation(id, runId, model, now, maximum, Lane: lane, Provider: provider, VoiceMode: mode, Programme: programme);
         s.UsageReservations.Add(id, reservation);
         s.GbpCommitments.Add(id, GbpBudgetRules.Commitment(reservation, policy));
         if (route is not null)

@@ -33,6 +33,7 @@ public static class ConfigKeys
     public const string VoiceModes = VoiceProfile + "Modes:";
     public const string VoiceSeriousDailyGbpField = "VoiceSeriousDailyGbp";
     public const string VoiceSeriousDailyGbp = "Budget:" + VoiceSeriousDailyGbpField;
+    public const string ForgeMonthlyAllowanceGbp = "Forge:MonthlyAllowanceGbp";
     public const string EverydayRealtimeModel = "gpt-realtime-2.1-mini";
     public const string SeriousRealtimeModel = "gpt-realtime-2.1";
     public const string Enabled = "Enabled";

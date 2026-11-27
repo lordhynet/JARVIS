@@ -134,7 +134,8 @@ public sealed class RateCard(IConfiguration config, TimeProvider clock)
         var route = new ModelRoute(provider, model!, profile, "text-routing-v1", revision, date, input, output, cap, capability, dataClass,
             CacheWriteUsdPerMillion: cacheWrite, CacheReadUsdPerMillion: cacheRead);
         var limits = new BudgetLimits(config.GetValue(ConfigKeys.DailyLimitUsd, 2m), config.GetValue(ConfigKeys.MonthlyLimitUsd, 50m),
-            config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m), config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m));
+            config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m), config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m),
+            ForgeMonthlyGbp: ForgeSettings.MonthlyAllowanceGbp(config));
         Guard.Require(!reload.HasChanged, 409, "Provider settings changed while selecting a route. Retry before dispatch.");
         return new(route, search, limits) { ApiKey = secret!, PromptCachingEnabled = caching, Fallbacks = fallbackRoutes.ToArray() };
     }
