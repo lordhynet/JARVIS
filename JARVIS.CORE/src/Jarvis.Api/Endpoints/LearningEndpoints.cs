@@ -19,6 +19,7 @@ public static class LearningEndpoints
         });
         group.MapPost("/{id:guid}/reviews", (Guid id, ReviewLearningRequest request, ICommandHandler<ReviewLearningItem, LearningItem> handler, CancellationToken ct) =>
             handler.HandleAsync(new ReviewLearningItem(id, request), ct));
+        group.MapGet("/overview", (IQueryHandler<GetLearningOverview, LearningOverview> handler, CancellationToken ct) => handler.HandleAsync(new(), ct));
         group.MapGet("/{id:guid}/reviews", (Guid id, IQueryHandler<GetReviewHistory, IReadOnlyList<ReviewEvent>> handler, CancellationToken ct) =>
             handler.HandleAsync(new GetReviewHistory(id), ct));
     }

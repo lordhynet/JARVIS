@@ -118,6 +118,8 @@ public sealed record HubAccessTicket(string KeyFingerprint, long Epoch, DateTime
 // Callbacks are synchronous, pure state changes; no network I/O while holding a lock.
 public interface IRuntimeReader
 {
+    Task<LearningOverview> ReadLearningOverviewAsync(DateTimeOffset now, CancellationToken ct = default) =>
+        ReadAsync(s => LearningOverviewBuilder.Build(s.Learning.Values, s.Reviews.Values.Select(r => r.Event), now), ct);
     Task<IReadOnlyList<ReviewEvent>> ReadLearningHistoryAsync(Guid id, CancellationToken ct = default) =>
         ReadAsync<IReadOnlyList<ReviewEvent>>(s => s.Reviews.Values.Where(r => r.Event.LearningItemId == id)
             .Select(r => r.Event).OrderByDescending(r => r.ReviewedAt).ToArray(), ct);

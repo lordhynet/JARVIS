@@ -28,7 +28,11 @@ test('guided code review saves distinct stages and resumes canonical progress', 
   await panel.getByLabel('Guided answer', { exact: true }).fill(literal);
   await panel.getByRole('button', { name: 'Save guided stage', exact: true }).click();
   await expect(panel).toContainText('Stage 2: Correct and verify'); await expect(panel.getByLabel('Guided answer', { exact: true })).toHaveValue('');
+  const previousEditor = await panel.getByLabel('Guided answer', { exact: true }).elementHandle();
   await panel.getByRole('button', { name: 'Reload guided progress', exact: true }).click();
+  // The progress text is already visible before reload. Wait for the actual editor replacement before typing.
+  await page.waitForFunction(editor => !editor.isConnected, previousEditor);
+  await previousEditor.dispose();
   await expect(panel).toContainText('1/2 stages answered or skipped');
   await panel.getByLabel('Guided answer', { exact: true }).fill('Make the action asynchronous, await the two I/O operations, and test failures and cancellation.');
   await panel.getByRole('button', { name: 'Save guided stage', exact: true }).click();
