@@ -81,7 +81,8 @@ public sealed class DomainFactory(IDomainRegistry registry, ICapabilityCatalog c
     private static void RequireImports(RuntimeState state, IReadOnlyList<DomainKnowledgeReference> references)
     {
         foreach (var source in references.Where(r => r.Kind == "import"))
-            Guard.Require(state.ImportedDocuments.TryGetValue(Guid.Parse(source.Reference), out var document) && document.DeletedAt is null,
+            Guard.Require(state.ImportedDocuments.TryGetValue(Guid.Parse(source.Reference), out var document) && document.DeletedAt is null &&
+                document.Kind != "job-advert", // untrusted third-party text never becomes domain knowledge
                 409, "An owner knowledge import is unavailable. Reload the proposal sources.");
     }
 }

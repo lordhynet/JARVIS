@@ -208,6 +208,9 @@ public static class CqrsRegistration
         Query<ListImportClaims, IReadOnlyList<SourceClaim>, ImportQueryHandlers>(services);
         Query<ListImportAssessments, IReadOnlyList<AiCoachAssessment>, ImportQueryHandlers>(services);
         Query<GetImportReview, InterviewArchiveReview, ImportQueryHandlers>(services);
+        Query<GetImportPrepPack, InterviewPrepPack, ImportQueryHandlers>(services);
+        services.AddSingleton<PrepPackCardCommands>();
+        Command<CreateImportPrepPackCards, PrepPackCards, PrepPackCardCommands>(services);
         Command<ProposeDomain, DomainProposal, DomainCommandHandlers>(services);
         Command<SaveDomainDraft, DomainPreview, DomainCommandHandlers>(services);
         Command<ActivateDomain, DomainOperationReceipt, DomainCommandHandlers>(services);
@@ -232,6 +235,8 @@ public static class CqrsRegistration
         Query<GetReviewHistory, IReadOnlyList<ReviewEvent>, LearningQueryHandlers>(services);
         Query<ListStories, IReadOnlyList<Story>, StoryQueryHandlers>(services);
         Query<GetStory, Story, StoryQueryHandlers>(services);
+        Query<GetStoryReadiness, StoryReadiness, StoryQueryHandlers>(services);
+        Query<ListStoryReadiness, IReadOnlyList<StoryReadiness>, StoryQueryHandlers>(services);
         Query<ListToolActions, IReadOnlyList<AuditedTool>, ToolQueryHandler>(services);
         Query<ListIntegrations, IReadOnlyList<IntegrationStatus>, IntegrationQueryHandlers>(services);
         Query<GetTransit, IReadOnlyList<TransitLine>, IntegrationQueryHandlers>(services);

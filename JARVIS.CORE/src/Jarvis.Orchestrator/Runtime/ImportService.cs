@@ -10,7 +10,10 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock, ICore
 {
     public Task<ImportedDocument> ImportAsync(ImportDocumentRequest request, CancellationToken ct = default)
     {
-        Guard.Require(request.RequestId != Guid.Empty && request.Kind is "cv" or "interview", 400, "Choose cv or interview and supply an operation ID.");
+        // B3-5: "job-advert" is untrusted third-party text, used only by the deterministic prep pack. It can never
+        // become memory, domain knowledge or AI-assessment input (guarded at each of those consumers).
+        Guard.Require(request.RequestId != Guid.Empty && request.Kind is "cv" or "interview" or "job-advert", 400, "Choose cv, interview or job-advert and supply an operation ID.");
+        Guard.Require(request.Kind != "job-advert" || request.Segments is not { Count: > 0 }, 400, "Job adverts are plain text without transcript segments.");
         Guard.Require(request.ConfirmStorageConsent && (request.Kind != "interview" || request.ConfirmRecordingAuthorised), 400, "Explicit storage consent and authorised interview recording/import are required.");
         var title = Guard.Text(request.Title, "Import title", 200); var text = Guard.Text(request.Text, "Imported text", 100000);
         var segments = request.Segments?.ToList() ?? [];

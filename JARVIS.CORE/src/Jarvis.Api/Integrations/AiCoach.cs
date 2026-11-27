@@ -47,6 +47,8 @@ public sealed class AiCoach(ITextReasoningProvider reasoning, IRuntimeStore stor
         Guard.Require(request.AllowCloudProcessing && request.RequestId != Guid.Empty, 400, "Explicit cloud consent and request ID required.");
         var document = await store.ReadAsync(s => s.ImportedDocuments.GetValueOrDefault(id), ct);
         Guard.Require(document is not null && document.DeletedAt is null, 404, "Imported source not found.");
+        // A job advert is untrusted third-party text, not the owner's evidence: never send it for paid assessment.
+        Guard.Require(document.Kind != "job-advert", 409, "Job adverts are not assessed. Use the prep pack instead.");
         Guard.Require(document.Revision == request.ExpectedRevision && request.TextRevision == document.Revision, 409, "Imported source changed.");
         var previous = await store.ReadAsync(s => s.AiCoachAssessments.GetValueOrDefault(request.RequestId), ct);
         if (previous is not null) { Guard.Require(previous.AttemptId == id && previous.AnswerVersion == document.Revision, 409, "Assessment ID was reused."); return previous; }
