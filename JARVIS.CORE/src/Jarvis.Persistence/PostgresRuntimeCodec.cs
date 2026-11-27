@@ -12,7 +12,7 @@ internal static class PostgresRuntimeCodec
     private static readonly HashSet<string> Hot = [nameof(RuntimeState.AudioLease), nameof(RuntimeState.AudioDrainLease),
         nameof(RuntimeState.AudioDrainUntil), nameof(RuntimeState.NextAudioFence), nameof(RuntimeState.VoiceTickets), nameof(RuntimeState.VoiceTurns),
         nameof(RuntimeState.AgentControls), nameof(RuntimeState.Devices), nameof(RuntimeState.DeviceCredentials), nameof(RuntimeState.WakeCandidateAttempts)];
-    public static bool IsHot(string name) => Hot.Contains(name) || PostgresRuntimeLearningState.IsProperty(name);
+    public static bool IsHot(string name) => Hot.Contains(name) || PostgresRuntimeLearningState.IsProperty(name) || PostgresRuntimeTrainingState.IsProperty(name);
     private static readonly JsonSerializerOptions WriteOptions = Create();
     private static JsonSerializerOptions Create()
     {

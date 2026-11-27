@@ -20,6 +20,7 @@ internal sealed class PostgresRuntimeHotState
     private readonly Dictionary<string, string> smallBefore = [];
     private Dictionary<Guid, VoiceTurn>? voices;
     private readonly PostgresRuntimeLearningState learning;
+    private readonly PostgresRuntimeTrainingState training;
     private PostgresRuntimeHotState(SessionDbContext db, RuntimeAudioRow audio, RuntimeState state,
         Dictionary<string, VoiceTicketRecord> tickets, string fingerprint, bool deferCold)
     {
@@ -48,6 +49,7 @@ internal sealed class PostgresRuntimeHotState
         foreach (var (key, value) in Small(state)) smallBefore[key] = value;
         state.DeferVoiceTurns(() => new(LoadVoices()));
         learning = new PostgresRuntimeLearningState(db, state);
+        training = new PostgresRuntimeTrainingState(db, state);
     }
     private Dictionary<Guid, VoiceTurn> LoadVoices() => voices ??=
         db.RuntimeVoiceTurns.AsNoTracking().ToArray().Select(x => x.Contract()).ToDictionary(x => x.Id);
@@ -58,7 +60,7 @@ internal sealed class PostgresRuntimeHotState
             .ToDictionary(x => x.Hash, x => JsonSerializer.Deserialize<VoiceTicketRecord>(x.Json)!);
         return new(db, audio, state, tickets, fingerprint, deferCold);
     }
-    public void Apply(RuntimeDocument row, RuntimeState state)
+    public void Apply(RuntimeDocument row, RuntimeState state, bool applyTraining = true)
     {
         if (state.AreColdPropertiesLoaded) {
             var phase = Stopwatch.GetTimestamp();
@@ -87,6 +89,7 @@ internal sealed class PostgresRuntimeHotState
             if (previous is null) db.RuntimeVoiceTickets.Add(changed); else db.RuntimeVoiceTickets.Update(changed);
         }
         learning.Apply(state);
+        if (applyTraining) training.Apply(state);
         if (!state.AreVoiceTurnsLoaded) return;
         var before = LoadVoices();
         foreach (var old in before.Keys.Except(state.VoiceTurns.Keys)) db.RuntimeVoiceTurns.Remove(new() { Id = old });
@@ -99,10 +102,11 @@ internal sealed class PostgresRuntimeHotState
     // Identity reads are used for exports and detached snapshots; never return a live DB loader.
     public static void Detach<T>(RuntimeState state, T result)
     {
-        if (ReferenceEquals(state, result)) { state.LoadColdProperties(); state.LoadLearningProperties(); _ = state.VoiceTurns; }
+        if (ReferenceEquals(state, result)) { state.LoadColdProperties(); state.LoadLearningProperties(); state.LoadTrainingProperties(); _ = state.VoiceTurns; }
         state.CloseColdProperties();
         state.CloseVoiceTurns();
         state.CloseLearningProperties();
+        state.CloseTrainingProperties();
     }
     private static Dictionary<string, string> Small(RuntimeState state) => new() {
         [nameof(RuntimeState.AgentControls)] = JsonSerializer.Serialize(state.AgentControls),

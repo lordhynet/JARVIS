@@ -18,7 +18,13 @@ internal sealed class StoragePhaseCapture : IDisposable
     private static readonly HashSet<string> Allowed = new(StringComparer.Ordinal) {
         "runtime.update.context", "runtime.update.begin", "runtime.update.privacy_gate", "runtime.update.lock_and_load",
         "runtime.update.deserialize", "runtime.update.callback", "runtime.update.serialize_after", "runtime.update.save", "runtime.update.commit",
-        "runtime.cold.hydrate", "runtime.learning.hydrate", "runtime.cold.serialize_hash", "runtime.learning.diff" };
+        "runtime.cold.hydrate", "runtime.learning.hydrate", "runtime.cold.serialize_hash", "runtime.learning.diff",
+        "runtime.training.hydrate", "runtime.training.diff",
+        "correction.context", "correction.begin", "correction.privacy_gate", "correction.lock", "correction.target", "correction.decision",
+        "correction.learning.baseline", "correction.training.inputs", "correction.learning.history", "correction.project", "correction.save", "correction.commit",
+        "deletion.context", "deletion.begin", "deletion.privacy_gate", "deletion.lock", "deletion.target", "deletion.decision",
+        "deletion.learning.baseline", "deletion.training.inputs", "deletion.learning.history", "deletion.project",
+        "deletion.reasoning.hydrate", "deletion.reasoning.retire", "deletion.cold.serialize_hash", "deletion.save", "deletion.commit" };
     private sealed class Frame(string operation, bool measured)
     {
         private int active = 1;
@@ -81,12 +87,15 @@ public sealed class StoragePhaseCaptureTests
             using (ExecutionContext.SuppressFlow()) unrelated = Task.Run(() => Emit(4));
             await unrelated;
             await Task.Run(() => Emit(.004, "runtime.cold.hydrate"));
+            Emit(.003, "runtime.training.hydrate"); Emit(.001, "runtime.training.diff");
             Emit(.002, "runtime.update.save");
         }
         Emit(5);
         var lane = Assert.Single(capture.Report()).Value;
         Assert.Equal(12, Assert.Single(lane["runtime.update.callback"].SamplesMs));
         Assert.Equal(4, Assert.Single(lane["runtime.cold.hydrate"].SamplesMs));
+        Assert.Equal(3, Assert.Single(lane["runtime.training.hydrate"].SamplesMs));
+        Assert.Equal(1, Assert.Single(lane["runtime.training.diff"].SamplesMs));
         Assert.Equal(2, Assert.Single(lane["runtime.update.save"].SamplesMs));
     }
 
@@ -123,8 +132,8 @@ public sealed partial class PostgresSessionTests
         var service = new TrainingService(store, host.Services.GetRequiredService<ISessionReader>(), new ForgeClock { Now = LearningMutationFixture.At.AddDays(20) });
         using var phases = new StoragePhaseCapture(); await fixture.Exercise(store, service, 1, phases);
         var report = phases.Report(); Assert.Equal(3, report.Count);
-        foreach (var lane in report.Values) {
-            Assert.Equal(5, lane["runtime.update.commit"].Count);
+        foreach (var (name, lane) in report) {
+            Assert.Equal(5, lane[name == "rebuild" ? "runtime.update.commit" : name + ".commit"].Count);
             Assert.All(lane.Values, phase => Assert.All(phase.SamplesMs, value => Assert.True(double.IsFinite(value) && value >= 0)));
         }
     }
