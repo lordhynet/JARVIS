@@ -10,7 +10,7 @@ export function initForgeToday({ api, node, button }) {
     if (today.status === 'not-started') {
       card.append(node('p', `Forge starts in ${today.startsInDays} day${today.startsInDays === 1 ? '' : 's'}. Day 1 of ${today.days}.`));
     } else if (today.status === 'graduated') {
-      card.append(node('p', `Forge is complete: all ${today.days} days.`));
+      card.append(node('p', `Programme calendar ended (${today.days} days).`));
     } else {
       card.append(node('p', `Day ${today.day} of ${today.days}${today.phase ? ` · ${today.phase}` : ''}${today.status === 'paused' ? ' · paused' : ''}`));
     }
@@ -20,7 +20,7 @@ export function initForgeToday({ api, node, button }) {
       return;
     }
     card.append(node('h3', today.scheduled ? 'Planned in your free time' : 'Top three suggestions'));
-    if (!today.scheduled) card.append(node('p', 'Your capacity is not set, so nothing is scheduled. These are suggestions in priority order.', 'muted'));
+    if (!today.scheduled) card.append(node('p', 'These activities are suggestions in priority order.', 'muted'));
     const list = node('ol', '', 'list');
     for (const item of today.top) list.append(node('li', `${item.label} · ${item.minutes} min · ${item.why}`, 'list-item'));
     card.append(list);
@@ -30,9 +30,11 @@ export function initForgeToday({ api, node, button }) {
     try {
       const today = await api('/forge/today');
       if (token === generation) draw(today);
-    } catch {
+    } catch (error) {
       // Forge is off by default, and 404 until a programme exists: show a calm state, not an error banner.
-      if (token === generation) draw(null, 'Forge is off or has no programme yet.');
+      if (token === generation) draw(null, error?.status === 404
+        ? 'Forge is off or has no programme yet.'
+        : 'Forge today is unavailable. Reload to retry.');
     }
   }
   return { load, clear() { generation++; card.replaceChildren(); } };

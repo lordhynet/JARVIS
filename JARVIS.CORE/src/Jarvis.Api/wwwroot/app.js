@@ -78,7 +78,9 @@ async function api(path, body, method, binary = false) {
   if (!response.ok) {
     if (browserAccess?.enrolled && response.status === 401) $('disconnect').click();
     if (browserAccess?.enrolled && ownerCall && response.status === 403) { ownerElevation = null; renderBrowserAccess(); }
-    throw new Error(data.error || data.detail || Object.values(data.errors || {}).flat().join(' ') || `Request failed (${response.status}).`);
+    const error = new Error(data.error || data.detail || Object.values(data.errors || {}).flat().join(' ') || `Request failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -144,7 +146,21 @@ document.querySelectorAll('[data-tab]').forEach(tab => tab.addEventListener('cli
   document.querySelectorAll('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== tab.dataset.tab);
   $('page-title').textContent = tab.textContent;
   if (!state.key) return;
-  try { if (tab.dataset.tab === 'sessions') { await loadSessions(); await loadDevices(); } if (tab.dataset.tab === 'devices') await loadDevices(); if (tab.dataset.tab === 'learning') await loadLearning(); if (tab.dataset.tab === 'tools') await loadTools(); if (tab.dataset.tab === 'agents') await intelligence.load(); if (tab.dataset.tab === 'privacy') await privacy.load(); if (tab.dataset.tab === 'planning') await planning.load(); if (tab.dataset.tab === 'imports') await imports.load(); if (tab.dataset.tab === 'briefing') { await travel.load(); await forgeToday.load(); } if (tab.dataset.tab === 'recordings') await recordings.load(); await extraModules.load(tab.dataset.tab); } catch (e) { notice(e.message, true); }
+  const generation = connectionGeneration;
+  const current = () => generation === connectionGeneration && !!state.key;
+  try {
+    if (tab.dataset.tab === 'sessions') { await loadSessions(); if (!current()) return; await loadDevices(); }
+    if (tab.dataset.tab === 'devices') await loadDevices();
+    if (tab.dataset.tab === 'learning') await loadLearning();
+    if (tab.dataset.tab === 'tools') await loadTools();
+    if (tab.dataset.tab === 'agents') await intelligence.load();
+    if (tab.dataset.tab === 'privacy') await privacy.load();
+    if (tab.dataset.tab === 'planning') await planning.load();
+    if (tab.dataset.tab === 'imports') await imports.load();
+    if (tab.dataset.tab === 'briefing') await Promise.all([travel.load(), forgeToday.load()]);
+    if (tab.dataset.tab === 'recordings') await recordings.load();
+    if (current()) await extraModules.load(tab.dataset.tab);
+  } catch (e) { if (current()) notice(e.message, true); }
 }));
 on('connect-form', 'submit', async () => {
   connectionGeneration++;
