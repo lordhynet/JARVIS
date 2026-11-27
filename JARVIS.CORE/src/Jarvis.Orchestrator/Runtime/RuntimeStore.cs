@@ -10,6 +10,17 @@ public sealed record FxRefreshState(BudgetFxQuote? Quote = null, decimal? Unadju
 
 public sealed class RuntimeState
 {
+    private Action? trainingLoader;
+    [System.Text.Json.Serialization.JsonIgnore] public bool AreTrainingPropertiesLoaded => trainingLoader is null;
+    public void DeferTrainingProperties(Action loader) => trainingLoader = loader;
+    public void LoadTrainingProperties() {
+        if (trainingLoader is not { } load) return;
+        trainingLoader = null;
+        try { load(); } catch { trainingLoader = load; throw; }
+    }
+    public void CloseTrainingProperties() {
+        if (trainingLoader is not null) trainingLoader = () => throw new InvalidOperationException("Materialize training projections inside the store callback.");
+    }
     private Action? learningLoader;
     [System.Text.Json.Serialization.JsonIgnore] public bool AreLearningPropertiesLoaded => learningLoader is null;
     public void DeferLearningProperties(Action loader) => learningLoader = loader;
@@ -94,8 +105,8 @@ public sealed class RuntimeState
     public Dictionary<Guid, TrainingOperation> CoachingOperations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, ImprovementProgramme> Programmes { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Guid? ActiveProgrammeId { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } }
-    public Dictionary<Guid, TrainingAttempt> TrainingAttempts { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
-    public Dictionary<Guid, TrainingOperation> TrainingOperations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    public Dictionary<Guid, TrainingAttempt> TrainingAttempts { get { LoadTrainingProperties(); return field; } set { LoadTrainingProperties(); field = value; } } = [];
+    public Dictionary<Guid, TrainingOperation> TrainingOperations { get { LoadTrainingProperties(); return field; } set { LoadTrainingProperties(); field = value; } } = [];
     public Dictionary<Guid, LearningItem> TrainingBaselines { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
     public Dictionary<Guid, HashSet<Guid>> TrainingBaselineReviews { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
     public Dictionary<Guid, long> TrainingManualSequences { get { LoadLearningProperties(); return field; } set { LoadLearningProperties(); field = value; } } = [];
@@ -143,6 +154,13 @@ public readonly record struct AudioLeaseState(AudioLease? Lease, DateTimeOffset?
 
 public interface IRuntimeStore : IRuntimeReader
 {
+    Task<bool> DeleteTrainingAttemptAsync(Guid id, int expectedRevision, TimeProvider clock, CancellationToken ct = default)
+        => UpdateAsync(s => Jarvis.Orchestrator.Training.TrainingDeletion.Apply(s, id, expectedRevision, clock), ct);
+    Task<TrainingAttempt> CorrectTrainingAnswerAsync(Guid id, CorrectTrainingAnswerRequest request, TimeProvider clock, CancellationToken ct = default)
+    {
+        var normalized = Jarvis.Orchestrator.Training.TrainingCorrection.Normalize(request);
+        return UpdateAsync(s => Jarvis.Orchestrator.Training.TrainingCorrection.Apply(s, id, normalized, clock), ct);
+    }
     Task<LearningItem> CreateLearningItemAsync(CreateLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {
         var normalized = LearningService.NormalizeCreate(request);

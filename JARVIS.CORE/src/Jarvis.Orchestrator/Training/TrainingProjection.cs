@@ -3,6 +3,9 @@ using Jarvis.Orchestrator.Runtime;
 
 namespace Jarvis.Orchestrator.Training;
 
+// Existing review identity/event/sequence only. Transient projection input, no new history or authority.
+public sealed record TrainingReviewInput(Guid RequestId, ReviewEvent Event, long Sequence);
+
 public static class TrainingProjection
 {
     public static TimeZoneInfo Zone(string? id)
@@ -49,16 +52,25 @@ public static class TrainingProjection
     // and resource/epoch/revision checked inside the caller's existing transaction boundary.
     public static LearningItem Project(Guid questionId, LearningItem baseline, IReadOnlySet<Guid> includedReviews,
         IEnumerable<LearningReview> reviews, IReadOnlyDictionary<Guid, long> manualSequences, IEnumerable<TrainingAttempt> attempts)
+        => ProjectEvents(questionId, baseline, includedReviews,
+            reviews.Select(r => new TrainingReviewInput(r.RequestId, r.Event, manualSequences.GetValueOrDefault(r.RequestId))), attempts);
+
+    public static LearningItem ProjectEvents(Guid questionId, LearningItem baseline, IReadOnlySet<Guid> includedReviews,
+        IEnumerable<TrainingReviewInput> reviews, IEnumerable<TrainingAttempt> attempts)
     {
         Guard.Require(baseline.Id == questionId, 409, "Projection baseline belongs to another question.");
         var current = baseline;
-        var events = new List<(DateTimeOffset At, long Order, ReviewRating? Rating, TrainingAssessment? Assessment)>();
-        events.AddRange(reviews.Where(x => x.Event.LearningItemId == questionId && !includedReviews.Contains(x.RequestId))
-            .Select(x => (x.Event.ReviewedAt, manualSequences.GetValueOrDefault(x.RequestId), (ReviewRating?)x.Event.Rating, (TrainingAssessment?)null)));
+        var events = new List<(DateTimeOffset At, long Order, Guid Identity, ReviewRating? Rating, TrainingAssessment? Assessment)>();
+        var selected = reviews.Where(r => r.Event is null || r.Event.LearningItemId == questionId && !includedReviews.Contains(r.RequestId)).ToArray();
+        if (selected.Any(r => r.RequestId == Guid.Empty || r.Event is null || r.Event.Id == Guid.Empty ||
+            !Enum.IsDefined(r.Event.Rating) || r.Event.ReviewedAt == default || r.Sequence < 0))
+            throw new InvalidDataException("Invalid training projection review history.");
+        events.AddRange(selected.Select(r => (r.Event.ReviewedAt, r.Sequence, r.RequestId, (ReviewRating?)r.Event.Rating, (TrainingAssessment?)null)));
         events.AddRange(attempts.Where(x => x.QuestionId == questionId && !x.Skipped && x.DeletedAt is null &&
             x.CanonicalAssessment?.ContentScore is not null && x.CanonicalAssessment.TextRevision == x.TextRevision)
-            .Select(x => (x.SubmittedAt, x.Sequence, (ReviewRating?)null, x.CanonicalAssessment)));
-        foreach (var entry in events.OrderBy(x => x.At).ThenBy(x => x.Order))
+            .Select(x => (x.SubmittedAt, x.Sequence, x.Id, (ReviewRating?)null, x.CanonicalAssessment)));
+        // Normal sequence order is unchanged. Legacy equal-time/missing-sequence ties must not depend on a SQL plan's row order.
+        foreach (var entry in events.OrderBy(x => x.At).ThenBy(x => x.Order).ThenBy(x => x.Identity))
         {
             if (entry.Rating is ReviewRating rating) { current = Manual(current, rating, entry.At); continue; }
             var assessment = entry.Assessment!;
