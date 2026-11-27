@@ -49,7 +49,7 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
     public (string Model, decimal PerMinute, string ApiKey) TranscriptionRates() { var rates = rateCards.ReadTranscription(); budget.RequireConfigured(); return rates; }
     public BudgetLimits Limits => new(config.GetValue(ConfigKeys.DailyLimitUsd, 2m), config.GetValue(ConfigKeys.MonthlyLimitUsd, 50m),
         config.GetValue(ConfigKeys.BackgroundLimitUsd, 15m), config.GetValue(ConfigKeys.VoiceLimitUsd, 30m),
-        config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m), SeriousDailyCap);
+        config.GetValue(ConfigKeys.InteractiveLimitUsd, 5m), SeriousDailyCap, ForgeSettings.MonthlyAllowanceGbp(config));
     private decimal? SeriousDailyCap => decimal.TryParse(config[ConfigKeys.VoiceSeriousDailyGbp], NumberStyles.AllowDecimalPoint,
         CultureInfo.InvariantCulture, out var cap) ? cap : null;
     public string Model(string profile) => config[ConfigKeys.AiProfilePrefix(profile) + ConfigKeys.Model] ?? throw new DomainException(503, "AI model profile is missing.");
