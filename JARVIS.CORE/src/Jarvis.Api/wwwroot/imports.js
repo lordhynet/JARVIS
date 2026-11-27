@@ -43,8 +43,12 @@ export function initImports({ api, node, button, notice }) {
         const questions = node('ol', '', 'list'); for (const question of pack.likelyQuestions) questions.append(node('li', question)); detail.append(questions);
         // Repeats are safe: Core derives each card's request ID from the advert and question, so nothing duplicates.
         detail.append(button('Create review cards for these questions', async () => {
-          const result = await api(`/imports/${id}/prep-pack/cards`, { questions: pack.likelyQuestions.map((_, i) => i) });
-          notice(`${result.created} new review cards, ${result.existing} already existed${result.retired ? `, ${result.retired} retired` : ''}. Find them under Learning.`);
+          if (!current()) return;
+          try {
+            const result = await api(`/imports/${id}/prep-pack/cards`, { questions: pack.likelyQuestions.map((_, i) => i), expectedPackFingerprint: pack.fingerprint, dataEpoch: pack.dataEpoch });
+            if (!current()) return;
+            notice(`${result.created} new review cards, ${result.existing} already existed${result.retired ? `, ${result.retired} retired` : ''}. Find them under Learning.`);
+          } catch (error) { if (current()) throw error; }
         }));
       }
       return;

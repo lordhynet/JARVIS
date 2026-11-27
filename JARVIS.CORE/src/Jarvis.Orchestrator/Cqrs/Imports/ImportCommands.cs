@@ -30,7 +30,7 @@ public sealed class ImportQueryHandlers(IRuntimeReader reader) :
     public Task<InterviewPrepPack> HandleAsync(GetImportPrepPack query, CancellationToken ct = default) => reader.ReadAsync(s =>
     {
         Guard.Require(s.ImportedDocuments.TryGetValue(query.Id, out var document), 404, "Import not found.");
-        return Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values);
+        return Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values) with { DataEpoch = PrivacyContext.Epoch };
     }, ct);
 
     public Task<IReadOnlyList<ImportedDocumentSummary>> HandleAsync(ListImports query, CancellationToken ct = default) =>
@@ -65,35 +65,49 @@ public sealed record CreateImportPrepPackCards(Guid DocumentId, CreatePrepPackCa
 /// repeat returns the original card instead of creating a duplicate. Questions come from the fixed, code-owned
 /// competency list, never from advert text. Deleting the advert stops new cards; cards already made stay the owner's.
 /// </summary>
-public sealed class PrepPackCardCommands(IRuntimeReader reader, LearningService learning) :
+public sealed class PrepPackCardCommands(IRuntimeStore store, TimeProvider clock) :
     ICommandHandler<CreateImportPrepPackCards, PrepPackCards>
 {
     public const string AnswerGuide = "Answer with a real Story Bank story: the situation, what you personally did, the key decision and " +
         "trade-off, and the result. Say \"not measured\" if you have no number; never invent one.";
 
-    public async Task<PrepPackCards> HandleAsync(CreateImportPrepPackCards command, CancellationToken ct = default)
+    public Task<PrepPackCards> HandleAsync(CreateImportPrepPackCards command, CancellationToken ct = default)
     {
         var picked = command.Request.Questions ?? [];
         Guard.Require(picked.Count is > 0 and <= Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.MaxQuestions &&
             picked.Distinct().Count() == picked.Count, 400, "Choose between one and twenty distinct questions.");
-        var (pack, receipts) = await reader.ReadAsync(s => {
+        Guard.Require(command.Request.DataEpoch is >= 0, 400, "Reload the prep pack to capture its data generation.");
+        Guard.Require(PrivacyContext.Epoch == command.Request.DataEpoch, 409, "Prep pack belongs to another data generation. Reload it.");
+        Guard.Require(command.Request.ExpectedPackFingerprint is { Length: 64 }, 400, "Reload the prep pack before selecting questions.");
+        var epoch = command.Request.DataEpoch.Value;
+        return store.UpdateAsync<PrepPackCards>(s => {
             Guard.Require(s.ImportedDocuments.TryGetValue(command.DocumentId, out var document), 404, "Import not found.");
-            return (Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values), s.CreationReceipts.Keys.ToHashSet());
-        }, ct);
-        Guard.Require(picked.All(i => i >= 0 && i < pack.LikelyQuestions.Count), 400, "A selected question is not in this prep pack.");
-        var cards = new List<LearningItem>(); int created = 0, existing = 0, retired = 0;
-        foreach (var index in picked.Order())
-        {
-            ct.ThrowIfCancellationRequested();
-            var question = pack.LikelyQuestions[index];
-            var requestId = Jarvis.Orchestrator.Domains.DomainPolicy.StableId("prep-pack-card:v1:" + pack.DocumentId.ToString("N") + ":" + question);
-            try
+            var pack = Jarvis.Orchestrator.Coaching.InterviewPrepPackBuilder.Build(document, s.Stories.Values);
+            Guard.Require(pack.Fingerprint == command.Request.ExpectedPackFingerprint, 409, "Prep pack questions changed. Reload before creating cards.");
+            Guard.Require(picked.All(i => i >= 0 && i < pack.LikelyQuestions.Count), 400, "A selected question is not in this prep pack.");
+            var cards = new List<LearningItem>(); int created = 0, existing = 0, retired = 0;
+            var changes = new List<LearningCreationChange>();
+            foreach (var index in picked.Order())
             {
-                cards.Add(await learning.CreateAsync(new CreateLearningRequest(LearningDomain.InterviewStory, question, AnswerGuide, requestId), ct));
-                if (receipts.Contains(requestId)) existing++; else created++;
+                ct.ThrowIfCancellationRequested();
+                var question = pack.LikelyQuestions[index];
+                var requestId = Jarvis.Orchestrator.Domains.DomainPolicy.StableId("prep-pack-card:v1:" + pack.DocumentId.ToString("N") + ":" + question);
+                try
+                {
+                    var prior = s.CreationReceipts.GetValueOrDefault(requestId);
+                    var change = LearningService.DecideCreate(new(LearningDomain.InterviewStory, question, AnswerGuide, requestId), clock, epoch, prior);
+                    cards.Add(change.Result); changes.Add(change);
+                    if (prior is not null) existing++; else created++;
+                }
+                catch (DomainException error) when (error.StatusCode == 410) { retired++; } // aged or source-retired receipt: never recreate
             }
-            catch (DomainException error) when (error.StatusCode == 410) { retired++; } // aged or source-retired receipt: never recreate
-        }
-        return new(created, existing, retired, cards.AsReadOnly());
+            // Finish every decision before publishing. A later conflict/cancellation cannot leave a partial batch.
+            ct.ThrowIfCancellationRequested();
+            foreach (var change in changes.Where(c => c.Receipt is not null)) {
+                s.Learning.Add(change.Result.Id, change.Result);
+                s.CreationReceipts.Add(change.Receipt!.RequestId, change.Receipt);
+            }
+            return new(created, existing, retired, cards.AsReadOnly());
+        }, ct);
     }
 }

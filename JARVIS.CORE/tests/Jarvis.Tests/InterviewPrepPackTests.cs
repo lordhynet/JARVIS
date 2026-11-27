@@ -192,12 +192,12 @@ public sealed class PrepPackCardTests
         var pack = (await client.GetFromJsonAsync<InterviewPrepPack>($"/api/imports/{advert.Id}/prep-pack", LifeScenarioTests.Json))!;
         Assert.True(pack.LikelyQuestions.Count >= 2);
 
-        var first = await LifeScenarioTests.Post<PrepPackCards>(client, $"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([1, 0]));
+        var first = await LifeScenarioTests.Post<PrepPackCards>(client, $"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([1, 0], pack.Fingerprint, pack.DataEpoch));
         Assert.Equal(2, first.Created); Assert.Equal(0, first.Existing); Assert.Equal(0, first.Retired);
         Assert.Equal(new[] { pack.LikelyQuestions[0], pack.LikelyQuestions[1] }, first.Cards.Select(c => c.Prompt).ToArray());
         Assert.All(first.Cards, c => { Assert.Equal(LearningDomain.InterviewStory, c.Domain); Assert.Equal(PrepPackCardCommandsGuide, c.Answer); });
 
-        var again = await LifeScenarioTests.Post<PrepPackCards>(client, $"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0, 1]));
+        var again = await LifeScenarioTests.Post<PrepPackCards>(client, $"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0, 1], pack.Fingerprint, pack.DataEpoch));
         Assert.Equal(0, again.Created); Assert.Equal(2, again.Existing);
         Assert.Equal(first.Cards.Select(c => c.Id), again.Cards.Select(c => c.Id));
         var cards = (await client.GetFromJsonAsync<List<LearningItem>>("/api/learning", LifeScenarioTests.Json))!;
@@ -211,14 +211,15 @@ public sealed class PrepPackCardTests
     {
         using var host = new JarvisApiFactory(); using var client = host.CreateAuthorisedClient();
         var advert = await LifeScenarioTests.Post<ImportedDocument>(client, "/api/imports", new ImportDocumentRequest(Guid.NewGuid(), "job-advert", "Role", Advert, true));
+        var pack = (await client.GetFromJsonAsync<InterviewPrepPack>($"/api/imports/{advert.Id}/prep-pack", LifeScenarioTests.Json))!;
         foreach (var bad in new[] { Array.Empty<int>(), [0, 0], [-1], [999], Enumerable.Range(0, 21).ToArray() })
-            using (var response = await client.PostAsJsonAsync($"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest(bad)))
+            using (var response = await client.PostAsJsonAsync($"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest(bad, pack.Fingerprint, pack.DataEpoch)))
                 Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var cv = await LifeScenarioTests.Post<ImportedDocument>(client, "/api/imports", new ImportDocumentRequest(Guid.NewGuid(), "cv", "CV", "I built payments in C#.", true));
-        using (var wrong = await client.PostAsJsonAsync($"/api/imports/{cv.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0])))
+        using (var wrong = await client.PostAsJsonAsync($"/api/imports/{cv.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0], pack.Fingerprint, pack.DataEpoch)))
             Assert.Equal(HttpStatusCode.NotFound, wrong.StatusCode);
         using (var deleted = await client.DeleteAsync($"/api/imports/{advert.Id}?revision={advert.Revision}")) Assert.True(deleted.IsSuccessStatusCode);
-        using (var gone = await client.PostAsJsonAsync($"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0])))
+        using (var gone = await client.PostAsJsonAsync($"/api/imports/{advert.Id}/prep-pack/cards", new CreatePrepPackCardsRequest([0], pack.Fingerprint, pack.DataEpoch)))
             Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
         Assert.Empty((await client.GetFromJsonAsync<List<LearningItem>>("/api/learning", LifeScenarioTests.Json))!);
     }

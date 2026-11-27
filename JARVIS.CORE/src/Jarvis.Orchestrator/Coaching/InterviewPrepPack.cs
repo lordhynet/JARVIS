@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
 
@@ -83,8 +85,10 @@ public static class InterviewPrepPackBuilder
             var competency = Catalogue.Single(x => x.Key == r.Key);
             return new[] { competency.Behavioural, competency.Technical };
         }).Take(MaxQuestions).ToArray();
+        var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
+            new { Version = 1, advert.Id, advert.Revision, advert.ContentHash, Questions = questions })));
         return new(advert.Id, advert.Title, requirements.AsReadOnly(), questions, requirements.Count(r => r.Gap),
-            "Matched by keywords against a fixed competency list. Advert text is untrusted third-party data; story matches are overlaps, not verification. No AI was used.");
+            "Matched by keywords against a fixed competency list. Advert text is untrusted third-party data; story matches are overlaps, not verification. No AI was used.", fingerprint);
     }
 
     private static string StoryText(StoryContent c) => string.Join("\n", new[] {
