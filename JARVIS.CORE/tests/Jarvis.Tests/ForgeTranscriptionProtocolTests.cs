@@ -22,7 +22,7 @@ public sealed class ForgeTranscriptionProtocolTests
         Assert.Null(transcript.Confidence); Assert.Equal(ForgeTranscriptionProtocol.NoConfidenceMethod, transcript.ConfidenceMethod);
         // Owner decision (27 Nov): keep gpt-transcribe, so a clean turn is practice only: unscored, and no futile retry.
         var gate = ForgeTurnQualityGate.Assess("fr-FR", new(3, 2, ForgeSpeechActivity.PcmActiveMethod), transcript.Text, transcript.Confidence,
-            transcript.DetectedLanguage, ForgeTranscriptionProtocol.ReturnsConfidence("gpt-transcribe"));
+            transcript.DetectedLanguage, transcript.QualityEvidenceAvailable);
         Assert.Equal(ForgeTurnUnscorableReason.QualityEvidenceUnavailable, gate.Reason);
         Assert.True(gate.PracticeOnly); Assert.False(gate.Scorable); Assert.False(gate.RetryOffered);
     }
