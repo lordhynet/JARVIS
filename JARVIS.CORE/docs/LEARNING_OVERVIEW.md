@@ -10,3 +10,9 @@ No AI and nothing stored: `LearningOverviewBuilder` projects the current cards a
 - Reviews of cards that no longer exist are ignored.
 
 Browser: the Learning panel shows the overview above the due cards. It refreshes after every rating and is cleared on erase or disconnect.
+
+The optional summary loads independently of due cards. Unavailable/slow summaries cannot block review; failures display unavailable, never invented zero counts. Current-refresh and connection fences discard stale responses. Forecast labels describe rolling24-hour groups and focus counts Again events, including repeated reviews of a card; these are self-reported ratings, not verified skill grades.
+
+The existing IRuntimeReader has a scoped overview port. Its in-memory default uses canonical state; PostgreSQL reads only card metadata and recent Event projections from RuntimeLearningRows in one repeatable-read/privacy-gated transaction. Prompts/answers, replay Results, unrelated learning kinds and the cold runtime document are not hydrated. Exact .NET timestamp filtering follows a widened SQL candidate window, preserving offsets and submicrosecond boundaries. Invalid selected identities/domain/rating fail closed. No migration, new table, persistent summary, counter or service is added.
+
+This is not a high-volume or50ms performance claim. Card metadata is scanned for global counts, and review time filtering can still scan history; existing kind/card indexes are reused. Profile/explain and consider a reviewed time index before volume rollout. Local PostgreSQL may be unavailable; actual SQL/privacy parity tests must pass in CI before any merge, followed by independent exact-source review.

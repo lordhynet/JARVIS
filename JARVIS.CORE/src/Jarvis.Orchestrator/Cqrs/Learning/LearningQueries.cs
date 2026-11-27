@@ -20,6 +20,6 @@ public sealed class LearningQueryHandlers(IRuntimeReader reader, TimeProvider cl
     public Task<LearningOverview> HandleAsync(GetLearningOverview query, CancellationToken ct = default)
     {
         var now = clock.GetUtcNow();
-        return reader.ReadAsync(s => LearningOverviewBuilder.Build(s.Learning.Values, s.Reviews.Values.Select(r => r.Event), now), ct);
+        return reader.ReadLearningOverviewAsync(now, ct);
     }
 }

@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
+using Jarvis.Orchestrator.Cqrs.Learning;
 
 namespace Jarvis.Tests;
 
@@ -66,5 +67,43 @@ public sealed class LearningOverviewTests
         Assert.Equal(1, overview.Cards); Assert.Equal(1, overview.Reviewed7Days); Assert.Equal(1, overview.Again7Days);
         Assert.Equal(LearningDomain.French, overview.Focus);
         Assert.Equal(LearningDomain.French, Assert.Single(overview.Domains).Domain);
+    }
+
+    [Fact]
+    public void Metadata_projection_preserves_tick_boundaries_offsets_and_hard_recall()
+    {
+        var now = Now.AddTicks(7); var since = now.AddDays(-7);
+        var card = Card(LearningDomain.Databases, now.AddHours(24).AddTicks(-1).ToOffset(TimeSpan.FromHours(5.5)));
+        var events = new[] { Review(card, ReviewRating.Again, since), Review(card, ReviewRating.Again, since.AddTicks(1)),
+            Review(card, ReviewRating.Hard, now), Review(card, ReviewRating.Easy, now.AddTicks(1)) };
+        var full = LearningOverviewBuilder.Build([card], events, now);
+        var metadata = LearningOverviewBuilder.BuildMetadata([new(card.Id, card.Domain, card.DueAt)], events, now);
+        Assert.Equal(System.Text.Json.JsonSerializer.Serialize(full), System.Text.Json.JsonSerializer.Serialize(metadata));
+        Assert.Equal(2, metadata.Reviewed7Days); Assert.Equal(1, metadata.Again7Days); Assert.Equal(1, metadata.Hard7Days);
+        Assert.Equal(0.5, metadata.RecallRate7Days); Assert.Equal(1, metadata.Forecast[0]);
+    }
+
+    [Fact]
+    public void Unknown_selected_metadata_fails_closed()
+    {
+        var card = Card(LearningDomain.French, Now);
+        Assert.Throws<InvalidDataException>(() => LearningOverviewBuilder.BuildMetadata([new(card.Id, (LearningDomain)999, Now)], [], Now));
+        Assert.Throws<InvalidDataException>(() => LearningOverviewBuilder.Build([card], [Review(card, (ReviewRating)999, Now)], Now));
+    }
+
+    private sealed class OverviewReader : IRuntimeReader
+    {
+        public DateTimeOffset? Seen { get; private set; }
+        public Task<T> ReadAsync<T>(Func<RuntimeState, T> read, CancellationToken ct = default) => throw new InvalidOperationException("Broad read used.");
+        public Task<LearningOverview> ReadLearningOverviewAsync(DateTimeOffset now, CancellationToken ct = default) {
+            Seen = now; return Task.FromResult(LearningOverviewBuilder.Build([], [], now));
+        }
+    }
+    [Fact]
+    public async Task Query_uses_the_explicit_read_port()
+    {
+        var reader = new OverviewReader(); var before = DateTimeOffset.UtcNow;
+        var result = await new LearningQueryHandlers(reader, TimeProvider.System).HandleAsync(new GetLearningOverview());
+        Assert.Equal(reader.Seen, result.AsOf); Assert.True(reader.Seen >= before && reader.Seen <= DateTimeOffset.UtcNow);
     }
 }

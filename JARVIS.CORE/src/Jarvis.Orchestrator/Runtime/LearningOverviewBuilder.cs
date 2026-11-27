@@ -2,6 +2,9 @@ using Jarvis.Contracts;
 
 namespace Jarvis.Orchestrator.Runtime;
 
+// Transient metadata from the canonical card, never a stored card or a second identity/authority.
+public sealed record LearningOverviewCard(Guid Id, LearningDomain Domain, DateTimeOffset DueAt);
+
 /// <summary>
 /// Pure, read-only projection of learning cards and review events into an overview. No AI and nothing stored.
 /// Focus is the domain with the most "Again" ratings in the last seven days (ties: most due now, then name);
@@ -12,10 +15,15 @@ public static class LearningOverviewBuilder
     public const int ForecastDays = 7;
 
     public static LearningOverview Build(IEnumerable<LearningItem> items, IEnumerable<ReviewEvent> reviews, DateTimeOffset now)
+        => BuildMetadata(items.Select(i => new LearningOverviewCard(i.Id, i.Domain, i.DueAt)), reviews, now);
+
+    public static LearningOverview BuildMetadata(IEnumerable<LearningOverviewCard> items, IEnumerable<ReviewEvent> reviews, DateTimeOffset now)
     {
         var cards = items.ToDictionary(i => i.Id);
+        if (cards.Values.Any(c => !Enum.IsDefined(c.Domain))) throw new InvalidDataException("Unknown learning overview domain.");
         var since = now.AddDays(-7);
         var recent = reviews.Where(r => r.ReviewedAt > since && r.ReviewedAt <= now && cards.ContainsKey(r.LearningItemId)).ToArray();
+        if (recent.Any(r => !Enum.IsDefined(r.Rating))) throw new InvalidDataException("Unknown learning overview rating.");
         var forecast = new int[ForecastDays];
         foreach (var card in cards.Values)
         {

@@ -143,6 +143,55 @@ public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> fac
         var result = rows.Select(LearningCard).Where(x => !dueOnly || x.DueAt <= cutoff).OrderBy(x => x.DueAt).ToArray();
         await tx.CommitAsync(ct); return result;
     }
+    public async Task<LearningOverview> ReadLearningOverviewAsync(DateTimeOffset now, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
+        await PostgresPrivacyGate.LockAsync(db, ct);
+        // Only metadata crosses this boundary; card bodies, replay Results and cold runtime collections stay unloaded.
+        var rows = await db.Database.SqlQueryRaw<OverviewCardRow>("""
+            SELECT "Id", jsonb_build_object('Id',"Json"->'Id','Domain',"Json"->'Domain','DueAt',"Json"->'DueAt')::text AS "Json"
+            FROM "RuntimeLearningRows" WHERE "Kind"='Learning'
+            """).ToArrayAsync(ct);
+        var cards = rows.Select(row => {
+            var card = JsonSerializer.Deserialize<LearningOverviewCard>(row.Json) ?? throw new InvalidDataException("Null overview card metadata.");
+            if (card.Id != row.Id || !Enum.IsDefined(card.Domain)) throw new InvalidDataException("Overview card identity/domain differs from canonical row.");
+            return card;
+        }).ToArray();
+        // PostgreSQL timestamps round to microseconds. Widen the candidate range, then apply exact .NET ticks below.
+        var lower = now.AddDays(-7).ToUniversalTime().AddTicks(-10);
+        var upper = LearningReadProjection.CandidateUpperBound(now);
+        var reviewRows = await db.Database.SqlQuery<OverviewReviewRow>($"""
+            SELECT r."Id", r."Json"->>'RequestId' AS "RequestId", (r."Json"->'Event')::text AS "EventJson",
+                (r."Json"->'Event'->>'ReviewedAt' IS NOT NULL) AS "HasReviewedAt"
+            FROM "RuntimeLearningRows" r JOIN "RuntimeLearningRows" c
+              ON c."Kind"='Learning' AND lower(r."Json"->'Event'->>'LearningItemId')=c."Id"::text
+            WHERE r."Kind"='Reviews' AND (r."Json"->'Event'->>'ReviewedAt' IS NULL OR
+              ((r."Json"->'Event'->>'ReviewedAt')::timestamptz >= {lower} AND
+               (r."Json"->'Event'->>'ReviewedAt')::timestamptz <= {upper}))
+            """).ToArrayAsync(ct);
+        var reviews = reviewRows.Select(row => {
+            if (!Guid.TryParse(row.RequestId, out var requestId) || requestId != row.Id || !row.HasReviewedAt)
+                throw new InvalidDataException("Overview review identity differs from canonical row.");
+            var review = JsonSerializer.Deserialize<ReviewEvent>(row.EventJson) ?? throw new InvalidDataException("Null overview event.");
+            if (review.Id == Guid.Empty || review.LearningItemId == Guid.Empty) throw new InvalidDataException("Invalid overview event identity.");
+            return review;
+        }).ToArray();
+        var result = LearningOverviewBuilder.BuildMetadata(cards, reviews, now);
+        await tx.CommitAsync(ct); return result;
+    }
+    private sealed class OverviewCardRow
+    {
+        public Guid Id { get; set; }
+        public string Json { get; set; } = "";
+    }
+    private sealed class OverviewReviewRow
+    {
+        public Guid Id { get; set; }
+        public string? RequestId { get; set; }
+        public string EventJson { get; set; } = "";
+        public bool HasReviewedAt { get; set; }
+    }
     public async Task<LearningDuePage> ReadDueLearningPageAsync(DateTimeOffset cutoff, int size = 50, LearningDueCursor? after = null, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
