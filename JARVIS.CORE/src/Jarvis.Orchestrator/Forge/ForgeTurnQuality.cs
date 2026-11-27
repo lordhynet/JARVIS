@@ -43,14 +43,13 @@ public static class ForgeTurnQualityGate
     public const double MinimumConfidence = .6;
     // Fluent speech rarely exceeds ~4 words/second; far above that suggests a transcript invented from noise.
     public const double MaximumWordsPerSpeechSecond = 6.5;
-    public static readonly IReadOnlySet<string> StarterLocales = new HashSet<string>(StringComparer.Ordinal) { "en-GB", "fr-FR", "es-ES" };
 
     // Eligibility needs explicit clear-speech evidence. PCM energy plus a plausible transcript cannot certify a turn, because
     // noise is energetic and transcribers invent text, so a missing transcription confidence is unscorable, not assumed good.
     public static ForgeTurnQuality Assess(string expectedLocale, ForgeSpeechActivity? activity, string? transcript,
         double? transcriptionConfidence, string? detectedLanguage = null)
     {
-        if (!StarterLocales.Contains(expectedLocale))
+        if (!ForgeLanguageProfiles.IsStarter(expectedLocale))
             throw new ArgumentOutOfRangeException(nameof(expectedLocale), "An explicit supported practice locale is required for every turn.");
         if (transcriptionConfidence is { } c && (double.IsNaN(c) || c is < 0 or > 1))
             throw new ArgumentOutOfRangeException(nameof(transcriptionConfidence), "Confidence must be between 0 and 1.");
@@ -72,6 +71,7 @@ public static class ForgeTurnQualityGate
         return Result(null);
     }
 
+    // Locale authority is ForgeLanguageProfiles (PF-07); the gate never keeps its own list.
     // Provider language hints are often bare ("fr") or differently cased ("FR-ca"); compare the primary subtag only.
     // Region variants are configured elsewhere and must not turn an accent into a mismatch.
     private static bool SameLanguage(string detected, string expected) =>
