@@ -8,6 +8,10 @@ The sixteen Addendum V2 §3 divisions are code-owned **Domain Registry templates
 
 The install is **not all-or-nothing**. Each division is a separate registry draft. Concurrent self-installs deduplicate through the registry's request replay. If another creator saves a `forge.*` definition between the install's initial list and its own save, that division can fail with a `409` and the batch stops part-way. Nothing is overwritten, and simply retrying completes the remaining divisions, because completed or existing keys are skipped.
 
+The browser Today panel offers an explicit **Install Forge division drafts** action after a programme loads. It submits only `includeOptional: false`, never on page load or reload. Returned drafted/existing/skipped counts describe the response statuses, not guaranteed new physical inserts during a concurrent replay. Review domain versions and dependencies under **Proactive agents**; approval/activation remains a separate owner action. This uses the same CoreOwner draft authority as manual registry drafts; activation/disable/rollback retain existing `domain.manage` elevation.
+
+One browser draft action stays in flight across redraws until it settles. Reload, disconnect or erasure invalidate display/action closures, suppressing stale notices and detached actions; they do not claim an already-dispatched command was cancelled or rolled back. An unconfirmed or malformed result reports possible partial completion and allows a new explicit retry after settlement, using Core's existing deterministic IDs. There is no automatic retry, new browser queue, receipt, store or activation call.
+
 - **Template mode** with the installed `core_template_practice` capability only: no paid AI, no external action, `UsesPersonalContext = false` for every division.
 - **Protected privacy classes:** WEALTH, HEALTH, GLOBAL, RELATIONSHIPS. Their practice prompts never ask for private values (amounts, symptoms, partners). Private values belong in the PF-03 encrypted check-ins, not in domain text.
 - **RELATIONSHIPS is optional** and skipped unless `includeOptional` is true.

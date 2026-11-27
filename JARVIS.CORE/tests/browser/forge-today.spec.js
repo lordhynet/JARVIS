@@ -9,6 +9,7 @@ test('Forge Today panel shows a calm off state on the daily briefing tab', async
   const panel = page.locator('#forge-today');
   await expect(panel).toContainText('Forge today');
   await expect(panel).toContainText('Forge is off or has no programme yet.');
+  await expect(panel.getByRole('button', { name: 'Install Forge division drafts', exact: true })).toHaveCount(0);
   expect(weekReads).toEqual([]);
   await expect(panel.getByRole('button', { name: 'Reload Forge today', exact: true })).toBeVisible();
   // The offline Travel panel may report TfL as unavailable; Forge itself must not raise an error banner.

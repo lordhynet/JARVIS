@@ -1,18 +1,35 @@
-// PF-09 browser Today view: read-only, the same block the spoken briefing uses. Text enters the DOM via textContent
-// only (node()). Protected-division goal titles are already redacted by Core; nothing private is cached in storage.
-export function initForgeToday({ api, node, button, notice = () => {} }) {
+// PF-09 read-only views plus explicit PF-02 draft setup. Text uses node()/textContent only; Core redacts protected
+// goal labels. No Forge data is cached in browser storage, and draft creation never activates domains.
+export function initForgeToday({ api, node, button }) {
   const card = node('div', '', 'card'); card.id = 'forge-today';
   document.querySelector('[data-panel=briefing]').append(card);
   let generation = 0;
+  let draftInFlight = null, draftButton = null;
+  async function installDrafts(token, status) {
+    if (token !== generation || draftInFlight) return;
+    const request = {}; draftInFlight = request; if (draftButton) draftButton.disabled = true;
+    status.textContent = 'Creating division drafts…';
+    try {
+      const result = await api('/forge/divisions/drafts', { includeOptional: false });
+      if (token !== generation) return;
+      if (!Array.isArray(result) || !result.length || !result.every(row => typeof row?.key === 'string' &&
+          row.key.startsWith('forge.') && ['drafted', 'existing', 'skipped-optional'].includes(row.status)) ||
+          new Set(result.map(row => row.key)).size !== result.length) throw new Error('Unconfirmed draft result');
+      const count = value => result.filter(row => row.status === value).length;
+      status.textContent = `Draft results: ${count('drafted')} drafted, ${count('existing')} existing, ${count('skipped-optional')} optional skipped. Existing definitions are left unchanged. Review drafts under Proactive agents. Activation is a separate owner action.`;
+    } catch {
+      if (token === generation) status.textContent = 'Draft creation could not be confirmed; it may have partly completed. Retry manually when Core is reachable to check and complete the remaining drafts.';
+    } finally {
+      if (draftInFlight === request) { draftInFlight = null; if (draftButton) draftButton.disabled = false; }
+    }
+  }
   function draw(today, message) {
+    draftButton = null;
     card.replaceChildren(node('h2', 'Forge today'), button('Reload Forge today', load));
     if (!today) { card.append(node('p', message, 'muted')); return; }
-    // PF-02: adds the sixteen divisions as registry drafts only; each still needs approval under Domains.
-    card.append(button('Install Forge division drafts', async () => {
-      const result = await api('/forge/divisions/drafts', { includeOptional: false });
-      const drafted = result.filter(x => x.status === 'drafted').length, existing = result.filter(x => x.status === 'existing').length;
-      notice(`${drafted} division drafts added, ${existing} already present. Approve each one under Domains; nothing was activated.`);
-    }));
+    const token = generation, status = node('p', '', 'muted'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    draftButton = button('Install Forge division drafts', () => installDrafts(token, status)); draftButton.disabled = !!draftInFlight;
+    card.append(draftButton, node('p', 'Creates standard division drafts; optional RELATIONSHIPS is skipped. Drafts with unmet dependencies stay blocked from activation.', 'muted'), status);
     if (today.status === 'not-started') {
       card.append(node('p', `Forge starts in ${today.startsInDays} day${today.startsInDays === 1 ? '' : 's'}. Day 1 of ${today.days}.`));
     } else if (today.status === 'graduated') {
@@ -79,5 +96,6 @@ export function initForgeToday({ api, node, button, notice = () => {} }) {
         : 'Forge today is unavailable. Reload to retry.');
     }
   }
-  return { load, clear() { generation++; card.replaceChildren(); } };
+  // Clear invalidates display/action closures; it does not pretend an already-dispatched Core command was undone.
+  return { load, clear() { generation++; draftButton = null; card.replaceChildren(); } };
 }
