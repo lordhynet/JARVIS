@@ -33,6 +33,17 @@ test('privacy preview and export are available without destructive confirmation'
 
 test('confirmed erasure clears private browser drafts and renders the reopen flow', async ({ page }) => {
   // Exercise browser state cleanup without erasing the shared test server database.
+  await page.addInitScript(() => {
+    const add = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function(type, listener, options) {
+      if (type === 'click' && this instanceof HTMLElement && this.dataset.tab === 'sessions' && typeof listener === 'function') {
+        return add.call(this, type, function(...args) {
+          const result = listener.apply(this, args); if (result?.then) window.__sessionNavigation = result; return result;
+        }, options);
+      }
+      return add.call(this, type, listener, options);
+    };
+  });
   let erased = false;
   await page.route('**/api/privacy/status', async route => route.fulfill({ json: {
     epoch: erased ? 1 : 0, revision: erased ? 2 : 1, erased, erasedAt: null, erasureRequestId: null
@@ -60,7 +71,8 @@ test('confirmed erasure clears private browser drafts and renders the reopen flo
   await expect(panel).toContainText('Core data erased');
   await expect(panel.getByLabel('Type START A NEW CORE', { exact: true })).toBeVisible();
   release();
-  await expect(page.locator('#notice')).toContainText('previous Core connection');
+  await page.evaluate(async () => { await window.__sessionNavigation; });
+  await expect(page.locator('#notice')).toContainText('Core database content erased');
   await expect(page.locator('#session-title')).toHaveValue('');
   await expect(page.locator('#session-list')).toBeEmpty();
 });

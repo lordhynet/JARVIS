@@ -35,3 +35,27 @@ public sealed record ForgeCalendarView(
 public sealed record InstallForgeDivisionsRequest(bool IncludeOptional = false);
 /// <summary>Status is "drafted", "existing" (left untouched) or "skipped-optional".</summary>
 public sealed record ForgeDivisionDraft(string Key, string Code, string Status, bool Protected, bool Optional, DomainRiskClass? Risk);
+
+/// <summary>One Forge "today" item. Labels never contain protected-division goal titles.</summary>
+public sealed record ForgeBriefingItem(string Label, int Minutes, string Why);
+/// <summary>
+/// The Forge "today" block shared by the spoken briefing and the browser Today view (PF-09). <c>Scheduled</c> is true
+/// only when a capacity-backed plan placed the items; otherwise they are suggestions and capacity is never assumed.
+/// </summary>
+public sealed record ForgeBriefing(string Status, int Day, int Days, string? Phase, int? StartsInDays, bool Scheduled,
+    IReadOnlyList<ForgeBriefingItem> Top, int DueReviews);
+
+/// <summary>One division's evidence in the weekly summary: counts of existing canonical records only, no titles.</summary>
+public sealed record ForgeWeekDivision(string Key, string Code, int Reviews, int TrainingAnswers, int CoachingAnswers, bool HasActiveGoal, bool Practised);
+/// <summary>
+/// J4 recorded activity for the owner. PracticeCoverage is a fraction of current focused divisions with classified
+/// practice, not weighted evidence coverage or a skill score. Unclassified provenance makes that fraction unknown.
+/// Minutes are not tracked yet, and planned minutes need capacity, so both are null rather than invented.
+/// </summary>
+public sealed record ForgeWeek(DateOnly From, DateOnly To, int Reviews, int TrainingAnswers, int CoachingAnswers,
+    int FocusDivisions, int PractisedDivisions, decimal? PracticeCoverage, int? ActualMinutes, int? PlannedMinutes,
+    IReadOnlyList<ForgeWeekDivision> Divisions, int UnclassifiedReviews = 0, int UnclassifiedTrainingAnswers = 0,
+    int UnclassifiedCoachingAnswers = 0, DateTimeOffset? AsOf = null);
+
+/// <summary>PF-09 evening view: recorded practice and next local day's suggestions; no capacity-backed plan.</summary>
+public sealed record ForgeEvening(ForgeWeek Today, ForgeBriefing Tomorrow, DateOnly? TomorrowDate = null);

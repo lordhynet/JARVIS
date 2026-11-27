@@ -88,10 +88,22 @@ public sealed class WindowsActionTests
         using var files = new Files(); var scope = Path.Combine(files.Root, "allowed"); var outside = Path.Combine(files.Root, "outside");
         Directory.CreateDirectory(scope); Directory.CreateDirectory(outside); File.WriteAllText(Path.Combine(scope, "report.txt"), "fixture"); File.WriteAllText(Path.Combine(outside, "report-secret.txt"), "fixture");
         var junction = Path.Combine(scope, "linked"); files.Junction = junction;
-        var info = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe")) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden };
-        info.ArgumentList.Add("-NoProfile"); info.ArgumentList.Add("-NonInteractive"); info.ArgumentList.Add("-Command");
-        info.ArgumentList.Add("New-Item -ItemType Junction -Path '" + junction.Replace("'", "''") + "' -Target '" + outside.Replace("'", "''") + "' | Out-Null");
-        using (var process = Process.Start(info)!) { Assert.True(process.WaitForExit(10000)); Assert.Equal(0, process.ExitCode); }
+        var fixtureRoot = Path.GetFullPath(files.Root) + Path.DirectorySeparatorChar;
+        foreach (var path in new[] { junction, outside }) {
+            if (!Path.GetFullPath(path).StartsWith(fixtureRoot, StringComparison.OrdinalIgnoreCase) ||
+                path.IndexOfAny(['"', '%', '!', '^', '&', '|', '<', '>', '\r', '\n']) >= 0)
+                throw new IOException("Junction fixture paths must stay inside its temporary root and contain no shell metacharacters.");
+        }
+        // Create a real junction without starting legacy PowerShell. Disable cmd AutoRun and delayed expansion.
+        var info = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe")) {
+            UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
+            Arguments = "/d /v:off /c mklink /J \"" + junction + "\" \"" + outside + "\""
+        };
+        using (var process = Process.Start(info)!) {
+            var exited = process.WaitForExit(10000);
+            if (!exited) { process.Kill(entireProcessTree: true); process.WaitForExit(10000); }
+            Assert.True(exited, "Temporary junction creation exceeded its ten-second bound."); Assert.Equal(0, process.ExitCode);
+        }
         Assert.True((File.GetAttributes(junction) & FileAttributes.ReparsePoint) != 0);
         Assert.Throws<IOException>(() => SafeWindowsPaths.RequireDirectory(junction));
         Assert.Throws<IOException>(() => SafeWindowsPaths.RequireDirectory(Path.Combine(scope, "..", "outside")));
