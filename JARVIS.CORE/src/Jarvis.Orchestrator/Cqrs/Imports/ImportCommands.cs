@@ -1,6 +1,6 @@
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
-using static Jarvis.Orchestrator.Cqrs.Imports.PrepPackReads;
+using static Jarvis.Orchestrator.Cqrs.Stories.StoryQueryHandlers;
 
 namespace Jarvis.Orchestrator.Cqrs.Imports;
 
@@ -111,9 +111,4 @@ public sealed class PrepPackCardCommands(IRuntimeStore store, TimeProvider clock
             return new(created, existing, retired, cards.AsReadOnly());
         }, ct);
     }
-}
-internal static class PrepPackReads
-{
-    public static IReadOnlyDictionary<Guid, int> QuoteCounts(RuntimeState s) =>
-        s.SourceClaims.Values.GroupBy(x => x.StoryId).ToDictionary(g => g.Key, g => g.Count());
 }

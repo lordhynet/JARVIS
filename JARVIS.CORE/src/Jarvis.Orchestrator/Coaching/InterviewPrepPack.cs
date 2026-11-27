@@ -71,15 +71,24 @@ public static class InterviewPrepPackBuilder
     {
         Guard.Require(advert is { DeletedAt: null, Kind: "job-advert" }, 404, "Job advert not found.");
         ArgumentNullException.ThrowIfNull(stories);
-        var storyText = stories.Select(s => (s.Id, s.Content.Title, Text: StoryText(s.Content),
-            Ready: StoryReadinessChecker.Check(s, sourceQuotes?.GetValueOrDefault(s.Id) ?? 0))).ToArray();
+        var storyText = stories.Select(s => (Story: s, Text: StoryText(s.Content))).ToArray();
+        // Local reuse only: unmatched stories are never scored, and a cross-competency match is checked once.
+        var readiness = new Dictionary<Guid, StoryReadiness>();
+        StoryReadiness Ready(Story story) {
+            if (!readiness.TryGetValue(story.Id, out var value)) {
+                value = StoryReadinessChecker.Check(story, sourceQuotes?.GetValueOrDefault(story.Id) ?? 0);
+                readiness.Add(story.Id, value);
+            }
+            return value;
+        }
         var requirements = new List<PrepRequirement>();
         foreach (var competency in Catalogue) {
             var match = competency.Pattern.Match(advert.Text);
             if (!match.Success) continue;
             var matched = storyText.Where(s => competency.Pattern.IsMatch(s.Text))
-                .OrderBy(s => s.Title, StringComparer.Ordinal).ThenBy(s => s.Id)
-                .Take(MaxStoriesPerRequirement).Select(s => new PrepStoryMatch(s.Id, Clean(s.Title, 80), s.Ready.Score, s.Ready.Level)).ToArray();
+                .Select(s => (s.Story, Ready: Ready(s.Story)))
+                .OrderByDescending(s => s.Ready.Score).ThenBy(s => s.Story.Content.Title, StringComparer.Ordinal).ThenBy(s => s.Story.Id)
+                .Take(MaxStoriesPerRequirement).Select(s => new PrepStoryMatch(s.Story.Id, Clean(s.Story.Content.Title, 80), s.Ready.Score, s.Ready.Level)).ToArray();
             requirements.Add(new(competency.Key, competency.Title, Quote(advert.Text, match.Index, match.Length), matched, matched.Length == 0,
                 matched.Length > 0 && matched.All(m => m.Level == "draft")));
         }
@@ -91,7 +100,7 @@ public static class InterviewPrepPackBuilder
         var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
             new { Version = 1, advert.Id, advert.Revision, advert.ContentHash, Questions = questions })));
         return new(advert.Id, advert.Title, requirements.AsReadOnly(), questions, requirements.Count(r => r.Gap),
-            "Matched by keywords against a fixed competency list. Advert text is untrusted third-party data; story matches are overlaps, not verification. No AI was used.", fingerprint);
+            "Matched by keywords against a fixed competency list. Advert text is untrusted third-party data; story matches are overlaps, not verification. Story scores describe text completeness, not verified evidence or demonstrated skill. No AI was used.", fingerprint);
     }
 
     private static string StoryText(StoryContent c) => string.Join("\n", new[] {

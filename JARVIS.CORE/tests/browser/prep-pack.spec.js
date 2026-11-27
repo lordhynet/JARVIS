@@ -78,3 +78,37 @@ test('a delayed card response cannot replace the notice after disconnect', async
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(page.locator('#notice')).toBeHidden(); await expect(panel).toBeHidden();
 });
+
+test('readiness-driven question reordering requires a fresh displayed pack', async ({ page }) => {
+  const headers = { 'X-Jarvis-Key': 'browser-test-only-key' }, suffix = randomUUID();
+  const strong = (title, decisions) => ({ title, companyProject: 'Fixture', serviceFeature: 'Fixture',
+    context: 'Retries could duplicate the recorded payment.', personalOwnership: 'I designed and implemented the safe retry boundary.',
+    technicalDecisions: decisions, tradeOffs: 'I chose a unique key instead of a lock because it was simpler.', result: 'Duplicate charges stopped.',
+    metrics: 'Not measured at the time.', failureModes: 'A provider could time out after charging.', changeToday: 'I would add reconciliation alerts earlier.' });
+  const save = async content => { const response = await page.request.post('/api/stories', { headers, data: { requestId: randomUUID(), content } }); expect(response.ok()).toBeTruthy(); return response.json(); };
+  const csharp = await save(strong('CSharp ready ' + suffix, '.NET thread-pool changes'));
+  let sql = await save({ title: 'Database draft ' + suffix, companyProject: 'Fixture', serviceFeature: 'Fixture', technicalDecisions: 'SQL indexing' });
+  try {
+    const title = 'Readiness role ' + suffix;
+    const response = await page.request.post('/api/imports', { headers, data: { requestId: randomUUID(), kind: 'job-advert', title, text: 'C# and .NET with SQL', confirmStorageConsent: true } });
+    expect(response.ok()).toBeTruthy(); const advert = await response.json();
+    await page.goto('/'); await page.getByLabel('API key', { exact: true }).fill('browser-test-only-key');
+    await page.getByLabel('Owner key (optional)', { exact: true }).fill('browser-test-only-owner-management-123456789');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click(); await page.getByRole('button', { name: 'CV & interview archive', exact: true }).click();
+    const panel = page.locator('[data-panel=imports]'), open = panel.getByRole('button', { name: `${title} · job-advert`, exact: true });
+    await open.click(); await expect(panel).toContainText('needs work: strengthen the draft'); await expect(panel).toContainText('text completeness');
+    const before = await (await page.request.get('/api/learning', { headers })).json();
+    const edited = await page.request.put(`/api/stories/${sql.id}`, { headers, data: { expectedVersion: sql.version, content: strong('Database ready ' + suffix, 'SQL indexing') } });
+    expect(edited.ok()).toBeTruthy(); sql = await edited.json();
+    const posted = page.waitForResponse(r => r.url().endsWith(`/imports/${advert.id}/prep-pack/cards`));
+    await panel.getByRole('button', { name: 'Create review cards for these questions', exact: true }).click(); expect((await posted).status()).toBe(409);
+    await expect(page.locator('#notice')).toContainText('questions changed');
+    const unchanged = await (await page.request.get('/api/learning', { headers })).json(); expect(unchanged.map(c => c.id).sort()).toEqual(before.map(c => c.id).sort());
+    await open.click(); await expect(panel).not.toContainText('needs work: strengthen the draft'); await expect(panel).toContainText('text checklist: interview-ready');
+    const fresh = page.waitForResponse(r => r.url().endsWith(`/imports/${advert.id}/prep-pack/cards`));
+    await panel.getByRole('button', { name: 'Create review cards for these questions', exact: true }).click(); expect((await fresh).ok()).toBeTruthy();
+  } finally {
+    await page.request.delete(`/api/stories/${csharp.id}?expectedVersion=${csharp.version}`, { headers });
+    await page.request.delete(`/api/stories/${sql.id}?expectedVersion=${sql.version}`, { headers });
+  }
+});

@@ -35,7 +35,7 @@ export function initImports({ api, node, button, notice }) {
       for (const requirement of pack.requirements) {
         const row = node('div', '', 'list-item');
         row.append(node('h4', `${requirement.title}${requirement.gap ? ' · gap: prepare a story' : requirement.needsWork ? ' · needs work: strengthen the draft' : ''}`), node('blockquote', requirement.advertQuote));
-        for (const story of requirement.stories) row.append(node('p', `Story: ${story.title} · ${story.level} (${story.readiness}/100)`));
+        for (const story of requirement.stories) row.append(node('p', `Story: ${story.title} · text checklist: ${story.level} (${story.readiness}/100)`));
         detail.append(row);
       }
       if (pack.likelyQuestions.length) {

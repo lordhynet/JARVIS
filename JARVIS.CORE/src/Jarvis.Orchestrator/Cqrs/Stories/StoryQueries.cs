@@ -12,16 +12,21 @@ public sealed class StoryQueryHandlers(IRuntimeReader reader) :
     IQueryHandler<ListStories, IReadOnlyList<Story>>, IQueryHandler<GetStory, Story>,
     IQueryHandler<GetStoryReadiness, StoryReadiness>, IQueryHandler<ListStoryReadiness, IReadOnlyList<StoryReadiness>>
 {
+    // Attachment counts only, not independent verification. Shared by story and prep-pack views of the same state.
+    public static IReadOnlyDictionary<Guid, int> QuoteCounts(RuntimeState state) =>
+        state.SourceClaims.Values.GroupBy(x => x.StoryId).ToDictionary(g => g.Key, g => g.Count());
     // Read-only, deterministic checklist; least-ready stories first so the owner knows what to work on.
     public Task<StoryReadiness> HandleAsync(GetStoryReadiness query, CancellationToken ct = default) =>
         reader.ReadAsync(s => s.Stories.TryGetValue(query.Id, out var story)
-            ? Jarvis.Orchestrator.Coaching.StoryReadinessChecker.Check(story, s.SourceClaims.Values.Count(x => x.StoryId == story.Id))
+            ? Jarvis.Orchestrator.Coaching.StoryReadinessChecker.Check(story, QuoteCounts(s).GetValueOrDefault(story.Id))
             : throw new DomainException(404, "Story not found."), ct);
 
     public Task<IReadOnlyList<StoryReadiness>> HandleAsync(ListStoryReadiness query, CancellationToken ct = default) =>
-        reader.ReadAsync<IReadOnlyList<StoryReadiness>>(s => s.Stories.Values
-            .Select(story => Jarvis.Orchestrator.Coaching.StoryReadinessChecker.Check(story, s.SourceClaims.Values.Count(x => x.StoryId == story.Id)))
-            .OrderBy(x => x.Score).ThenBy(x => x.Title, StringComparer.Ordinal).ThenBy(x => x.StoryId).ToList(), ct);
+        reader.ReadAsync<IReadOnlyList<StoryReadiness>>(s => {
+            var quotes = QuoteCounts(s);
+            return s.Stories.Values.Select(story => Jarvis.Orchestrator.Coaching.StoryReadinessChecker.Check(story, quotes.GetValueOrDefault(story.Id)))
+                .OrderBy(x => x.Score).ThenBy(x => x.Title, StringComparer.Ordinal).ThenBy(x => x.StoryId).ToList();
+        }, ct);
 
     public Task<IReadOnlyList<Story>> HandleAsync(ListStories query, CancellationToken ct = default) =>
         reader.ReadAsync<IReadOnlyList<Story>>(s => s.Stories.Values.OrderByDescending(x => x.UpdatedAt)

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Cqrs.Imports;
+using Jarvis.Orchestrator.Cqrs.Stories;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Persistence;
 using Microsoft.AspNetCore.TestHost;
@@ -14,6 +15,31 @@ namespace Jarvis.Tests;
 
 public sealed partial class PostgresSessionTests
 {
+    [PostgresFact]
+    public async Task Prep_cards_readiness_reordering_matches_story_projection_and_reuses_receipts_without_write_on_replay()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        using var root = new PostgresApiFactory(database.ConnectionString, manualAgents: true);
+        using var host = root.WithWebHostBuilder(b => b.ConfigureTestServices(s => s.RemoveAll<IHostedService>()));
+        using var epoch = PrivacyContext.Enter(0); var store = host.Services.GetRequiredService<IRuntimeStore>(); var clock = new ForgeClock { Now = PrepReadinessSelectionTests.At };
+        var csharp = PrepReadinessSelectionTests.Strong("CSharp ready", ".NET thread-pool changes"); var sql = PrepReadinessSelectionTests.Thin("Database draft", "SQL indexing");
+        var stories = new StoryCommandHandlers(store, clock);
+        await stories.HandleAsync(new CreateStory(new(csharp.Id, csharp.Content))); await stories.HandleAsync(new CreateStory(new(sql.Id, sql.Content)));
+        var advert = PrepPackCardSafetyTests.Advert(); var displayed = await PrepPackCardSafetyTests.Seed(store, advert);
+        var handler = new PrepPackCardCommands(store, clock); var first = await handler.HandleAsync(new(advert.Id, PrepPackCardSafetyTests.Pick(displayed, 0)));
+        await stories.HandleAsync(new UpdateStory(sql.Id, new(1, PrepReadinessSelectionTests.Strong("Database ready", "SQL indexing").Content)));
+        var current = await new ImportQueryHandlers(store).HandleAsync(new GetImportPrepPack(advert.Id)); Assert.NotEqual(displayed.Fingerprint, current.Fingerprint);
+        var storyReadiness = await new StoryQueryHandlers(store).HandleAsync(new GetStoryReadiness(sql.Id));
+        var match = Assert.Single(current.Requirements.Single(r => r.Key == "databases").Stories);
+        Assert.Equal((storyReadiness.Score, storyReadiness.Level), (match.Readiness, match.Level));
+        var contexts = host.Services.GetRequiredService<IDbContextFactory<SessionDbContext>>(); var stamp = await TrainingFootprint.Stamp(contexts);
+        Assert.Equal(409, (await Assert.ThrowsAsync<DomainException>(() => handler.HandleAsync(new(advert.Id, PrepPackCardSafetyTests.Pick(displayed, 0))))).StatusCode);
+        var repeatedIndex = current.LikelyQuestions.ToList().IndexOf(displayed.LikelyQuestions[0]); Assert.True(repeatedIndex > 0);
+        var replay = await handler.HandleAsync(new(advert.Id, PrepPackCardSafetyTests.Pick(current, repeatedIndex)));
+        Assert.Equal((0, 1), (replay.Created, replay.Existing)); Assert.Equal(first.Cards[0].Id, Assert.Single(replay.Cards).Id);
+        Assert.Equal(stamp, await TrainingFootprint.Stamp(contexts));
+    }
+
     [PostgresFact]
     public async Task Prep_cards_postgres_matches_default_no_write_replay_and_atomic_later_conflict()
     {
