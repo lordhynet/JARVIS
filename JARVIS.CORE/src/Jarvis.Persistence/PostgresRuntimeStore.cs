@@ -9,7 +9,7 @@ namespace Jarvis.Persistence;
 
 // The cold document lock coordinates the D2 transaction across hosts. Hot audio, ticket
 // and transcript rows share this boundary without rewriting the cold document.
-public sealed class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges? audioChanges = null) : IRuntimeStore
+public sealed partial class PostgresRuntimeStore(IDbContextFactory<SessionDbContext> factory, AudioFenceChanges? audioChanges = null) : IRuntimeStore
 {
     public async Task<LearningItem> CreateLearningItemAsync(CreateLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {

@@ -129,13 +129,18 @@ internal sealed record LearningMutationFixture(RuntimeState State, Guid Question
             p95Ms = values.Order().ElementAt((int)Math.Ceiling(values.Count * .95) - 1), maxMs = values.Max(), samplesMs = values };
         var phaseTimings = phases?.Report();
         if (phaseTimings is not null) foreach (var lane in new[] { "correction", "deletion", "rebuild" }) {
+            if (lane == "correction") {
+                foreach (var phase in new[] { "correction.context", "correction.begin", "correction.privacy_gate", "correction.lock", "correction.target", "correction.decision",
+                    "correction.learning.baseline", "correction.training.inputs", "correction.learning.history", "correction.project", "correction.save", "correction.commit" })
+                    Assert.Equal(corrections.Count, phaseTimings[lane][phase].Count);
+                foreach (var phase in new[] { "runtime.cold.hydrate", "runtime.cold.serialize_hash", "runtime.training.hydrate", "runtime.learning.hydrate" })
+                    Assert.DoesNotContain(phase, phaseTimings[lane].Keys);
+                continue;
+            }
             foreach (var phase in new[] { "runtime.update.callback", "runtime.update.serialize_after", "runtime.update.save",
                 "runtime.learning.hydrate", "runtime.learning.diff", "runtime.training.hydrate", "runtime.training.diff" })
                 Assert.Equal(corrections.Count, phaseTimings[lane][phase].Count);
-            if (lane == "correction") {
-                Assert.DoesNotContain("runtime.cold.hydrate", phaseTimings[lane].Keys);
-                Assert.DoesNotContain("runtime.cold.serialize_hash", phaseTimings[lane].Keys);
-            } else foreach (var phase in new[] { "runtime.cold.hydrate", "runtime.cold.serialize_hash" })
+            foreach (var phase in new[] { "runtime.cold.hydrate", "runtime.cold.serialize_hash" })
                 Assert.Equal(corrections.Count, phaseTimings[lane][phase].Count);
         }
         return new { initialCards = State.Learning.Count, initialReviews = State.Reviews.Count, initialCreationReceipts = State.CreationReceipts.Count,
@@ -180,7 +185,7 @@ public sealed partial class PostgresSessionTests
                 await File.WriteAllTextAsync(Environment.GetEnvironmentVariable("JARVIS_PERF_OUTPUT")!, JsonSerializer.Serialize(new {
                     generatedAt = DateTimeOffset.UtcNow, synthetic = true, pooled = true, backgroundWorkers = false, unrelatedGoals = 200,
                     operation = "Distinct correction and deletion per sample; no setup/reset in timers. Rebuild diagnostic explicitly loads cold, learning and training units before pure projection; pure timer excludes all storage. Counts include retained training tombstones.",
-                    targetMs = 50, targetIsUnchanged = true, optimizationImplemented = true, optimization = "Canonical training extraction; scoped correction/deletion not implemented",
+                    targetMs = 50, targetIsUnchanged = true, optimizationImplemented = true, optimization = "Canonical training extraction and indexed correction; deletion remains cohesive",
                     instrumentationOverheadIncluded = true, nestedPhasesOverlapOuterPhases = true, reports
                 }, new JsonSerializerOptions { WriteIndented = true }));
             } finally { using var pool = new NpgsqlConnection(connection); NpgsqlConnection.ClearPool(pool); }

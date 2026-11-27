@@ -154,6 +154,11 @@ public readonly record struct AudioLeaseState(AudioLease? Lease, DateTimeOffset?
 
 public interface IRuntimeStore : IRuntimeReader
 {
+    Task<TrainingAttempt> CorrectTrainingAnswerAsync(Guid id, CorrectTrainingAnswerRequest request, TimeProvider clock, CancellationToken ct = default)
+    {
+        var normalized = Jarvis.Orchestrator.Training.TrainingCorrection.Normalize(request);
+        return UpdateAsync(s => Jarvis.Orchestrator.Training.TrainingCorrection.Apply(s, id, normalized, clock), ct);
+    }
     Task<LearningItem> CreateLearningItemAsync(CreateLearningRequest request, TimeProvider clock, CancellationToken ct = default)
     {
         var normalized = LearningService.NormalizeCreate(request);

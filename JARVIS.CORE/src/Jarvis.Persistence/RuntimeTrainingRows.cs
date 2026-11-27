@@ -51,19 +51,29 @@ internal sealed class RuntimeTrainingSnapshot
             switch (row.Kind)
             {
                 case Attempts:
-                    var attempt = Decode<TrainingAttempt>(row.Json);
-                    Validate(row.Id, attempt);
+                    var attempt = DecodeAttempt(row);
                     if (!attempts.TryAdd(row.Id, attempt)) throw Invalid();
                     break;
                 case Operations:
-                    var operation = Decode<TrainingOperation>(row.Json);
-                    Validate(row.Id, operation);
+                    var operation = DecodeOperation(row);
                     if (!operations.TryAdd(row.Id, operation)) throw Invalid();
                     break;
                 default: throw Invalid();
             }
         }
         return new(attempts, operations); // nothing is published until the entire input is valid
+    }
+
+    // Scoped ports use per-row validation, never a partial complete-unit snapshot/diff.
+    public static TrainingAttempt DecodeAttempt(RuntimeTrainingRow row)
+    {
+        if (row.Kind != Attempts) throw Invalid();
+        var value = Decode<TrainingAttempt>(row.Json); Validate(row.Id, value); return value;
+    }
+    public static TrainingOperation DecodeOperation(RuntimeTrainingRow row)
+    {
+        if (row.Kind != Operations) throw Invalid();
+        var value = Decode<TrainingOperation>(row.Json); Validate(row.Id, value); return value;
     }
 
     // BOTH dictionaries must describe a complete unit. A scoped row subset must never enter this diff.
