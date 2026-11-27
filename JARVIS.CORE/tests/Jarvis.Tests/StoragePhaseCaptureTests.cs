@@ -18,7 +18,8 @@ internal sealed class StoragePhaseCapture : IDisposable
     private static readonly HashSet<string> Allowed = new(StringComparer.Ordinal) {
         "runtime.update.context", "runtime.update.begin", "runtime.update.privacy_gate", "runtime.update.lock_and_load",
         "runtime.update.deserialize", "runtime.update.callback", "runtime.update.serialize_after", "runtime.update.save", "runtime.update.commit",
-        "runtime.cold.hydrate", "runtime.learning.hydrate", "runtime.cold.serialize_hash", "runtime.learning.diff" };
+        "runtime.cold.hydrate", "runtime.learning.hydrate", "runtime.cold.serialize_hash", "runtime.learning.diff",
+        "runtime.training.hydrate", "runtime.training.diff" };
     private sealed class Frame(string operation, bool measured)
     {
         private int active = 1;
@@ -81,12 +82,15 @@ public sealed class StoragePhaseCaptureTests
             using (ExecutionContext.SuppressFlow()) unrelated = Task.Run(() => Emit(4));
             await unrelated;
             await Task.Run(() => Emit(.004, "runtime.cold.hydrate"));
+            Emit(.003, "runtime.training.hydrate"); Emit(.001, "runtime.training.diff");
             Emit(.002, "runtime.update.save");
         }
         Emit(5);
         var lane = Assert.Single(capture.Report()).Value;
         Assert.Equal(12, Assert.Single(lane["runtime.update.callback"].SamplesMs));
         Assert.Equal(4, Assert.Single(lane["runtime.cold.hydrate"].SamplesMs));
+        Assert.Equal(3, Assert.Single(lane["runtime.training.hydrate"].SamplesMs));
+        Assert.Equal(1, Assert.Single(lane["runtime.training.diff"].SamplesMs));
         Assert.Equal(2, Assert.Single(lane["runtime.update.save"].SamplesMs));
     }
 
