@@ -9,7 +9,7 @@
 - **Size:** the existing 1,200-byte bound wins. Calendar entries are dropped first, then Forge items one at a time, then the whole Forge block, before the briefing would ever fail.
 - **No paid AI:** cards come from the existing indexed learning read; goals from runtime state. No provider call, no write.
 
-Not in this slice: the PF-08 caller that produces a capacity-backed plan (so today it always speaks suggestions), the evening and weekly review projections, and the browser Today view.
+Not in this slice: the PF-08 caller that produces a capacity-backed plan (so today it always speaks suggestions), and the evening and weekly review projections.
 
 ## Shared Today service and browser endpoint
 
@@ -20,3 +20,9 @@ Not in this slice: the PF-08 caller that produces a capacity-backed plan (so tod
 The candidate adapter receives explicit `notBefore = now`; confirmed interview time stays unknown/null until a reviewed source port exists. Its order is already the allocator's admission/selection order, which the projection preserves without another ranking policy. Minutes without a plan are duration proposals, not observed capacity. Goal reasons remain coarse reviews rather than publishing private numeric deadline priorities as local-calendar facts.
 
 The optional pure plan projection checks local date, programme/capacity revision, positive budget, unique known matching keys/kinds, whole-minute placements within the local day, no overlaps, requested duration bounds and matching totals before claiming scheduled. Invalid plans fall back to suggestions. This is defensive consistency checking, not protected-source authorization: the future capacity-backed caller must still resolve current programme, privacy epoch, capacity, quiet-hours policy and confirmed interview source under reviewed entry/recovery gates. Today's runtime service always supplies no plan, reads no protected record/key/protector and creates no new history/store/entity/counter/schema. Its independent read snapshots are epoch-fenced proposals; no authoritative capacity-backed plan or frozen schedule is claimed. Existing legacy/off voice behavior and locked-tool gates remain unchanged. Full source review is required before merge/deployment; Forge stays off on live Core.
+
+## Browser Today panel
+
+The existing Daily briefing tab loads the read-only panel independently of Travel. It uses the same Today endpoint, renders labels as text, and keeps no Forge data in browser storage. A 404 shows the calm off/no-programme state; other HTTP/network failures clear old suggestions and offer a reload without displaying private server error text. Unscheduled items are suggestions, with no assertion about whether capacity exists. The programme calendar ending does not claim achieved mastery or completion of its activities.
+
+Overlapping reloads publish only their latest result. Disconnect and erasure clear the panel and invalidate pending loads; the tab handler also checks the connection generation before starting subsequent module work or showing late notices. Synthetic browser tests cover delayed Travel across disconnect/erasure, stale successes/failures, reload ordering, retry, safe text rendering and real HTTP status propagation on desktop and mobile layouts. These checks establish browser behavior, not app installation or physical-device acceptance.
