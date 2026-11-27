@@ -9,7 +9,7 @@
 - **Size:** the existing 1,200-byte bound wins. Calendar entries are dropped first, then Forge items one at a time, then the whole Forge block, before the briefing would ever fail.
 - **No paid AI:** cards come from the existing indexed learning read; goals from runtime state. No provider call, no write.
 
-Not in this slice: the PF-08 caller that produces a capacity-backed plan (so today it always speaks suggestions), and the evening and weekly review projections.
+Not in this slice: the PF-08 caller that produces a capacity-backed plan (so today it always speaks suggestions), and the evening/full spoken weekly review. The browser's optional recorded-practice summary is described in [J4_WEEKLY_SUMMARY.md](J4_WEEKLY_SUMMARY.md); it is not weighted skill/evidence coverage or a capacity-backed plan.
 
 ## Shared Today service and browser endpoint
 

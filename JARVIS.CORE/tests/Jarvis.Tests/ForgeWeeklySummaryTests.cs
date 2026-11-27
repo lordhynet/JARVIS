@@ -17,9 +17,9 @@ public sealed class ForgeWeeklySummaryTests
         return new(Guid.NewGuid(), new ReviewEvent(Guid.NewGuid(), item.Id, ReviewRating.Good, TimeSpan.FromSeconds(4), at), item);
     }
     private static TrainingAttempt Training(DateTimeOffset at, bool skipped = false, bool deleted = false) => new(Guid.NewGuid(), Guid.NewGuid(),
-        Guid.NewGuid(), 1, Enum.GetValues<TrainingMode>()[0], 1, 1, skipped, at, [], [], DeletedAt: deleted ? at.AddHours(1) : null);
+        Jarvis.Orchestrator.Training.QuestionBank.All[0].Id, 1, Enum.GetValues<TrainingMode>()[0], 1, 1, skipped, at, [new(1, "Fixture answer", "typed", at)], [], DeletedAt: deleted ? at.AddHours(1) : null);
     private static CoachingAttempt Coaching(DateTimeOffset at, bool deleted = false) =>
-        new(Guid.NewGuid(), Guid.NewGuid(), "exercise", 1, null, null, null, 1, at, [], deleted ? at.AddHours(1) : null);
+        new(Guid.NewGuid(), Guid.NewGuid(), "recruiter", 1, null, null, null, 1, at, [new(1, "Fixture answer", null, at)], deleted ? at.AddHours(1) : null);
     private static PersonalGoal Goal(string? division, string status = GoalStatus.Active) => new(Guid.NewGuid(), 1, "Goal", "Brief",
         "practice-reminder", false, From, To.AddDays(30), status, From.AddDays(-9), From.AddDays(-9), DivisionKey: division);
 
@@ -42,7 +42,7 @@ public sealed class ForgeWeeklySummaryTests
         var body = week.Divisions.Single(d => d.Key == "forge.body");
         Assert.True(body.HasActiveGoal); Assert.False(body.Practised);
         Assert.DoesNotContain(week.Divisions, d => d.Key == "forge.wealth"); // paused goal, no evidence
-        Assert.Equal(4, week.FocusDivisions); Assert.Equal(3, week.PractisedDivisions); Assert.Equal(0.75m, week.Coverage);
+        Assert.Equal(4, week.FocusDivisions); Assert.Equal(3, week.PractisedDivisions); Assert.Equal(0.75m, week.PracticeCoverage);
         Assert.Null(week.ActualMinutes); Assert.Null(week.PlannedMinutes);
     }
 
@@ -50,9 +50,9 @@ public sealed class ForgeWeeklySummaryTests
     public void Nothing_to_judge_is_unknown_not_zero()
     {
         var week = ForgeWeeklySummary.Build(From, To, FromDate, ToDate, [], [], [], [Goal(null)]);
-        Assert.Empty(week.Divisions); Assert.Equal(0, week.FocusDivisions); Assert.Null(week.Coverage);
+        Assert.Empty(week.Divisions); Assert.Equal(0, week.FocusDivisions); Assert.Null(week.PracticeCoverage);
         var idle = ForgeWeeklySummary.Build(From, To, FromDate, ToDate, [], [], [], [Goal("forge.social")]);
-        Assert.Equal(0m, idle.Coverage); // a focus division with no evidence is a real, known zero
+        Assert.Equal(0m, idle.PracticeCoverage); // known absence of recorded practice, not a zero skill score
     }
 
     [Fact]
@@ -68,6 +68,6 @@ public sealed class ForgeWeeklySummaryTests
         await LifeScenarioTests.Post<ForgeProgramme>(client, "/api/forge/programmes", new CreateForgeProgrammeRequest(Guid.NewGuid()));
         var week = (await client.GetFromJsonAsync<ForgeWeek>("/api/forge/week", LifeScenarioTests.Json))!;
         Assert.Equal(new DateOnly(2026, 11, 30), week.To); Assert.Equal(new DateOnly(2026, 11, 24), week.From);
-        Assert.Null(week.Coverage); Assert.Null(week.PlannedMinutes);
+        Assert.Null(week.PracticeCoverage); Assert.Null(week.PlannedMinutes);
     }
 }

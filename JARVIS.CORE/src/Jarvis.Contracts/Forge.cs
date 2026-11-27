@@ -48,10 +48,11 @@ public sealed record ForgeBriefing(string Status, int Day, int Days, string? Pha
 /// <summary>One division's evidence in the weekly summary: counts of existing canonical records only, no titles.</summary>
 public sealed record ForgeWeekDivision(string Key, string Code, int Reviews, int TrainingAnswers, int CoachingAnswers, bool HasActiveGoal, bool Practised);
 /// <summary>
-/// J4 weekly summary for the owner (PF-09 base). Coverage is the share of focus divisions (active tagged goals or any
-/// evidence) that have evidence this week; null when there is nothing to judge ("unknown", never 0).
+/// J4 recorded activity for the owner. PracticeCoverage is a fraction of current focused divisions with classified
+/// practice, not weighted evidence coverage or a skill score. Unclassified provenance makes that fraction unknown.
 /// Minutes are not tracked yet, and planned minutes need capacity, so both are null rather than invented.
 /// </summary>
 public sealed record ForgeWeek(DateOnly From, DateOnly To, int Reviews, int TrainingAnswers, int CoachingAnswers,
-    int FocusDivisions, int PractisedDivisions, decimal? Coverage, int? ActualMinutes, int? PlannedMinutes,
-    IReadOnlyList<ForgeWeekDivision> Divisions);
+    int FocusDivisions, int PractisedDivisions, decimal? PracticeCoverage, int? ActualMinutes, int? PlannedMinutes,
+    IReadOnlyList<ForgeWeekDivision> Divisions, int UnclassifiedReviews = 0, int UnclassifiedTrainingAnswers = 0,
+    int UnclassifiedCoachingAnswers = 0, DateTimeOffset? AsOf = null);

@@ -29,11 +29,13 @@ export function initForgeToday({ api, node, button }) {
   function drawWeek(week) {
     if (!week) return;
     card.append(node('h3', 'This week'));
-    const coverage = week.coverage === null || week.coverage === undefined ? 'unknown' : `${Math.round(week.coverage * 100)}%`;
-    card.append(node('p', `${week.from} to ${week.to} · ${week.reviews} reviews · ${week.trainingAnswers} technical answers · ${week.coachingAnswers} coaching answers · coverage ${coverage}`));
-    card.append(node('p', 'Minutes are not tracked yet and planned time needs your capacity, so neither is shown.', 'muted'));
+    const coverage = week.practiceCoverage === null || week.practiceCoverage === undefined ? 'unknown' : `${Math.round(week.practiceCoverage * 100)}%`;
+    card.append(node('p', `${week.from} to ${week.to}${week.asOf ? ` · as of ${week.asOf}` : ''} · ${week.reviews} reviews · ${week.trainingAnswers} training answers · ${week.coachingAnswers} coaching answers · practice coverage ${coverage}`));
+    card.append(node('p', 'Recorded practice only, not a skill score or weighted evidence coverage. Actual and planned minutes are unknown.', 'muted'));
+    const unclassified = (week.unclassifiedReviews || 0) + (week.unclassifiedTrainingAnswers || 0) + (week.unclassifiedCoachingAnswers || 0);
+    if (unclassified) card.append(node('p', `Unclassified provenance: ${unclassified} record${unclassified === 1 ? '' : 's'}; no division credit is inferred.`, 'muted'));
     const list = node('ul', '', 'list');
-    for (const d of week.divisions) list.append(node('li', `${d.code}: ${d.practised ? 'practised' : 'no evidence yet'}${d.hasActiveGoal ? ' · active goal' : ''}`, 'list-item'));
+    for (const d of week.divisions) list.append(node('li', `${d.code}: ${d.practised ? 'recorded practice' : 'no recorded practice'}${d.hasActiveGoal ? ' · current active goal' : ''}`, 'list-item'));
     if (week.divisions.length) card.append(list);
   }
   async function load() {
@@ -41,7 +43,8 @@ export function initForgeToday({ api, node, button }) {
     try {
       const today = await api('/forge/today');
       if (token !== generation) return; draw(today);
-      try { const week = await api('/forge/week'); if (token === generation) drawWeek(week); } catch { /* weekly view is optional */ }
+      try { const week = await api('/forge/week'); if (token === generation) drawWeek(week); }
+      catch { if (token === generation) card.append(node('p', 'Weekly summary is unavailable. Reload to retry.', 'muted')); }
     } catch (error) {
       // Forge is off by default, and 404 until a programme exists: show a calm state, not an error banner.
       if (token === generation) draw(null, error?.status === 404

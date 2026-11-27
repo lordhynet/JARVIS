@@ -76,7 +76,11 @@ async function deferredView(page) {
     const node = (tag, text = '', css = '') => { const element = document.createElement(tag); element.textContent = text; element.className = css; return element; };
     const button = (text, action) => { const element = node('button', text); element.addEventListener('click', action); return element; };
     const requests = [], pending = [];
-    const view = initForgeToday({ node, button, api: path => { requests.push(path); return new Promise((resolve, reject) => pending.push({ resolve, reject })); } });
+    // This fixture controls Today requests; dedicated weekly fixtures control the optional follow-up read.
+    const view = initForgeToday({ node, button, api: path => {
+      if (path === '/forge/week') return Promise.resolve({ from: '2026-11-26', to: '2026-12-02', reviews: 0, trainingAnswers: 0, coachingAnswers: 0, practiceCoverage: null, divisions: [] });
+      requests.push(path); return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+    } });
     window.forgeFixture = { view, panel, requests, pending, today: label => ({ status: 'active', day: 2, days: 261, phase: 'Foundation', dueReviews: 1,
       scheduled: false, top: [{ label, minutes: 5, why: 'goal review' }] }) };
   });
