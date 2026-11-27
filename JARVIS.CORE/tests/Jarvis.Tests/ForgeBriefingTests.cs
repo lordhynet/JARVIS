@@ -30,7 +30,7 @@ public sealed class ForgeBriefingTests
     {
         var programme = Programme();
         var goals = new[] { Goal("Pay off the credit card balance", "forge.wealth", 2), Goal("Build the payment API", "forge.tech", 4) };
-        var candidates = ForgePlanCandidates.Build(EndOfDay, [Card(LearningDomain.French), Card(LearningDomain.French)], goals);
+        var candidates = ForgePlanCandidates.Build(EndOfDay, [Card(LearningDomain.French), Card(LearningDomain.French)], goals, Now);
         var briefing = ForgeBriefingProjection.Build(programme, ForgeProgrammePolicy.View(programme, Now).Calendar, candidates, goals, 2);
 
         Assert.Equal("active", briefing.Status); Assert.Equal(2, briefing.Day); Assert.Equal(261, briefing.Days);
@@ -45,7 +45,7 @@ public sealed class ForgeBriefingTests
     {
         var programme = Programme();
         var goals = new[] { Goal("Build the payment API", "forge.tech") };
-        var candidates = ForgePlanCandidates.Build(EndOfDay, [Card(LearningDomain.Databases)], goals);
+        var candidates = ForgePlanCandidates.Build(EndOfDay, [Card(LearningDomain.Databases)], goals, Now);
         var plan = new ForgeDayPlan(ForgePlanStatus.Planned, new(2026, 12, 2), 1, 1, 120, 65, [
             new("goal." + goals[0].Id.ToString("N"), ForgePlanTaskKind.Practice, Now.AddHours(10), Now.AddHours(11), false),
             new("review.databases", ForgePlanTaskKind.Review, Now.AddHours(1), Now.AddHours(1).AddMinutes(5), false)], []);
@@ -64,7 +64,7 @@ public sealed class ForgeBriefingTests
         Assert.Equal("not-started", before.Status); Assert.Equal(3, before.StartsInDays); Assert.Empty(before.Top);
         var paused = Programme(paused: true);
         var pausedBriefing = ForgeBriefingProjection.Build(paused, ForgeProgrammePolicy.View(paused, Now).Calendar,
-            ForgePlanCandidates.Build(EndOfDay, [Card(LearningDomain.French)], []), [], 1);
+            ForgePlanCandidates.Build(EndOfDay, [Card(LearningDomain.French)], [], Now), [], 1);
         Assert.Equal("paused", pausedBriefing.Status); Assert.Empty(pausedBriefing.Top);
         var after = ForgeBriefingProjection.Build(programme, ForgeProgrammePolicy.View(programme, new DateTimeOffset(2027, 9, 1, 9, 0, 0, TimeSpan.Zero)).Calendar, none, [], 0);
         Assert.Equal("graduated", after.Status); Assert.Empty(after.Top);

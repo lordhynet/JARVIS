@@ -23,7 +23,7 @@ public sealed class ForgeTodayService(IForgeAvailability feature, IForgeProgramm
         var calendar = ForgeProgrammePolicy.View(programme, now).Calendar;
         var dueToday = await runtime.ReadLearningItemsAsync(true, endOfDay, ct);
         var goals = await runtime.ReadAsync<IReadOnlyCollection<PersonalGoal>>(s => s.Goals.Values.ToArray(), ct);
-        var candidates = ForgePlanCandidates.Build(endOfDay, dueToday, goals);
+        var candidates = ForgePlanCandidates.Build(endOfDay, dueToday, goals, now);
         return ForgeBriefingProjection.Build(programme, calendar, candidates, goals, dueToday.Count);
     }
 }
