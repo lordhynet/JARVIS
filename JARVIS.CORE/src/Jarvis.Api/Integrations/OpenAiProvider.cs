@@ -105,9 +105,16 @@ public sealed class OpenAiProvider(ProviderGateway gateway, ManagedAi ai, IAudio
     // The turn ID is the reservation ID, so a replayed or retried turn is refused by the budget (409) instead of billed twice;
     // a retry must use a new turn. Every reservation is Forge-attributed and therefore inside the global ceiling and the owner's
     // Forge allowance; with no allowance configured this refuses before any provider I/O. No caller is wired yet.
+    // `current` is required (no permissive default): it must confirm the captured session/turn still owns the audio
+    // (lease/fence, stop and privacy invalidation). It runs after the reservation commits and immediately before dispatch,
+    // together with the global paid-AI pause, so a state change during reservation cannot send audio. A refusal there
+    // settles this definitely-undispatched charge to zero, keeping the attributed record and turn ID. The caller must also
+    // recheck source validity before consuming or persisting a late result. The 409 on a replayed turn ID is a refusal, not
+    // a signal to re-ID and resend the same captured audio; retry policy belongs to a reviewed caller.
     internal async Task<ForgeTurnTranscript> TranscribeForgeTurnAsync(byte[] pcm, Guid sessionId, Guid turnId, string locale,
-        CancellationToken ct)
+        Func<CancellationToken, Task<bool>> current, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(current);
         Guard.Require(turnId != Guid.Empty && sessionId != Guid.Empty, 400, "A Forge turn needs stable session and turn IDs.");
         Guard.Require(Jarvis.Orchestrator.Forge.ForgeLanguageProfiles.IsStarter(locale), 400, "A Forge turn needs an explicit supported practice locale.");
         Guard.Require(pcm.Length > 0 && pcm.Length % 2 == 0 && pcm.Length <= VoiceWindowLimits.BytesPerSecond * 180, 400,
@@ -118,6 +125,18 @@ public sealed class OpenAiProvider(ProviderGateway gateway, ManagedAi ai, IAudio
         var seconds = (decimal)pcm.Length / VoiceWindowLimits.BytesPerSecond;
         await budget.ReserveAsync(turnId, sessionId, transcription.Model, decimal.Ceiling(seconds) / 60m * transcription.PerMinute * 2m,
             ai.Limits, ct, UsageLane.Voice, ProviderIds.OpenAi, UsageProgrammes.Forge);
+        try
+        {
+            Guard.Require(await current(ct), 409, "Audio ownership changed before transcribing this practice turn.");
+            Guard.Require(!await budget.PaidAiPausedAsync(ct), 503, "Paid AI is globally paused.");
+        }
+        catch
+        {
+            // Nothing was sent: release only this charge, with a bounded token independent of the caller's cancellation.
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await budget.SettleAsync(turnId, 0, 0, 0, cleanup.Token);
+            throw;
+        }
         using var audio = new MemoryStream();
         AudioDurationProbe.WriteWave(audio, pcm, VoiceWindowLimits.SampleRate);
         audio.Position = 0;

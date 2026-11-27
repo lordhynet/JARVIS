@@ -87,6 +87,9 @@ public sealed class UsageBudget(IRuntimeStore store, TimeProvider clock, IBudget
         return reservation;
     }, ct);
 
+    // Current global paid-AI pause, for dispatch boundaries that occur after a reservation was admitted.
+    public Task<bool> PaidAiPausedAsync(CancellationToken ct) => store.ReadAsync(s => s.AgentControls.EffectivePaidAiPaused, ct);
+
     public Task<UsageReservation> SettleAsync(Guid id, decimal actual, int input, int output, CancellationToken ct) =>
         store.SettleUsageAsync(id, actual, input, output, ct, completedAt: clock.GetUtcNow());
 

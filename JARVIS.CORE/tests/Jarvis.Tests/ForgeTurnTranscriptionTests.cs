@@ -13,6 +13,7 @@ namespace Jarvis.Tests;
 public sealed class ForgeTurnTranscriptionTests
 {
     private static readonly byte[] TwoSeconds = new byte[48000 * 2];
+    private static Task<bool> Owned(CancellationToken _) => Task.FromResult(true);
     private static HttpResponseMessage Reply(string json) => new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
     private static (ProviderFactory Root, Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> Host) Create(
@@ -31,7 +32,7 @@ public sealed class ForgeTurnTranscriptionTests
         {
             var provider = host.Services.GetRequiredService<OpenAiProvider>();
             var error = await Assert.ThrowsAsync<DomainException>(() =>
-                provider.TranscribeForgeTurnAsync(TwoSeconds, Guid.NewGuid(), Guid.NewGuid(), "fr-FR", default));
+                provider.TranscribeForgeTurnAsync(TwoSeconds, Guid.NewGuid(), Guid.NewGuid(), "fr-FR", Owned, default));
             Assert.Equal(503, error.StatusCode); Assert.Equal(0, calls);
             Assert.Empty(await host.Services.GetRequiredService<IRuntimeReader>().ReadAsync(s => s.UsageReservations.Values.ToList()));
         }
@@ -51,7 +52,7 @@ public sealed class ForgeTurnTranscriptionTests
         {
             var provider = host.Services.GetRequiredService<OpenAiProvider>();
             var turn = Guid.NewGuid(); var session = Guid.NewGuid();
-            var transcript = await provider.TranscribeForgeTurnAsync(TwoSeconds, session, turn, "fr-FR", default);
+            var transcript = await provider.TranscribeForgeTurnAsync(TwoSeconds, session, turn, "fr-FR", Owned, default);
             Assert.Equal("Je voudrais une table", transcript.Text); Assert.Equal("fr", transcript.DetectedLanguage);
             Assert.Null(transcript.Confidence); Assert.False(transcript.QualityEvidenceAvailable);
             Assert.Contains("name=language", body); Assert.Contains("RIFF", body);
@@ -71,8 +72,8 @@ public sealed class ForgeTurnTranscriptionTests
         {
             var provider = host.Services.GetRequiredService<OpenAiProvider>();
             var turn = Guid.NewGuid(); var session = Guid.NewGuid();
-            await provider.TranscribeForgeTurnAsync(TwoSeconds, session, turn, "fr-FR", default);
-            var replay = await Assert.ThrowsAsync<DomainException>(() => provider.TranscribeForgeTurnAsync(TwoSeconds, session, turn, "fr-FR", default));
+            await provider.TranscribeForgeTurnAsync(TwoSeconds, session, turn, "fr-FR", Owned, default);
+            var replay = await Assert.ThrowsAsync<DomainException>(() => provider.TranscribeForgeTurnAsync(TwoSeconds, session, turn, "fr-FR", Owned, default));
             Assert.Equal(409, replay.StatusCode); Assert.Equal(1, calls);
             Assert.Single(await host.Services.GetRequiredService<IRuntimeReader>().ReadAsync(s => s.UsageReservations.Values.ToList()));
         }
@@ -98,7 +99,7 @@ public sealed class ForgeTurnTranscriptionTests
         {
             var provider = host.Services.GetRequiredService<OpenAiProvider>();
             var error = await Assert.ThrowsAsync<DomainException>(() => provider.TranscribeForgeTurnAsync(pcm,
-                emptyIds ? Guid.Empty : Guid.NewGuid(), Guid.NewGuid(), locale, default));
+                emptyIds ? Guid.Empty : Guid.NewGuid(), Guid.NewGuid(), locale, Owned, default));
             Assert.Equal(400, error.StatusCode); Assert.Equal(0, calls);
             Assert.Empty(await host.Services.GetRequiredService<IRuntimeReader>().ReadAsync(s => s.UsageReservations.Values.ToList()));
         }
@@ -112,9 +113,62 @@ public sealed class ForgeTurnTranscriptionTests
         {
             var provider = host.Services.GetRequiredService<OpenAiProvider>();
             var turn = Guid.NewGuid();
-            await Assert.ThrowsAnyAsync<Exception>(() => provider.TranscribeForgeTurnAsync(TwoSeconds, Guid.NewGuid(), turn, "es-ES", default));
+            await Assert.ThrowsAnyAsync<Exception>(() => provider.TranscribeForgeTurnAsync(TwoSeconds, Guid.NewGuid(), turn, "es-ES", Owned, default));
             var charge = await host.Services.GetRequiredService<IRuntimeReader>().ReadAsync(s => s.UsageReservations[turn]);
             Assert.Null(charge.ActualUsd); Assert.Equal(UsageProgrammes.Forge, charge.Programme);
         }
+    }
+
+    // ---- Review W1: current-audio and pause fence after reservation, before dispatch (request token never cancelled) ----
+
+    public static TheoryData<string> FenceFailures => new() { "ownership-lost", "paused-during-reservation", "fence-throws", "fence-cancelled" };
+
+    [Theory]
+    [MemberData(nameof(FenceFailures))]
+    public async Task A_fence_failure_after_reservation_sends_nothing_and_releases_only_that_charge(string failure)
+    {
+        var calls = 0;
+        var (root, host) = Create(_ => { calls++; return Task.FromResult(Reply("""{"text":"Bonjour"}""")); }, allowance: "5");
+        using (root) using (host)
+        {
+            var provider = host.Services.GetRequiredService<OpenAiProvider>();
+            var store = host.Services.GetRequiredService<IRuntimeStore>();
+            var turn = Guid.NewGuid();
+            async Task<bool> Fence(CancellationToken ct)
+            {
+                // The reservation has committed by the time the fence runs; prove it, then change state.
+                Assert.NotNull(await store.ReadAsync(s => s.UsageReservations.GetValueOrDefault(turn), ct));
+                switch (failure)
+                {
+                    case "ownership-lost": return false;
+                    case "paused-during-reservation":
+                        await store.UpdateAsync(s => { s.AgentControls = s.AgentControls with { PaidAiPaused = true }; return true; }, ct);
+                        return true; // ownership is fine; the method's own pause check must still refuse
+                    case "fence-throws": throw new InvalidOperationException("lease lookup failed");
+                    default: throw new OperationCanceledException();
+                }
+            }
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => provider.TranscribeForgeTurnAsync(TwoSeconds, Guid.NewGuid(), turn, "fr-FR", Fence, default));
+            Assert.Equal(0, calls);
+            if (failure == "ownership-lost") Assert.Equal(409, Assert.IsType<DomainException>(error).StatusCode);
+            if (failure == "paused-during-reservation") Assert.Equal(503, Assert.IsType<DomainException>(error).StatusCode);
+            var charge = await store.ReadAsync(s => s.UsageReservations[turn]);
+            Assert.Equal(0m, charge.ActualUsd); Assert.Equal(UsageProgrammes.Forge, charge.Programme);
+            Assert.Equal(0m, await store.ReadAsync(s => s.GbpCommitments[turn].AccountedGbp));
+            // The turn ID stays used: the same captured audio cannot be re-dispatched under it (un-pause first so the
+            // duplicate-ID refusal, not the pause, is what is observed).
+            await store.UpdateAsync(s => { s.AgentControls = s.AgentControls with { PaidAiPaused = false }; return true; });
+            var replay = await Assert.ThrowsAsync<DomainException>(() => provider.TranscribeForgeTurnAsync(TwoSeconds, Guid.NewGuid(), turn, "fr-FR", Owned, default));
+            Assert.Equal(409, replay.StatusCode); Assert.Equal(0, calls);
+        }
+    }
+
+    [Fact]
+    public async Task The_fence_is_required_and_has_no_permissive_default()
+    {
+        var (root, host) = Create(_ => Task.FromResult(Reply("""{"text":"x"}""")), allowance: "5");
+        using (root) using (host)
+            await Assert.ThrowsAsync<ArgumentNullException>(() => host.Services.GetRequiredService<OpenAiProvider>()
+                .TranscribeForgeTurnAsync(TwoSeconds, Guid.NewGuid(), Guid.NewGuid(), "fr-FR", null!, default));
     }
 }
