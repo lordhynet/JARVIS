@@ -36,7 +36,7 @@ public sealed class ForgeBriefingTests
         Assert.Equal("active", briefing.Status); Assert.Equal(2, briefing.Day); Assert.Equal(261, briefing.Days);
         Assert.Equal("Foundation and reset", briefing.Phase); Assert.False(briefing.Scheduled); Assert.Equal(2, briefing.DueReviews);
         Assert.Equal(new[] { "French review", "WEALTH goal", "TECH: Build the payment API" }, briefing.Top.Select(x => x.Label).ToArray());
-        Assert.Equal("due recall", briefing.Top[0].Why); Assert.Equal("goal deadline in 2 days", briefing.Top[1].Why);
+        Assert.Equal("due recall", briefing.Top[0].Why); Assert.Equal("goal review", briefing.Top[1].Why);
         Assert.DoesNotContain("credit card", JsonSerializer.Serialize(briefing, Web), StringComparison.OrdinalIgnoreCase);
     }
 

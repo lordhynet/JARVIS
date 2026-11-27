@@ -4,8 +4,8 @@ using Jarvis.Orchestrator.Runtime;
 namespace Jarvis.Orchestrator.Forge;
 
 /// <summary>
-/// Builds the Forge "today" block once for both the spoken briefing and the owner's browser Today view, so the two
-/// can never disagree. Read-only: newest live programme, cards due by the end of the programme's local day, runtime
+/// Uses the same Forge "today" projection for the spoken briefing and the owner's Today view.
+/// Read-only: newest live programme, cards due before the next programme-local midnight, runtime
 /// goals. Returns null when Forge is disabled or no programme exists. No provider call, no write.
 /// </summary>
 public sealed class ForgeTodayService(IForgeAvailability feature, IForgeProgrammeReader programmes, IRuntimeReader runtime)
@@ -21,10 +21,11 @@ public sealed class ForgeTodayService(IForgeAvailability feature, IForgeProgramm
         var local = TimeZoneInfo.ConvertTime(now, zone).Date.AddDays(1);
         var endOfDay = new DateTimeOffset(local, zone.GetUtcOffset(local));
         var calendar = ForgeProgrammePolicy.View(programme, now).Calendar;
-        var dueToday = await runtime.ReadLearningItemsAsync(true, endOfDay, ct);
+        // The indexed read is inclusive/widened; the canonical payload retains exact ticks and offsets.
+        var dueToday = (await runtime.ReadLearningItemsAsync(true, endOfDay, ct)).Where(c => c.DueAt < endOfDay).ToArray();
         var goals = await runtime.ReadAsync<IReadOnlyCollection<PersonalGoal>>(s => s.Goals.Values.ToArray(), ct);
-        var candidates = ForgePlanCandidates.Build(endOfDay, dueToday, goals, now);
-        return ForgeBriefingProjection.Build(programme, calendar, candidates, goals, dueToday.Count);
+        var candidates = ForgePlanCandidates.Build(endOfDay, dueToday, goals.Where(g => g.NextReviewAt < endOfDay), now);
+        return ForgeBriefingProjection.Build(programme, calendar, candidates, goals, dueToday.Length);
     }
 }
 
@@ -62,16 +63,16 @@ public static class ForgeBriefingProjection
         var byKey = candidates.Candidates.ToDictionary(c => c.Key, StringComparer.Ordinal);
         var goalById = goals.ToDictionary(g => "goal." + g.Id.ToString("N"), StringComparer.Ordinal);
         IEnumerable<(ForgePlanCandidate Candidate, int Minutes)> chosen;
-        var scheduled = plan is { Status: ForgePlanStatus.Planned } && plan.Scheduled.Count > 0;
+        var scheduled = CurrentPlan(programme, calendar, byKey, plan);
         if (scheduled) {
             // Real plan: earliest placed items first, with the minutes actually placed.
             chosen = plan!.Scheduled.OrderBy(x => x.Start).Where(x => byKey.ContainsKey(x.Key))
                 .Select(x => (byKey[x.Key], x.Minutes));
         } else {
             // No capacity-backed plan: suggestions in the allocator's selection order; requested minutes, not a schedule.
-            chosen = candidates.Candidates.OrderBy(c => Rank(c.Kind)).ThenBy(c => c.Priority)
-                .ThenBy(c => c.DueBy ?? DateTimeOffset.MaxValue).ThenBy(c => c.Key, StringComparer.Ordinal)
-                .Select(c => (c, c.Minutes));
+            // Build already orders admission with the allocator's exact explicit time/interview context.
+            // Re-ranking here would recreate a second policy and undo that decision.
+            chosen = candidates.Candidates.Select(c => (c, c.Minutes));
         }
         var top = chosen.Take(TopCount).Select(x => new ForgeBriefingItem(Label(x.Candidate, goalById), x.Minutes, Why(x.Candidate)))
             .ToArray();
@@ -82,8 +83,29 @@ public static class ForgeBriefingProjection
     public static ForgeBriefing TrimTo(ForgeBriefing briefing, int items) =>
         briefing with { Top = briefing.Top.Take(Math.Max(0, items)).ToArray() };
 
-    private static int Rank(ForgePlanTaskKind kind) => kind switch {
-        ForgePlanTaskKind.Review => 0, ForgePlanTaskKind.InterviewPractice => 1, ForgePlanTaskKind.Optional => 4, _ => 2 };
+    private static bool CurrentPlan(ForgeProgramme programme, ForgeCalendarView calendar,
+        IReadOnlyDictionary<string, ForgePlanCandidate> candidates, ForgeDayPlan? plan)
+    {
+        if (plan is not { Status: ForgePlanStatus.Planned, CapacityRevision: > 0 } || plan.LocalDate != calendar.LocalToday ||
+            plan.ProgrammeRevision != programme.Revision || plan.AllocatableMinutes is not > 0 || plan.Scheduled.Count == 0 ||
+            plan.PlannedMinutes > plan.AllocatableMinutes || plan.Scheduled.Select(p => p.Key).Distinct(StringComparer.Ordinal).Count() != plan.Scheduled.Count)
+            return false;
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
+        var local = calendar.LocalToday.ToDateTime(TimeOnly.MinValue); var next = local.AddDays(1);
+        if (zone.IsInvalidTime(local) || zone.IsAmbiguousTime(local) || zone.IsInvalidTime(next) || zone.IsAmbiguousTime(next)) return false;
+        var start = new DateTimeOffset(local, zone.GetUtcOffset(local)); var end = new DateTimeOffset(next, zone.GetUtcOffset(next));
+        var ordered = plan.Scheduled.OrderBy(p => p.Start).ToArray();
+        long total = 0;
+        foreach (var item in ordered) {
+            if (!candidates.TryGetValue(item.Key, out var candidate) || item.Kind != candidate.Kind ||
+                item.Start < start || item.End > end || item.End <= item.Start || item.Minutes <= 0 ||
+                item.End - item.Start != TimeSpan.FromMinutes(item.Minutes) || item.Minutes < candidate.MinimumMinutes || item.Minutes > candidate.Minutes)
+                return false;
+            total += item.Minutes;
+        }
+        for (var i = 1; i < ordered.Length; i++) if (ordered[i].Start < ordered[i - 1].End) return false;
+        return total == plan.PlannedMinutes;
+    }
 
     private static string Label(ForgePlanCandidate candidate, IReadOnlyDictionary<string, PersonalGoal> goals)
     {
@@ -101,7 +123,8 @@ public static class ForgeBriefingProjection
         ForgePlanTaskKind.Review => "due recall",
         ForgePlanTaskKind.InterviewPractice => "interview practice",
         ForgePlanTaskKind.Optional => "optional",
-        _ => candidate.Priority == 0 ? "goal deadline today" : "goal deadline in " + candidate.Priority + " days"
+        // Priority is a private sort proposal, not an exact local-calendar deadline to publish.
+        _ => "goal review"
     };
 
     private static string Clean(string? title)
