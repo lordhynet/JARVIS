@@ -9,6 +9,11 @@ export function initPlanning({ api, node, button, notice }) {
   const brief = field('Goal context and next step', 'textarea', { required: true, maxLength: 2000, rows: 3 });
   const workflow = field('Goal workflow', 'select');
   for (const value of ['interview-preparation', 'daily-coaching', 'practice-reminder', 'career-plan', 'personal-plan', 'research-review']) { const option = node('option', value); option.value = value; workflow.append(option); }
+  // PF-02: optional Forge division tag. Inert metadata; edits must send it back or the full-replace save clears it.
+  const divisions = ['tech', 'career', 'business', 'wealth', 'body', 'health', 'mind', 'voice', 'presence', 'social', 'relationships', 'intellect', 'influence', 'mentorship', 'global', 'lifestyle'];
+  const division = field('Forge division (optional)', 'select');
+  { const none = node('option', 'None'); none.value = ''; division.append(none); }
+  for (const code of divisions) { const option = node('option', code.toUpperCase()); option.value = 'forge.' + code; division.append(option); }
   const due = field('Next goal review', 'input', { type: 'datetime-local', required: true });
   const deadline = field('Goal deadline', 'input', { type: 'datetime-local', required: true });
   const status = field('Goal state', 'select'); for (const value of ['Active', 'Paused', 'Completed', 'Cancelled']) { const option = node('option', value); option.value = value; status.append(option); }
@@ -18,6 +23,7 @@ export function initPlanning({ api, node, button, notice }) {
     event.preventDefault(); const submit = event.submitter; submit.disabled = true;
     try {
       const body = { title: title.value, brief: brief.value, workflow: workflow.value, nextReviewAt: new Date(due.value).toISOString(), deadline: new Date(deadline.value).toISOString(), status: status.value, allowCloudProcessing: consent.checked, expectedRevision: editing?.revision ?? null };
+      if (division.value) body.divisionKey = division.value; // omitted when none keeps the legacy request shape
       const fingerprint = JSON.stringify(body); if (pending?.fingerprint !== fingerprint) pending = { fingerprint, id: editing?.id || crypto.randomUUID() };
       await api('/goals', { requestId: pending.id, ...body }); pending = editing = null; form.reset(); await load(); notice('Goal saved in Core.');
     } catch (error) { notice(error.message, true); } finally { submit.disabled = false; }
@@ -32,8 +38,8 @@ export function initPlanning({ api, node, button, notice }) {
     operations.replaceChildren(node('h3', 'Core operations'), node('p', `Queued tasks: ${health.queuedTasks} · running: ${health.runningTasks} · expired leases: ${health.expiredLeases} · uncertain charges: ${health.uncertainCharges} · monthly committed: ${health.monthCommittedUsd}`));
     goals.replaceChildren(node('h3', 'Persistent goals'));
     for (const goal of saved) {
-      const row = node('div', '', 'list-item'); row.append(node('strong', goal.title), node('p', `${goal.status} · review ${new Date(goal.nextReviewAt).toLocaleString()} · ${goal.lastRunId ? 'Review workflow created' : 'Waiting'}`), node('p', goal.brief));
-      row.append(button('Update goal progress', () => { editing = goal; pending = null; title.value = goal.title; brief.value = goal.brief; workflow.value = goal.workflow; due.value = local(goal.nextReviewAt); deadline.value = local(goal.deadline); status.value = goal.status; consent.checked = goal.allowCloudProcessing; form.scrollIntoView({ block: 'start' }); }),
+      const row = node('div', '', 'list-item'); row.append(node('strong', goal.title), node('p', `${goal.status} · review ${new Date(goal.nextReviewAt).toLocaleString()} · ${goal.lastRunId ? 'Review workflow created' : 'Waiting'}${goal.divisionKey ? ` · Forge ${goal.divisionKey.slice(6).toUpperCase()}` : ''}`), node('p', goal.brief));
+      row.append(button('Update goal progress', () => { editing = goal; pending = null; title.value = goal.title; brief.value = goal.brief; workflow.value = goal.workflow; division.value = goal.divisionKey || ''; due.value = local(goal.nextReviewAt); deadline.value = local(goal.deadline); status.value = goal.status; consent.checked = goal.allowCloudProcessing; form.scrollIntoView({ block: 'start' }); }),
         button('Delete goal context', async () => { await api(`/goals/${goal.id}?revision=${goal.revision}`, undefined, 'DELETE'); if (editing?.id === goal.id) { editing = pending = null; form.reset(); } await load(); })); goals.append(row);
     }
     triggers.replaceChildren(node('h3', 'Calendar and event triggers'));
