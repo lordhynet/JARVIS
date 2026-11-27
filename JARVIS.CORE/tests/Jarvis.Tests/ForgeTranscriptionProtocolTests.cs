@@ -20,9 +20,11 @@ public sealed class ForgeTranscriptionProtocolTests
         var transcript = Parse("""{"text":"Bonjour à tous","languages":[{"code":"fr"}],"usage":{"type":"duration","seconds":2.1}}""", "gpt-transcribe");
         Assert.Equal("Bonjour à tous", transcript.Text); Assert.Equal("fr", transcript.DetectedLanguage);
         Assert.Null(transcript.Confidence); Assert.Equal(ForgeTranscriptionProtocol.NoConfidenceMethod, transcript.ConfidenceMethod);
-        // Therefore the gate refuses: no explicit quality evidence on the configured model.
-        var gate = ForgeTurnQualityGate.Assess("fr-FR", new(3, 2, ForgeSpeechActivity.PcmActiveMethod), transcript.Text, transcript.Confidence, transcript.DetectedLanguage);
-        Assert.Equal(ForgeTurnUnscorableReason.QualityEvidenceMissing, gate.Reason);
+        // Owner decision (27 Nov): keep gpt-transcribe, so a clean turn is practice only: unscored, and no futile retry.
+        var gate = ForgeTurnQualityGate.Assess("fr-FR", new(3, 2, ForgeSpeechActivity.PcmActiveMethod), transcript.Text, transcript.Confidence,
+            transcript.DetectedLanguage, ForgeTranscriptionProtocol.ReturnsConfidence("gpt-transcribe"));
+        Assert.Equal(ForgeTurnUnscorableReason.QualityEvidenceUnavailable, gate.Reason);
+        Assert.True(gate.PracticeOnly); Assert.False(gate.Scorable); Assert.False(gate.RetryOffered);
     }
 
     [Theory]
