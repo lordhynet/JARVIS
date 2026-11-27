@@ -182,8 +182,9 @@ public sealed partial class PostgresSessionTests
     private sealed class CorrectionSaveFailure : SaveChangesInterceptor
     {
         public bool Enabled { get; set; } public int Failures { get; private set; }
+        public CancellationTokenSource? CancelAfterSave { get; set; }
         public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default) {
-            if (Enabled) { Failures++; throw new InvalidOperationException("Synthetic post-save correction failure."); } return ValueTask.FromResult(result);
+            if (Enabled) { Failures++; CancelAfterSave?.Cancel(); ct.ThrowIfCancellationRequested(); throw new InvalidOperationException("Synthetic post-save mutation failure."); } return ValueTask.FromResult(result);
         }
     }
     private sealed class CorrectionContextFactory(string connection, CorrectionCapture capture, CorrectionSaveFailure? failure = null) : IDbContextFactory<SessionDbContext>

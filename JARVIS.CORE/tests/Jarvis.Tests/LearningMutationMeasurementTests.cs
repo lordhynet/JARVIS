@@ -137,6 +137,15 @@ internal sealed record LearningMutationFixture(RuntimeState State, Guid Question
                     Assert.DoesNotContain(phase, phaseTimings[lane].Keys);
                 continue;
             }
+            if (lane == "deletion") {
+                foreach (var phase in new[] { "deletion.context", "deletion.begin", "deletion.privacy_gate", "deletion.lock", "deletion.target", "deletion.decision",
+                    "deletion.learning.baseline", "deletion.training.inputs", "deletion.learning.history", "deletion.project",
+                    "deletion.reasoning.hydrate", "deletion.reasoning.retire", "deletion.cold.serialize_hash", "deletion.save", "deletion.commit" })
+                    Assert.Equal(deletions.Count, phaseTimings[lane][phase].Count);
+                foreach (var phase in new[] { "runtime.training.hydrate", "runtime.learning.hydrate", "runtime.training.diff", "runtime.learning.diff" })
+                    Assert.DoesNotContain(phase, phaseTimings[lane].Keys);
+                continue;
+            }
             foreach (var phase in new[] { "runtime.update.callback", "runtime.update.serialize_after", "runtime.update.save",
                 "runtime.learning.hydrate", "runtime.learning.diff", "runtime.training.hydrate", "runtime.training.diff" })
                 Assert.Equal(corrections.Count, phaseTimings[lane][phase].Count);
@@ -185,7 +194,7 @@ public sealed partial class PostgresSessionTests
                 await File.WriteAllTextAsync(Environment.GetEnvironmentVariable("JARVIS_PERF_OUTPUT")!, JsonSerializer.Serialize(new {
                     generatedAt = DateTimeOffset.UtcNow, synthetic = true, pooled = true, backgroundWorkers = false, unrelatedGoals = 200,
                     operation = "Distinct correction and deletion per sample; no setup/reset in timers. Rebuild diagnostic explicitly loads cold, learning and training units before pure projection; pure timer excludes all storage. Counts include retained training tombstones.",
-                    targetMs = 50, targetIsUnchanged = true, optimizationImplemented = true, optimization = "Canonical training extraction and indexed correction; deletion remains cohesive",
+                    targetMs = 50, targetIsUnchanged = true, optimizationImplemented = true, optimization = "Canonical training extraction and question-scoped correction/deletion; deletion still hydrates/serializes cold reasoning state",
                     instrumentationOverheadIncluded = true, nestedPhasesOverlapOuterPhases = true, reports
                 }, new JsonSerializerOptions { WriteIndented = true }));
             } finally { using var pool = new NpgsqlConnection(connection); NpgsqlConnection.ClearPool(pool); }

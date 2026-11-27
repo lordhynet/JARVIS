@@ -21,7 +21,10 @@ internal sealed class StoragePhaseCapture : IDisposable
         "runtime.cold.hydrate", "runtime.learning.hydrate", "runtime.cold.serialize_hash", "runtime.learning.diff",
         "runtime.training.hydrate", "runtime.training.diff",
         "correction.context", "correction.begin", "correction.privacy_gate", "correction.lock", "correction.target", "correction.decision",
-        "correction.learning.baseline", "correction.training.inputs", "correction.learning.history", "correction.project", "correction.save", "correction.commit" };
+        "correction.learning.baseline", "correction.training.inputs", "correction.learning.history", "correction.project", "correction.save", "correction.commit",
+        "deletion.context", "deletion.begin", "deletion.privacy_gate", "deletion.lock", "deletion.target", "deletion.decision",
+        "deletion.learning.baseline", "deletion.training.inputs", "deletion.learning.history", "deletion.project",
+        "deletion.reasoning.hydrate", "deletion.reasoning.retire", "deletion.cold.serialize_hash", "deletion.save", "deletion.commit" };
     private sealed class Frame(string operation, bool measured)
     {
         private int active = 1;
@@ -130,7 +133,7 @@ public sealed partial class PostgresSessionTests
         using var phases = new StoragePhaseCapture(); await fixture.Exercise(store, service, 1, phases);
         var report = phases.Report(); Assert.Equal(3, report.Count);
         foreach (var (name, lane) in report) {
-            Assert.Equal(5, lane[name == "correction" ? "correction.commit" : "runtime.update.commit"].Count);
+            Assert.Equal(5, lane[name == "rebuild" ? "runtime.update.commit" : name + ".commit"].Count);
             Assert.All(lane.Values, phase => Assert.All(phase.SamplesMs, value => Assert.True(double.IsFinite(value) && value >= 0)));
         }
     }

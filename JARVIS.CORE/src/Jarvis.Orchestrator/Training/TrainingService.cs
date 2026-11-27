@@ -109,16 +109,8 @@ public sealed class TrainingService(IRuntimeStore store, ISessionReader sessions
     public Task<TrainingAttempt> CorrectAsync(Guid id, CorrectTrainingAnswerRequest request, CancellationToken ct)
         => store.CorrectTrainingAnswerAsync(id, request, clock, ct);
 
-    public Task<bool> DeleteAsync(Guid id, int expectedRevision, CancellationToken ct) => store.UpdateAsync(state =>
-    {
-        if (!state.TrainingAttempts.TryGetValue(id, out var prior) || prior.DeletedAt is not null) return false;
-        var attempt = Current(state, id, expectedRevision);
-        state.TrainingAttempts[id] = attempt with { Revision = checked(attempt.Revision + 1), DeletedAt = clock.GetUtcNow(),
-            Answers = [], Assessments = [], CanonicalAssessmentId = null };
-        ReasoningLifecycle.Retire(state, id);
-        if (state.TrainingBaselines.ContainsKey(attempt.QuestionId)) TrainingProjection.Rebuild(state, attempt.QuestionId);
-        return true;
-    }, ct);
+    public Task<bool> DeleteAsync(Guid id, int expectedRevision, CancellationToken ct)
+        => store.DeleteTrainingAttemptAsync(id, expectedRevision, clock, ct);
 
     private static TrainingAttempt Current(RuntimeState state, Guid id, int revision)
     {
