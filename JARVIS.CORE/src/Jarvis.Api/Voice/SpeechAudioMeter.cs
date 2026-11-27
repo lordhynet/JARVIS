@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Coaching;
+using Jarvis.Orchestrator.Forge;
 
 namespace Jarvis.Api.Voice;
 
@@ -27,7 +28,8 @@ internal sealed class SpeechAudioMeter(int maximumBytes) : IDisposable
             return Analyse(audio.GetBuffer().AsSpan((int)start, (int)(end - start)), 24000);
         }
     }
-    internal static SpeechTiming? Analyse(ReadOnlySpan<byte> pcm, int sampleRate)
+    // 20 ms frames below the RMS threshold are quiet. Shared by both measurements so they classify audio identically.
+    private static bool[]? QuietFrames(ReadOnlySpan<byte> pcm, int sampleRate)
     {
         if (sampleRate is not (16000 or 24000) || pcm.Length == 0 || pcm.Length % 2 != 0 || pcm.Length > sampleRate * 2 * 180) return null;
         var frameBytes = sampleRate / 50 * 2; var frames = pcm.Length / frameBytes;
@@ -38,6 +40,21 @@ internal sealed class SpeechAudioMeter(int maximumBytes) : IDisposable
             for (var i = 0; i < data.Length; i += 2) { var sample = BinaryPrimitives.ReadInt16LittleEndian(data[i..]); energy += (double)sample * sample; }
             quiet[frame] = Math.Sqrt(energy / (frameBytes / 2)) / short.MaxValue < .012;
         }
+        return quiet;
+    }
+
+    // Active (above-threshold) duration excluding leading, trailing and internal silence. Energy is not clear speech:
+    // noise is active too, so callers must not treat this as a quality signal on its own.
+    internal static ForgeSpeechActivity? AnalyseActivity(ReadOnlySpan<byte> pcm, int sampleRate)
+    {
+        if (QuietFrames(pcm, sampleRate) is not { } quiet) return null;
+        var active = quiet.Count(q => !q);
+        return active == 0 ? null : new(pcm.Length / (sampleRate * 2d), active / 50d, ForgeSpeechActivity.PcmActiveMethod);
+    }
+
+    internal static SpeechTiming? Analyse(ReadOnlySpan<byte> pcm, int sampleRate)
+    {
+        if (QuietFrames(pcm, sampleRate) is not { } quiet) return null;
         var first = Array.FindIndex(quiet, q => !q); var last = Array.FindLastIndex(quiet, q => !q);
         if (first < 0) return null; // Silence alone supplies no measured speaking interval.
         var count = 0;
