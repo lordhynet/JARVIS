@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Jarvis.Orchestrator\Jarvis.Orchestrator.csproj" />
+    <InternalsVisibleTo Include="Jarvis.Tests" />
   </ItemGroup>
 
   <ItemGroup>
