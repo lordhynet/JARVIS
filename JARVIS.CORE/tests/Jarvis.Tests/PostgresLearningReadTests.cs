@@ -31,7 +31,7 @@ public sealed partial class PostgresSessionTests
         public void Begin() { Commands.Clear(); Enabled = true; }
         public void AssertNarrow() {
             Assert.Contains(Commands, x => x.Contains("RuntimeLearningRows", StringComparison.Ordinal));
-            Assert.DoesNotContain(Commands, x => x.Contains("RuntimeDocuments", StringComparison.Ordinal) || x.Contains("RuntimeAudioState", StringComparison.Ordinal) || x.Contains("RuntimeLearningState", StringComparison.Ordinal));
+            Assert.DoesNotContain(Commands, x => x.Contains("RuntimeDocuments", StringComparison.Ordinal) || x.Contains("RuntimeAudioState", StringComparison.Ordinal) || x.Contains("RuntimeLearningState", StringComparison.Ordinal) || x.Contains("RuntimeTrainingRows", StringComparison.Ordinal));
         }
     }
     private sealed class QueryContextFactory(string connection, QueryReadCapture capture) : IDbContextFactory<SessionDbContext>

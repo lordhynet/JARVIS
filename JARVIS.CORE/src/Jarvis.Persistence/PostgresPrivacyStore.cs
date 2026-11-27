@@ -110,7 +110,8 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         // Do not report erasure success if ciphertext deletion fails.
         if (recordingFiles is not null) await recordingFiles.EraseAsync(ct);
         await db.InterviewRecordings.ExecuteDeleteAsync(ct);
-        hot.Apply(row, PrivacyData.EmptyAfterErase(state));
+        hot.Apply(row, PrivacyData.EmptyAfterErase(state), applyTraining: false);
+        await db.RuntimeTrainingRows.ExecuteDeleteAsync(ct);
         await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
         await db.DomainDefinitions.ExecuteDeleteAsync(ct);
         await db.TravelRoutes.ExecuteDeleteAsync(ct); await db.TravelLineStates.ExecuteDeleteAsync(ct);

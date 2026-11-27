@@ -52,13 +52,14 @@ public sealed partial class PostgresSessionTests
         TrainingMigrationFixture.Same(edited, await TrainingMigrationFixture.Snapshot(restarted.Services.GetRequiredService<IRuntimeReader>()));
     }
 
-    private sealed record TrainingFootprint(RuntimeDocument Root, RuntimeLearningRow[] Learning,
+    private sealed record TrainingFootprint(RuntimeDocument Root, RuntimeLearningRow[] Learning, RuntimeTrainingRow[] Training,
         RuntimeLearningControlRow Control, SessionRow[] Sessions, string[] Migrations)
     {
         internal static async Task<TrainingFootprint> Capture(IDbContextFactory<SessionDbContext> contexts)
         {
             await using var db = await contexts.CreateDbContextAsync();
             return new(await db.RuntimeDocuments.AsNoTracking().SingleAsync(), await db.RuntimeLearningRows.AsNoTracking().ToArrayAsync(),
+                await db.RuntimeTrainingRows.AsNoTracking().ToArrayAsync(),
                 await db.RuntimeLearningState.AsNoTracking().SingleAsync(), await db.Sessions.AsNoTracking().ToArrayAsync(),
                 (await db.Database.GetAppliedMigrationsAsync()).ToArray());
         }
@@ -67,15 +68,17 @@ public sealed partial class PostgresSessionTests
             await using var db = await contexts.CreateDbContextAsync();
             Assert.Equal(Migrations, (await db.Database.GetAppliedMigrationsAsync()).ToArray());
             Assert.False(db.Database.HasPendingModelChanges());
-            Assert.Empty(await db.Sessions.ToArrayAsync()); Assert.Empty(await db.RuntimeLearningRows.ToArrayAsync());
+            Assert.Empty(await db.Sessions.ToArrayAsync()); Assert.Empty(await db.RuntimeLearningRows.ToArrayAsync()); Assert.Empty(await db.RuntimeTrainingRows.ToArrayAsync());
             await using var tx = await db.Database.BeginTransactionAsync();
             var root = await db.RuntimeDocuments.SingleAsync(); root.Json = Root.Json; root.Fingerprint = Root.Fingerprint;
             (await db.RuntimeLearningState.SingleAsync()).NextTrainingSequence = Control.NextTrainingSequence;
             db.RuntimeLearningRows.AddRange(Learning.Select(x => new RuntimeLearningRow { Kind = x.Kind, Id = x.Id, Json = x.Json, DueAt = x.DueAt }));
+            db.RuntimeTrainingRows.AddRange(Training.Select(x => new RuntimeTrainingRow { Kind = x.Kind, Id = x.Id, Json = x.Json }));
             db.Sessions.AddRange(Sessions.Select(x => SessionRow.FromContract(x.ToContract())));
             await db.SaveChangesAsync(); await tx.CommitAsync();
             Assert.Equal(Root.Fingerprint, (await db.RuntimeDocuments.AsNoTracking().SingleAsync()).Fingerprint);
             Assert.Equal(Learning.Length, await db.RuntimeLearningRows.CountAsync());
+            Assert.Equal(Training.Length, await db.RuntimeTrainingRows.CountAsync());
         }
         internal static async Task<string> Stamp(IDbContextFactory<SessionDbContext> contexts)
         {
@@ -86,6 +89,7 @@ public sealed partial class PostgresSessionTests
                   SELECT 'root:' || "Id" || ':' || xmin::text AS "Stamp" FROM "RuntimeDocuments"
                   UNION ALL SELECT "Kind" || ':' || "Id" || ':' || xmin::text FROM "RuntimeLearningRows"
                   UNION ALL SELECT 'control:' || "Id" || ':' || xmin::text FROM "RuntimeLearningState"
+                  UNION ALL SELECT 'training:' || "Kind" || ':' || "Id" || ':' || xmin::text FROM "RuntimeTrainingRows"
                 ) s
                 """).SingleAsync();
         }

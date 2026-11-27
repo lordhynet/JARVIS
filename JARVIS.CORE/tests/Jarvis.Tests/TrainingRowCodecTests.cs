@@ -144,11 +144,29 @@ public sealed class TrainingRowCodecTests
     }
 
     [Fact]
-    public void Preparatory_type_is_distinct_and_not_mapped_into_the_active_database_model()
+    public void Canonical_training_type_is_distinct_and_has_only_opaque_key_and_payload_mapping()
     {
         using var context = new SessionDbContext(new DbContextOptionsBuilder<SessionDbContext>()
             .UseNpgsql("Host=127.0.0.1;Database=unused_codec_model;Username=unused").Options);
         Assert.NotEqual(typeof(RuntimeLearningRow), typeof(RuntimeTrainingRow));
-        Assert.Null(context.Model.FindEntityType(typeof(RuntimeTrainingRow)));
+        var entity = context.Model.FindEntityType(typeof(RuntimeTrainingRow)); Assert.NotNull(entity);
+        Assert.Equal("RuntimeTrainingRows", entity.GetTableName());
+        Assert.Equal(new[] { "Kind", "Id" }, entity.FindPrimaryKey()!.Properties.Select(p => p.Name));
+        Assert.Equal("jsonb", entity.FindProperty("Json")!.GetColumnType());
+        Assert.False(context.Database.HasPendingModelChanges());
+    }
+
+    [Fact]
+    public void Training_loader_retries_failed_hydration_closes_unused_loaders_and_preserves_default_serialization()
+    {
+        var state = new RuntimeState(); var calls = 0; var id = Guid.NewGuid();
+        state.DeferColdProperties(() => throw new InvalidOperationException("Cold must stay lazy."));
+        state.DeferTrainingProperties(() => { if (++calls == 1) throw new InvalidDataException("Synthetic failed load"); state.TrainingAttempts[id] = Attempt(id); });
+        Assert.Throws<InvalidDataException>(() => state.TrainingAttempts.Count); Assert.False(state.AreTrainingPropertiesLoaded);
+        Assert.Single(state.TrainingAttempts); Assert.Equal(2, calls); Assert.False(state.AreColdPropertiesLoaded);
+        var closed = new RuntimeState(); closed.DeferTrainingProperties(() => { }); closed.CloseTrainingProperties();
+        Assert.Throws<InvalidOperationException>(() => closed.TrainingOperations.Count);
+        var normal = new RuntimeState(); normal.TrainingAttempts[id] = Attempt(id);
+        Assert.Single(JsonSerializer.Deserialize<RuntimeState>(JsonSerializer.Serialize(normal))!.TrainingAttempts);
     }
 }

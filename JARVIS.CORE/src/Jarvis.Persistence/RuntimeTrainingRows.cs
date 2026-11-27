@@ -2,16 +2,25 @@ using System.Collections.ObjectModel;
 using System.Text.Json;
 using Jarvis.Contracts;
 using Jarvis.Orchestrator.Runtime;
+using Microsoft.EntityFrameworkCore;
 
 namespace Jarvis.Persistence;
 
-// Preparation for the approved canonical training unit. Not mapped or used by a runtime writer yet.
 // A distinct CLR type prevents cross-table identity aliasing with RuntimeLearningRow.
 internal sealed class RuntimeTrainingRow
 {
     public string Kind { get; set; } = "";
     public Guid Id { get; set; }
     public string Json { get; set; } = "null";
+}
+
+internal static class RuntimeTrainingModel
+{
+    public static void Configure(ModelBuilder model) => model.Entity<RuntimeTrainingRow>(b => {
+        b.ToTable("RuntimeTrainingRows"); b.HasKey(x => new { x.Kind, x.Id });
+        b.Property(x => x.Kind).HasMaxLength(32); b.Property(x => x.Id).ValueGeneratedNever();
+        b.Property(x => x.Json).HasColumnType("jsonb");
+    });
 }
 
 internal readonly record struct RuntimeTrainingKey(string Kind, Guid Id);
