@@ -1,12 +1,18 @@
 // PF-09 browser Today view: read-only, the same block the spoken briefing uses. Text enters the DOM via textContent
 // only (node()). Protected-division goal titles are already redacted by Core; nothing private is cached in storage.
-export function initForgeToday({ api, node, button }) {
+export function initForgeToday({ api, node, button, notice = () => {} }) {
   const card = node('div', '', 'card'); card.id = 'forge-today';
   document.querySelector('[data-panel=briefing]').append(card);
   let generation = 0;
   function draw(today, message) {
     card.replaceChildren(node('h2', 'Forge today'), button('Reload Forge today', load));
     if (!today) { card.append(node('p', message, 'muted')); return; }
+    // PF-02: adds the sixteen divisions as registry drafts only; each still needs approval under Domains.
+    card.append(button('Install Forge division drafts', async () => {
+      const result = await api('/forge/divisions/drafts', { includeOptional: false });
+      const drafted = result.filter(x => x.status === 'drafted').length, existing = result.filter(x => x.status === 'existing').length;
+      notice(`${drafted} division drafts added, ${existing} already present. Approve each one under Domains; nothing was activated.`);
+    }));
     if (today.status === 'not-started') {
       card.append(node('p', `Forge starts in ${today.startsInDays} day${today.startsInDays === 1 ? '' : 's'}. Day 1 of ${today.days}.`));
     } else if (today.status === 'graduated') {

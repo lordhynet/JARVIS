@@ -125,7 +125,7 @@ const notifications = initNotifications({ api, node, button, notice });
 const imports = initImports({ api, node, button, notice });
 const planning = initPlanning({ api, node, button, notice });
 const travel = initTravel({ api, node, button, notice });
-const forgeToday = initForgeToday({ api, node, button });
+const forgeToday = initForgeToday({ api, node, button, notice });
 const recordings = initRecordings({ api, node, button, notice, openPractice: async id => {
   await openSession(id); document.querySelector('[data-tab="sessions"]').click();
   notice('Private interview activity selected. Start Everyday voice with cloud consent, then ask JARVIS to resume coaching.');
