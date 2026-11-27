@@ -57,5 +57,5 @@ public sealed record ForgeWeek(DateOnly From, DateOnly To, int Reviews, int Trai
     IReadOnlyList<ForgeWeekDivision> Divisions, int UnclassifiedReviews = 0, int UnclassifiedTrainingAnswers = 0,
     int UnclassifiedCoachingAnswers = 0, DateTimeOffset? AsOf = null);
 
-/// <summary>PF-09 evening review: the day's evidence (counts only) and the next day's top three suggestions.</summary>
-public sealed record ForgeEvening(ForgeWeek Today, ForgeBriefing Tomorrow);
+/// <summary>PF-09 evening view: recorded practice and next local day's suggestions; no capacity-backed plan.</summary>
+public sealed record ForgeEvening(ForgeWeek Today, ForgeBriefing Tomorrow, DateOnly? TomorrowDate = null);

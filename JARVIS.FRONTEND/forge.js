@@ -26,34 +26,46 @@ export function initForgeToday({ api, node, button }) {
     card.append(list);
   }
   // J4: counts of existing records per division; coverage stays "unknown" when there is nothing to judge.
-  function drawWeek(week) {
+  function drawActivity(week, target, heading = 'This week') {
     if (!week) return;
-    card.append(node('h3', 'This week'));
+    target.append(node('h3', heading));
     const coverage = week.practiceCoverage === null || week.practiceCoverage === undefined ? 'unknown' : `${Math.round(week.practiceCoverage * 100)}%`;
-    card.append(node('p', `${week.from} to ${week.to}${week.asOf ? ` · as of ${week.asOf}` : ''} · ${week.reviews} reviews · ${week.trainingAnswers} training answers · ${week.coachingAnswers} coaching answers · practice coverage ${coverage}`));
-    card.append(node('p', 'Recorded practice only, not a skill score or weighted evidence coverage. Actual and planned minutes are unknown.', 'muted'));
+    target.append(node('p', `${week.from} to ${week.to}${week.asOf ? ` · as of ${week.asOf}` : ''} · ${week.reviews} reviews · ${week.trainingAnswers} training answers · ${week.coachingAnswers} coaching answers · practice coverage ${coverage}`));
+    target.append(node('p', 'Recorded practice only, not a skill score or weighted evidence coverage. Actual and planned minutes are unknown.', 'muted'));
     const unclassified = (week.unclassifiedReviews || 0) + (week.unclassifiedTrainingAnswers || 0) + (week.unclassifiedCoachingAnswers || 0);
-    if (unclassified) card.append(node('p', `Unclassified provenance: ${unclassified} record${unclassified === 1 ? '' : 's'}; no division credit is inferred.`, 'muted'));
+    if (unclassified) target.append(node('p', `Unclassified provenance: ${unclassified} record${unclassified === 1 ? '' : 's'}; no division credit is inferred.`, 'muted'));
     const list = node('ul', '', 'list');
     for (const d of week.divisions) list.append(node('li', `${d.code}: ${d.practised ? 'recorded practice' : 'no recorded practice'}${d.hasActiveGoal ? ' · current active goal' : ''}`, 'list-item'));
-    if (week.divisions.length) card.append(list);
+    if (week.divisions.length) target.append(list);
   }
-  // PF-09 evening review: the next day's suggestions (never a schedule until capacity is set).
-  function drawTomorrow(tomorrow) {
-    if (!tomorrow || !tomorrow.top.length) return;
-    card.append(node('h3', `Tomorrow · day ${tomorrow.day} of ${tomorrow.days}`));
+  function drawTomorrow(evening, target) {
+    drawActivity(evening.today, target, 'Today’s recorded practice');
+    const tomorrow = evening.tomorrow;
+    target.append(node('h3', `Tomorrow${evening.tomorrowDate ? ` · ${evening.tomorrowDate}` : ''}`));
+    if (tomorrow.status === 'paused') { target.append(node('p', 'Programme paused; no activities are suggested.')); return; }
+    if (tomorrow.status === 'not-started') { target.append(node('p', `Programme has not started; ${tomorrow.startsInDays} day${tomorrow.startsInDays === 1 ? '' : 's'} until Day 1.`)); return; }
+    if (tomorrow.status === 'graduated') { target.append(node('p', 'Programme calendar ended.')); return; }
+    target.append(node('p', `Day ${tomorrow.day} of ${tomorrow.days} · suggestions only.`));
+    if (!tomorrow.top.length) { target.append(node('p', 'No suggestions for tomorrow yet.', 'muted')); return; }
     const list = node('ol', '', 'list');
     for (const item of tomorrow.top) list.append(node('li', `${item.label} · ${item.minutes} min · ${item.why}`, 'list-item'));
-    card.append(list);
+    target.append(list);
   }
   async function load() {
     const token = ++generation;
     try {
       const today = await api('/forge/today');
       if (token !== generation) return; draw(today);
-      try { const week = await api('/forge/week'); if (token === generation) drawWeek(week); }
-      catch { if (token === generation) card.append(node('p', 'Weekly summary is unavailable. Reload to retry.', 'muted')); }
-      try { const evening = await api('/forge/evening'); if (token === generation) drawTomorrow(evening.tomorrow); } catch { /* evening view is optional */ }
+      const week = node('section'), evening = node('section'); card.append(week, evening);
+      const optional = async (path, target, render, failure) => {
+        try { const value = await api(path); if (token === generation) render(value, target); }
+        catch { if (token === generation) target.replaceChildren(node('p', failure, 'muted')); }
+      };
+      // Start both before awaiting either, so a cleared weekly continuation cannot start a new evening read.
+      await Promise.all([
+        optional('/forge/week', week, drawActivity, 'Weekly summary is unavailable. Reload to retry.'),
+        optional('/forge/evening', evening, drawTomorrow, 'Evening review is unavailable. Reload to retry.')
+      ]);
     } catch (error) {
       // Forge is off by default, and 404 until a programme exists: show a calm state, not an error banner.
       if (token === generation) draw(null, error?.status === 404
@@ -63,5 +75,3 @@ export function initForgeToday({ api, node, button }) {
   }
   return { load, clear() { generation++; card.replaceChildren(); } };
 }
-
-

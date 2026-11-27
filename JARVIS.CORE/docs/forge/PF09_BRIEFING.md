@@ -9,7 +9,7 @@
 - **Size:** the existing 1,200-byte bound wins. Calendar entries are dropped first, then Forge items one at a time, then the whole Forge block, before the briefing would ever fail.
 - **No paid AI:** cards come from the existing indexed learning read; goals from runtime state. No provider call, no write.
 
-Not in this slice: the PF-08 caller that produces a capacity-backed plan (so today it always speaks suggestions), and the evening/full spoken weekly review. The browser's optional recorded-practice summary is described in [J4_WEEKLY_SUMMARY.md](J4_WEEKLY_SUMMARY.md); it is not weighted skill/evidence coverage or a capacity-backed plan.
+Not in this slice: the PF-08 caller that produces a capacity-backed plan (so today it always speaks suggestions), and full spoken/accountability evening and weekly reviews. The browser's optional recorded-practice summary is described in [J4_WEEKLY_SUMMARY.md](J4_WEEKLY_SUMMARY.md); it is not weighted skill/evidence coverage or a capacity-backed plan.
 
 ## Shared Today service and browser endpoint
 
@@ -29,4 +29,10 @@ Overlapping reloads publish only their latest result. Disconnect and erasure cle
 
 ## Evening review
 
-`GET /api/forge/evening` (owner, Forge-gated) returns `ForgeEvening`: **Today** is the weekly-summary counting over the current local day (counts only, unknowns null), and **Tomorrow** is the same Today block computed for the next local day (suggestions; cards due by the end of tomorrow). The browser Today panel shows tomorrow's top three. Read-only: no plan, write or provider call.
+Owner-only/Forge-gated `GET /api/forge/evening` returns the current programme-local day's recorded practice through captured now and next local day's suggestions, with an explicit `TomorrowDate`. It is a base count/proposal view, not full accountability, verified evidence, mastery or completed curriculum. The existing weekly classifier/unknown/minutes semantics apply to the day counts.
+
+One captured programme reference and ONE existing runtime read callback supply both halves. Normal Today keeps its indexed candidate read; all callers reuse the same private pure projection for half-open canonical ticks, local-date/DST boundaries, candidate ordering, unknown interview context and protected title redaction. Tomorrow begins at the next local midnight, not now plus24hours. Runtime always supplies no capacity-backed plan. Programme selection and runtime remain separately epoch-fenced snapshots, not a globally frozen or authoritative plan. The on-demand evening read still hydrates cold/learning units; no performance acceptance.
+
+After Today, the browser starts independent weekly/evening reads together in stable sections. It reuses one activity renderer for week/day counts and shows Tomorrow's date and paused/not-started/calendar-ended/empty/active status. Active items are suggestions. Reload/clear generation fences successes/errors; an old weekly continuation cannot start a new evening request after clear. Optional errors replace only their section with fixed retry text. No raw server error, browser storage, polling, native business UI or new action.
+
+No plan/history/store/entity/schema/provider/capacity/key/protector read is introduced. Full spoken evening/weekly review, weighted scores, spend, actual/planned comparisons and missed-task adaptation remain separate requirements; `core_briefing` and its existing1,200-byte cap are unchanged. Independent entire-source review and existing operational/owner gates still apply before merge or rollout.

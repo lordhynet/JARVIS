@@ -36,7 +36,7 @@ public sealed class ForgeWeekQueries(ForgeTodayService today, IForgeAvailability
 
 public sealed record GetForgeEvening : IQuery<ForgeEvening>;
 
-/// <summary>The owner's evening review (PF-09): the day's evidence and the next day's suggestions; read-only.</summary>
+/// <summary>The owner's evening review (PF-09): the day's recorded practice and the next day's suggestions; read-only.</summary>
 public sealed class ForgeEveningQueries(ForgeTodayService today, IForgeAvailability feature, TimeProvider clock) :
     IQueryHandler<GetForgeEvening, ForgeEvening>
 {

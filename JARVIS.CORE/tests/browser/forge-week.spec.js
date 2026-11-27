@@ -29,6 +29,7 @@ async function pendingWeek(page) {
     const pending = [], waiters = [];
     const view = initForgeToday({ node, button, api: path => {
       if (path === '/forge/today') return Promise.resolve({ status: 'active', day: 2, days: 261, dueReviews: 0, scheduled: false, top: [] });
+      if (path === '/forge/evening') return Promise.resolve({ tomorrow: { status: 'active', day: 3, days: 261, scheduled: false, top: [] } });
       return new Promise((resolve, reject) => { const index = pending.length; pending.push({ resolve, reject }); waiters[index]?.(); });
     } });
     const waitForWeek = index => pending[index] ? Promise.resolve() : new Promise(resolve => { waiters[index] = resolve; });

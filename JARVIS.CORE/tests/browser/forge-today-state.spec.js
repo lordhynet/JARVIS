@@ -78,6 +78,7 @@ async function deferredView(page) {
     const requests = [], pending = [];
     // This fixture controls Today requests; dedicated weekly fixtures control the optional follow-up read.
     const view = initForgeToday({ node, button, api: path => {
+      if (path === '/forge/evening') return Promise.resolve({ tomorrow: { status: 'active', day: 3, days: 261, scheduled: false, top: [] } });
       if (path === '/forge/week') return Promise.resolve({ from: '2026-11-26', to: '2026-12-02', reviews: 0, trainingAnswers: 0, coachingAnswers: 0, practiceCoverage: null, divisions: [] });
       requests.push(path); return new Promise((resolve, reject) => pending.push({ resolve, reject }));
     } });

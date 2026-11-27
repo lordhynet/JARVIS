@@ -14,18 +14,12 @@ public sealed class ForgeTodayService(IForgeAvailability feature, IForgeProgramm
 
     public async Task<ForgeBriefing?> BuildAsync(DateTimeOffset now, CancellationToken ct = default)
     {
-        if (!feature.Enabled) return null;
-        var programme = (await programmes.ListAsync(ForgeProgrammePolicy.OwnerScope, ct)).FirstOrDefault();
+        var programme = await ProgrammeAsync(ct);
         if (programme is null) return null;
-        var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
-        var local = TimeZoneInfo.ConvertTime(now, zone).Date.AddDays(1);
-        var endOfDay = new DateTimeOffset(local, zone.GetUtcOffset(local));
-        var calendar = ForgeProgrammePolicy.View(programme, now).Calendar;
-        // The indexed read is inclusive/widened; the canonical payload retains exact ticks and offsets.
-        var dueToday = (await runtime.ReadLearningItemsAsync(true, endOfDay, ct)).Where(c => c.DueAt < endOfDay).ToArray();
+        var endOfDay = Start(programme, LocalDate(programme, now).AddDays(1));
+        var learning = await runtime.ReadLearningItemsAsync(true, endOfDay, ct);
         var goals = await runtime.ReadAsync<IReadOnlyCollection<PersonalGoal>>(s => s.Goals.Values.ToArray(), ct);
-        var candidates = ForgePlanCandidates.Build(endOfDay, dueToday, goals.Where(g => g.NextReviewAt < endOfDay), now);
-        return ForgeBriefingProjection.Build(programme, calendar, candidates, goals, dueToday.Length);
+        return ProjectToday(programme, now, endOfDay, learning, goals);
     }
 
     /// <summary>
@@ -40,28 +34,48 @@ public sealed class ForgeTodayService(IForgeAvailability feature, IForgeProgramm
     /// </summary>
     public async Task<ForgeEvening?> BuildEveningAsync(DateTimeOffset now, CancellationToken ct = default)
     {
-        var today = await BuildSpanAsync(now, 1, ct);
-        if (today is null) return null;
-        var programme = (await programmes.ListAsync(ForgeProgrammePolicy.OwnerScope, ct)).FirstOrDefault();
+        var programme = await ProgrammeAsync(ct);
         if (programme is null) return null;
-        var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
-        var tomorrow = today.To.AddDays(1).ToDateTime(TimeOnly.MinValue);
-        var tomorrowBriefing = await BuildAsync(new DateTimeOffset(tomorrow, zone.GetUtcOffset(tomorrow)), ct);
-        return tomorrowBriefing is null ? null : new ForgeEvening(today, tomorrowBriefing);
+        var tomorrowDate = LocalDate(programme, now).AddDays(1);
+        var tomorrowStart = Start(programme, tomorrowDate); var tomorrowEnd = Start(programme, tomorrowDate.AddDays(1));
+        // One runtime snapshot supplies both halves. Only minimised count/suggestion DTOs leave the callback.
+        return await runtime.ReadAsync(s => new ForgeEvening(ProjectSpan(s, programme, now, 1),
+            ProjectToday(programme, tomorrowStart, tomorrowEnd, s.Learning.Values, s.Goals.Values.ToArray()), tomorrowDate), ct);
     }
 
     private async Task<ForgeWeek?> BuildSpanAsync(DateTimeOffset now, int days, CancellationToken ct)
     {
-        if (!feature.Enabled) return null;
-        var programme = (await programmes.ListAsync(ForgeProgrammePolicy.OwnerScope, ct)).FirstOrDefault();
+        var programme = await ProgrammeAsync(ct);
         if (programme is null) return null;
-        var zone = TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone);
-        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, zone).DateTime);
+        return await runtime.ReadAsync(s => ProjectSpan(s, programme, now, days), ct);
+    }
+
+    private async Task<ForgeProgramme?> ProgrammeAsync(CancellationToken ct) => !feature.Enabled ? null :
+        (await programmes.ListAsync(ForgeProgrammePolicy.OwnerScope, ct)).FirstOrDefault();
+
+    private static ForgeWeek ProjectSpan(RuntimeState state, ForgeProgramme programme, DateTimeOffset now, int days)
+    {
+        var today = LocalDate(programme, now);
         var fromDate = today.AddDays(1 - days);
-        DateTimeOffset Start(DateOnly day) { var local = day.ToDateTime(TimeOnly.MinValue); return new(local, zone.GetUtcOffset(local)); }
-        // Publish counts only; do not carry private answers, review payloads or goal titles outside the callback.
-        return await runtime.ReadAsync(s => ForgeWeeklySummary.Build(Start(fromDate), Start(today.AddDays(1)), fromDate, today,
-            s.Reviews.Values, s.TrainingAttempts.Values, s.CoachingAttempts.Values, s.Goals.Values, now), ct);
+        return ForgeWeeklySummary.Build(Start(programme, fromDate), Start(programme, today.AddDays(1)), fromDate, today,
+            state.Reviews.Values, state.TrainingAttempts.Values, state.CoachingAttempts.Values, state.Goals.Values, now);
+    }
+
+    private static ForgeBriefing ProjectToday(ForgeProgramme programme, DateTimeOffset at, DateTimeOffset end,
+        IEnumerable<LearningItem> learning, IReadOnlyCollection<PersonalGoal> goals)
+    {
+        // The indexed candidate read can be inclusive/widened; canonical payload ticks decide the half-open day.
+        var due = learning.Where(c => c.DueAt < end).ToArray();
+        var candidates = ForgePlanCandidates.Build(end, due, goals.Where(g => g.NextReviewAt < end), at);
+        return ForgeBriefingProjection.Build(programme, ForgeProgrammePolicy.View(programme, at).Calendar, candidates, goals, due.Length);
+    }
+
+    private static DateOnly LocalDate(ForgeProgramme programme, DateTimeOffset at) =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(at, TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone)).DateTime);
+    private static DateTimeOffset Start(ForgeProgramme programme, DateOnly day)
+    {
+        var local = day.ToDateTime(TimeOnly.MinValue);
+        return new(local, TimeZoneInfo.FindSystemTimeZoneById(programme.TimeZone).GetUtcOffset(local));
     }
 }
 
