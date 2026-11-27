@@ -82,16 +82,48 @@ public sealed class OpenAiProvider(ProviderGateway gateway, ManagedAi ai, IAudio
 
     private async Task<string> RequestTranscriptAsync(Stream audio, string model, string key, CancellationToken ct)
     {
-        using var request = Request("audio/transcriptions", key);
-        using var form = new MultipartFormDataContent();
-        form.Add(new StringContent(model), "model");
-        form.Add(new StreamContent(audio), "file", "audio.wav");
-        request.Content = form;
-        var result = await gateway.JsonAsync(request, ct);
+        var result = await RequestTranscriptJsonAsync(audio, model, key, [], ct);
         // Keep the conservative reservation when the provider supplies no granular usage.
         Guard.Require(result.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String,
             502, "Transcription provider returned no text.");
         return text.GetString()!;
+    }
+
+    private async Task<JsonElement> RequestTranscriptJsonAsync(Stream audio, string model, string key,
+        IReadOnlyList<KeyValuePair<string, string>> fields, CancellationToken ct)
+    {
+        using var request = Request("audio/transcriptions", key);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(model), "model");
+        form.Add(new StreamContent(audio), "file", "audio.wav");
+        foreach (var field in fields) form.Add(new StringContent(field.Value), field.Key);
+        request.Content = form;
+        return await gateway.JsonAsync(request, ct);
+    }
+
+    // One Forge speaking turn: 24 kHz PCM from the existing audio path, an explicit starter locale, and a caller-stable turn ID.
+    // The turn ID is the reservation ID, so a replayed or retried turn is refused by the budget (409) instead of billed twice;
+    // a retry must use a new turn. Every reservation is Forge-attributed and therefore inside the global ceiling and the owner's
+    // Forge allowance; with no allowance configured this refuses before any provider I/O. No caller is wired yet.
+    internal async Task<ForgeTurnTranscript> TranscribeForgeTurnAsync(byte[] pcm, Guid sessionId, Guid turnId, string locale,
+        CancellationToken ct)
+    {
+        Guard.Require(turnId != Guid.Empty && sessionId != Guid.Empty, 400, "A Forge turn needs stable session and turn IDs.");
+        Guard.Require(Jarvis.Orchestrator.Forge.ForgeLanguageProfiles.IsStarter(locale), 400, "A Forge turn needs an explicit supported practice locale.");
+        Guard.Require(pcm.Length > 0 && pcm.Length % 2 == 0 && pcm.Length <= VoiceWindowLimits.BytesPerSecond * 180, 400,
+            "A Forge turn needs 16-bit PCM audio of at most three minutes.");
+        var transcription = ai.TranscriptionRates();
+        // Fields validates the locale against the language profiles before anything is reserved.
+        var fields = ForgeTranscriptionProtocol.Fields(transcription.Model, locale);
+        var seconds = (decimal)pcm.Length / VoiceWindowLimits.BytesPerSecond;
+        await budget.ReserveAsync(turnId, sessionId, transcription.Model, decimal.Ceiling(seconds) / 60m * transcription.PerMinute * 2m,
+            ai.Limits, ct, UsageLane.Voice, ProviderIds.OpenAi, UsageProgrammes.Forge);
+        using var audio = new MemoryStream();
+        AudioDurationProbe.WriteWave(audio, pcm, VoiceWindowLimits.SampleRate);
+        audio.Position = 0;
+        // Like the existing transcription paths, the conservative reservation stands: no granular usage is settled here.
+        return ForgeTranscriptionProtocol.Parse(await RequestTranscriptJsonAsync(audio, transcription.Model, transcription.ApiKey, fields, ct),
+            transcription.Model);
     }
 
     internal async Task<string> TranscribeRecordingPieceAsync(byte[] canonicalWave, Jarvis.Orchestrator.Recordings.RecordingTranscriptionPrice price, CancellationToken ct)
