@@ -47,3 +47,11 @@ Status: **PROPOSED, needs Codex design review before implementation.** No source
 
 ## Out of scope
 Paid pilot, setting the allowance, live config, model change, pronunciation scoring, Android native UI beyond audio, and French/Spanish domain activation.
+
+## Owner decisions (27 November 2026)
+- **D1:** (a) device TTS for prompts, with text as the fallback. No AI cost for prompts.
+- **D2:** (a) authored model answers and rubric hints only. No AI correction calls.
+- **D3:** persistence through the canonical attempt path. The owner asked Claude to independently review PR #45 (Codex-authored training extraction) and merge it if correct. PF-04 integration follows that outcome.
+- **D4:** **Windows first** (`JARVIS.WINDOWS`), not the browser. Android follows after a real owner hardware check.
+
+With D1 and D2, a first French drill spends AI money only on transcription (`gpt-transcribe`, Forge-attributed, inside the Forge allowance once the owner sets one).
