@@ -1,65 +1,27 @@
-# PF-05 drill caller design (proposed, 27 November 2026)
+# All-purpose realtime voice practice design (proposed, revised 28 November 2026)
 
-Status: **PROPOSED, needs Codex design review before implementation.** No source change accompanies this document.
+Status: **PROPOSED, needs design review before implementation.** This replaces the earlier turn-based French drill-caller proposal in this file.
 
-## What exists (merged on `development` 8475241)
-- `ForgeTurnQualityGate` v3: scored, retry or practice-only. Pronunciation is never assessed.
-- `ForgeLanguageProfiles`: en-GB, fr-FR, es-ES, with correction after each turn by default.
-- `ForgeTranscriptionProtocol` plus `OpenAiProvider.TranscribeForgeTurnAsync`. Forge-attributed, with the turn ID as reservation ID, a required post-reservation ownership/pause fence, zero settlement on pre-dispatch refusal, and conservative accounting after dispatch.
-- `ForgeSpeakingTurn.RunAsync`: a free audio-only preflight, then transcription and a post-result ownership recheck, then the gate.
-- Owner decision: keep `gpt-transcribe`. Turns are **practice only** until a calibrated quality signal is reviewed.
+## Owner decisions (27–28 November 2026)
+- **All-purpose:** one voice practice for any skill, started naturally, e.g. "Hey JARVIS, can we practise system design now?". Languages are topics in the same system, not a separate drill.
+- **Realtime everywhere:** practice runs on the **existing realtime voice session**. This supersedes ADR 0025's turn-based default.
+- **Audio-first clients:** first the browser main window on the owner's Windows PC, then the Windows tray companion after install and a microphone check, then Android.
+- **Persistence:** canonical attempts, no parallel history (see the PF-04 design, PR #61, which is to be revised to match).
 
-## Proposed turn loop (ADR 0025 turn-based mode, not realtime)
-1. **Objective and prompt.** The drill picks the next item from authored, versioned, locale-tagged content. Prompts are fixed text, with no model call to generate them.
-2. **Speak the prompt.** See decision D1.
-3. **Listen.** Capture one turn's PCM over the **existing** companion/browser audio channel under the existing lease. Capture ends on owner stop, silence end-pointing (the existing turn detection), or the 180 s bound.
-4. **Run the turn.** `ForgeSpeakingTurn.RunAsync(pcm, session, turnId, locale, current)`, where `current = !client.StopRequested && ownership.CurrentAsync(lease) && source/privacy epoch unchanged`. This is the same composition as `RealtimeVoiceNegotiation.CurrentAsync`; the paid pause is already checked inside the provider call.
-5. **Fence every outcome** (Codex, #56 review). Immediately before publishing or recording *any* result, including the free audio-only retry, re-run `current`. If it fails, drop the result silently: no stale retry prompt, and no record after stop.
-6. **Correction.** See decision D2. Correction timing comes from the profile default (`AfterEachTurn`).
-7. **Checkpoint.** Deferred to PF-04 (below). Until then the loop is ephemeral: nothing is stored beyond the existing financial reservation.
+## What already exists (reuse, don't duplicate)
+- Realtime voice tools `core_practice_current/start/answer/stop` (`Jarvis.Api/Voice/CoreVoiceTools.cs`) call `VoicePracticeService`, which uses `TrainingDrillService` and `TrainingService.SubmitAsync`, which saves canonical attempts.
+- Fencing, the audio lease, the paid pause, the budget, the locked-session restrictions and handoff are already enforced by the realtime session.
+- `QuestionBank` has 16 authored interview/technical questions across 8 `LearningDomain`s (2 each). `DrillCatalog` defines 9 drill styles (`TrainingMode`).
+- Merged Forge pieces stay available: language profiles, French content, the quality gate, and turn-based transcription. They are off the main path under the realtime decision. Nothing is deleted.
 
-## Identity and retry
-- **Turn IDs** are deterministic from `(drill session, item, attempt ordinal)`, following the existing `VoicePracticeService.Operation` hashing pattern. They are not random, so a reconnect can't silently re-dispatch.
-- A **retry** is an explicit new user attempt with the next ordinal, after the user speaks again. It is **never** an automatic re-send of the same captured PCM (Codex, #55).
-- A 409 on a reused turn ID is surfaced as "already handled", not retried.
+## Gaps and proposed slices
+1. **Topic-aware start (first).** `core_practice_start` takes only a drill *style*. Add an optional **topic** (`LearningDomain`) through `StartTrainingDrillRequest` and `TrainingDrill`. It's an additive optional field, omitted when null, and part of replay identity. `TrainingDrillService` filters candidates by topic. If a different topic is already active, the user is asked whether to stop it (409), never switched silently. The tool description maps natural requests ("system design", "databases", "API security"…) to topics, and chooses a fitting style (system design suggests `ArchitectureChallenge`; "quick" suggests `RapidDrill`). If a topic has no content for that style, it says so rather than substituting another topic.
+2. **Content breadth.** Many more authored, sourced questions per topic, starting with system design. They are versioned `QuestionBank` entries with references, so there's no AI-generated syllabus.
+3. **Languages as topics.** Language practice in realtime (the speaking-conversation mode): extend topics to cover `fr-FR`/`es-ES`/`en-GB` speaking using the merged `ForgeLanguageProfiles` and `ForgeDrillCatalog`. This needs a decision on how language items fit `QuestionBank`/`LearningDomain` without turning SRS on for unscored turns (see #61).
+4. **Forge cost attribution on realtime.** While a Forge-programme practice is active, realtime voice reservations pass `programme: forge`, so they count against the owner's Forge allowance inside the global ceiling. Ordinary conversation stays unattributed.
 
-## Decisions needed
-- **D1, prompt speech.** Options:
-  - (a) Device TTS on browser or Android. No AI cost. Android stays audio-only (it plays audio and holds no business logic).
-  - (b) Server TTS through a new Forge-attributed provider path. This is a new paid path with its own review.
-  - (c) Text-only prompts in the browser to start.
-  - **Proposal:** (a) for prompts, with (c) as the fallback.
-- **D2, correction source.** Options:
-  - (a) Authored model answers and rubric hints only. No AI cost, no hallucination risk.
-  - (b) A small text-model correction through the existing reasoning gateway with Forge attribution. Paid, needs grounding/hallucination review, and would be unscored under the practice-only decision.
-  - **Proposal:** (a) for the first slice.
-- **D3, persistence.** Per Codex (PR53 and #56 reviews): reuse the canonical attempt path with an **unscored/unknown** outcome, not score 0 and no SRS advancement, once PF-04 / PR45 integration permits. No ForgeAttempts or parallel history. **Blocked** until then.
-- **D4, surface.** Which client starts a drill first:
-  - (a) the browser, where turn capture is easiest to test;
-  - (b) the Android companion, under the existing foreground/lease rules and with a real owner hardware check.
-  - **Proposal:** browser first.
-
-## Implementation slices after approval
-1. **Content.** A small authored fr-FR starter set as a versioned code catalogue with model answers. No Domain Registry install or activation, keeping clear of the owner's French/Spanish auto-active decision.
-2. **Drill session (ephemeral).** Start, next item, capture, run, then publish a fenced result over the existing session channel behind `Forge:Enabled`. Free preflight retries and practice-only outcomes. No storage.
-3. **Device-TTS prompt playback** (if D1a), on the browser client.
-4. **Persistence** via PF-04, after PR45.
+## Cost note (for the owner)
+Realtime costs more per minute than turn-based. The existing global caps (£10 development, £100 production, £200 maximum with approval) and the Everyday/Serious voice limits still apply unchanged. Exhaustion ends practice with the existing unpaid fallback. No cap is raised by this design.
 
 ## Out of scope
-Paid pilot, setting the allowance, live config, model change, pronunciation scoring, Android native UI beyond audio, and French/Spanish domain activation.
-
-## Owner decisions (27 November 2026)
-- **D1:** (a) device TTS for prompts, with text as the fallback. No AI cost for prompts.
-- **D2:** (a) authored model answers and rubric hints only. No AI correction calls.
-- **D3:** persistence through the canonical attempt path. The owner asked Claude to independently review PR #45 (Codex-authored training extraction) and merge it if correct. PF-04 integration follows that outcome.
-- **D4:** **Windows first** (`JARVIS.WINDOWS`), not the browser. Android follows after a real owner hardware check.
-
-With D1 and D2, a first French drill spends AI money only on transcription (`gpt-transcribe`, Forge-attributed, inside the Forge allowance once the owner sets one).
-
-## Owner clarification (28 November 2026): audio-first, browser then tray
-"Windows first" means option (c). **The drill is audio-first on every client.**
-1. **First: the browser main window (`JARVIS.FRONTEND`) on the owner's Windows PC.** It's usable from 1 December with nothing to install. The flow is voice-driven: device TTS speaks the instruction, the mic captures the turn, and device TTS speaks the French model answer and hints. On-screen text is a fallback and accessibility aid, not the primary interface.
-2. **Then: the Windows tray companion (`JARVIS.WINDOWS`)** for hands-free drills, reusing its existing fenced `VoiceSocket`/WASAPI path and Windows `SpeechSynthesis`. This is gated on the owner signing and installing the MSIX, device registration, the live Core update, and a real microphone check.
-3. Android follows under its existing audio-only companion rules.
-
-The Core drill session (slice 2) is client-neutral, so both clients use the same fenced turn API.
+Raising budgets, setting the Forge allowance, live config, deploy, pronunciation scoring, French/Spanish domain activation, and native Android UI.
