@@ -112,6 +112,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         await db.InterviewRecordings.ExecuteDeleteAsync(ct);
         hot.Apply(row, PrivacyData.EmptyAfterErase(state), applyTraining: false);
         await db.RuntimeTrainingRows.ExecuteDeleteAsync(ct);
+        await db.GeneratedPracticeQuestions.ExecuteDeleteAsync(ct);   // rows only; the table and migration history remain
         await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
         await db.DomainDefinitions.ExecuteDeleteAsync(ct);
         await db.TravelRoutes.ExecuteDeleteAsync(ct); await db.TravelLineStates.ExecuteDeleteAsync(ct);
@@ -160,7 +161,16 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         foreach (var recording in db.InterviewRecordings.Local) recording.Json = JsonSerializer.Serialize(recordingState.Sessions[recording.Id]);
         foreach (var chunk in db.RecordingChunks.Local.ToArray()) if (!recordingState.Chunks.ContainsKey(chunk.Id)) db.RecordingChunks.Remove(chunk);
         var selection = PrivacyData.Select(state, sessionRows.Select(x => x.ToContract()).ToList(), runs, policy, request.AsOf);
+        var storiesBefore = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.StoryVersions(state);
         var voiceIds = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
+        // Retired conversations lose their generated practice in this same transaction: runtime copies and row text.
+        // Plus conversations shown a story that retiring an import just edited (CV claim removal).
+        var storyAffected = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.AffectedByStoryChanges(state, storiesBefore);
+        var retiredSessions = selection.Sessions.Union(storyAffected).ToArray();
+        var generatedRows = await db.GeneratedPracticeQuestions.Where(r => retiredSessions.Contains(r.SessionId) && r.PurgedAt == null).ToListAsync(ct);
+        Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.PurgeRuntime(state, generatedRows.Select(r => r.Id).ToHashSet(),
+            storyAffected.Except(selection.Sessions).ToHashSet(), request.AsOf);   // retired conversations keep no manifest
+        foreach (var generated in generatedRows) { generated.Json = null; generated.Fingerprint = ""; generated.Lineage = "[]"; generated.PurgedAt = request.AsOf; }
         foreach (var session in sessionRows)
         {
             if (session.Status == SessionStatus.Ended && session.UpdatedAt < request.AsOf.AddDays(-policy.SessionDays)) db.Sessions.Remove(session);

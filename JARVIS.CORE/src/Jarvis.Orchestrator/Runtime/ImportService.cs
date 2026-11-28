@@ -69,7 +69,9 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock, ICore
         state.ImportedDocuments[id] = document; return document;
     }
 
-    public Task<SourceClaim> AttachClaimAsync(Guid documentId, AttachSourceClaimRequest request, CancellationToken ct = default) => store.UpdateAsync(s =>
+    // Attaching a claim edits the story, so generated practice shown that story is purged in the same transaction.
+    public Task<SourceClaim> AttachClaimAsync(Guid documentId, AttachSourceClaimRequest request, CancellationToken ct = default) =>
+        Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.UpdateAsync(store, Jarvis.Orchestrator.Training.PracticeLineage.Story, request.StoryId, s =>
     {
         Guard.Require(request.RequestId != Guid.Empty, 400, "Claim operation ID required.");
         Guard.Require(s.ImportedDocuments.TryGetValue(documentId, out var document) && document.DeletedAt is null && document.Kind == "cv", 404, "CV document not found.");
@@ -86,19 +88,31 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock, ICore
         s.Stories[story.Id] = story with { Content = story.Content with { CvClaims = [..claims, quote] }, Version = story.Version + 1, UpdatedAt = clock.GetUtcNow() };
         var result = new SourceClaim(request.RequestId, documentId, document.Revision, story.Id, quote, request.Start, request.Length, clock.GetUtcNow());
         s.SourceClaims.Add(result.Id, result); return result;
-    }, ct);
+    }, clock, ct);
 
     public Task<bool> DeleteAsync(Guid id, int revision, CancellationToken ct = default)
     {
-        async Task<bool> Delete(RuntimeState s, Func<Guid, Func<ConversationSession, ConversationSession>, Task<ConversationSession?>>? update) {
+        async Task<bool> Delete(RuntimeState s, Func<Guid, Func<ConversationSession, ConversationSession>, Task<ConversationSession?>>? update,
+            Func<IReadOnlySet<Guid>, DateTimeOffset, Task<IReadOnlySet<Guid>>>? tombstoneGenerated) {
         Guard.Require(s.ImportedDocuments.TryGetValue(id, out var document) && document.DeletedAt is null, 404, "Import not found.");
         Guard.Require(document.Revision == revision, 409, "Import changed. Reload before deleting.");
         var sessions = document.SourceRecordingId is { } recording ? s.VoiceCoachings.Values.Where(p => p.SourceRecordingId == recording).Select(p => p.SessionId).ToArray() : [];
         await Jarvis.Orchestrator.Recordings.RecordedPracticePrivacy.RedactSessionsAsync(s, update, sessions, clock.GetUtcNow());
-        Purge(s, document, clock.GetUtcNow()); return true;
+        var before = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.StoryVersions(s);
+        var at = clock.GetUtcNow();
+        Purge(s, document, at);
+        // Removing CV claims edits stories; generated practice shown those stories is purged in this same transaction.
+        var affected = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.AffectedByStoryChanges(s, before);
+        if (affected.Count > 0)
+        {
+            Guard.Require(tombstoneGenerated is not null, 503, "Deleting this import requires the composite transaction because practice depends on it.");
+            var questions = await tombstoneGenerated(affected, at);
+            Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.PurgeRuntime(s, questions, affected, at);
         }
-        return transaction is not null ? transaction.ExecuteAsync(w => Delete(w.Runtime, w.UpdateSessionAsync), ct)
-            : store.UpdateAsync(s => Delete(s, null).GetAwaiter().GetResult(), ct);
+        return true;
+        }
+        return transaction is not null ? transaction.ExecuteAsync(w => Delete(w.Runtime, w.UpdateSessionAsync, w.TombstoneGeneratedQuestionsInAsync), ct)
+            : store.UpdateAsync(s => Delete(s, null, null).GetAwaiter().GetResult(), ct);
     }
 
     public static void Purge(RuntimeState s, ImportedDocument document, DateTimeOffset at)

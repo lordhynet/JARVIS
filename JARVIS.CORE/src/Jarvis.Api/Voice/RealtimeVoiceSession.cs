@@ -157,6 +157,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
                 maxBytes: RealtimeWindowCost.PracticeContextByteLimit - Encoding.UTF8.GetByteCount(travelText)),
             s.TrainingDrills.Values.Where(item => item.SessionId == session.Id && item.Status == "Active")
                 .OrderByDescending(item => item.CreatedAt).ThenBy(item => item.Id).FirstOrDefault()?.Mode), ct);
+        // Lineage of what this window shows the model (off by default). Saved travel context has no checkable version.
+        await tools.RecordWindowContextAsync(session.Id, practice, ct, unverifiable: travel.Length > 0);
         recommendedMode = VoiceModePolicy.Recommend(session.Activity, drill);
         return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1 || client.LocalGreeting) + travelText;
     }
@@ -208,7 +210,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
 
     private async Task ReserveWindowAsync(int promptBytes, CancellationToken ct)
     {
-        var maximum = RealtimeWindowCost.Maximum(window, pricing, promptBytes);
+        var maximum = RealtimeWindowCost.Maximum(window, pricing, promptBytes, tools.GenerationEnabled);
         var mode = SelectedMode(preparedMode);
         try
         {
@@ -390,7 +392,7 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
         configurationEventId = Guid.NewGuid().ToString("N");
         return SendProviderAsync(new { type = "session.update", event_id = configurationEventId,
             session = new { type = "realtime", model = model, output_modalities = new[] { "audio" },
-            instructions, max_output_tokens = RealtimeWindowCost.OutputTokenLimit, tools = CoreVoiceTools.DefinitionsFor(windowLocked),
+            instructions, max_output_tokens = RealtimeWindowCost.OutputTokenLimit, tools = CoreVoiceTools.DefinitionsFor(windowLocked, tools.GenerationEnabled),
             truncation = new { type = "retention_ratio", retention_ratio = .8,
                 token_limits = new { post_instructions = RealtimeWindowCost.ConversationTokenLimit } },
             audio = new { input = new { format = new { type = "audio/pcm", rate = 24000 }, transcription = new { model = pricing.TranscriptionModel },
@@ -585,7 +587,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
             else
             {
                 toolCalls++;
-                result = await tools.ExecuteAsync(name, args, sessionId, utterances, timeout.Token, latestUtterance, CurrentAudioAsync, SelectedMode(preparedMode));
+                result = await tools.ExecuteAsync(name, args, sessionId, utterances, timeout.Token, latestUtterance, CurrentAudioAsync, SelectedMode(preparedMode),
+                    generationRoute: tools.GenerationEnabled ? route : null);
                 toolResults[callId] = (fingerprint, result);
             }
             await SendProviderAsync(new { type = "conversation.item.create", item = new { type = "function_call_output", call_id = callId, output = result } });

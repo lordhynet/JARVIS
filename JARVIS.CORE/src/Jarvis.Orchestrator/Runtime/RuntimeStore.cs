@@ -68,6 +68,8 @@ public sealed class RuntimeState
     public Dictionary<Guid, UsageReconciliation> UsageReconciliations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public HashSet<Guid> RetiredSessions { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, TrainingDrill> TrainingDrills { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    // Per-conversation record of personal sources shown to the realtime model (generated-practice lineage). Content-free: IDs and versions only.
+    public Dictionary<Guid, Jarvis.Orchestrator.Training.PracticeContextManifest> PracticeContextManifests { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, UsageReservation> UsageReservations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, ProviderResult> ProviderResults { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public AgentControls AgentControls { get; set; } = new();
@@ -154,6 +156,11 @@ public readonly record struct AudioLeaseState(AudioLease? Lease, DateTimeOffset?
 
 public interface IRuntimeStore : IRuntimeReader
 {
+    // Runtime state and generated practice question rows changed in one canonical transaction (shared privacy/root lock).
+    // No permissive default: a store that cannot provide the shared transaction refuses.
+    Task<T> UpdateWithGeneratedQuestionsAsync<T>(Jarvis.Orchestrator.Training.GeneratedQuestionScope scope,
+        Func<RuntimeState, Jarvis.Orchestrator.Training.GeneratedQuestionUnit, T> update, CancellationToken ct = default) =>
+        throw new DomainException(503, "Generated practice storage is unavailable in this store.");
     Task<bool> DeleteTrainingAttemptAsync(Guid id, int expectedRevision, TimeProvider clock, CancellationToken ct = default)
         => UpdateAsync(s => Jarvis.Orchestrator.Training.TrainingDeletion.Apply(s, id, expectedRevision, clock), ct);
     Task<TrainingAttempt> CorrectTrainingAnswerAsync(Guid id, CorrectTrainingAnswerRequest request, TimeProvider clock, CancellationToken ct = default)
@@ -214,6 +221,64 @@ public sealed class InMemoryRuntimeStore(AudioFenceChanges? audioChanges = null)
             audioChanges?.LeaseChanged(previousLease, _state.AudioLease);
             return Task.FromResult(result);
         }
+    }
+
+    // Generated rows live under the same lock as runtime state and are copied with it, so a failed callback changes neither.
+    private Dictionary<Guid, Jarvis.Orchestrator.Training.GeneratedQuestionRecord> _generated = [];
+
+    public Task<T> UpdateWithGeneratedQuestionsAsync<T>(Jarvis.Orchestrator.Training.GeneratedQuestionScope scope,
+        Func<RuntimeState, Jarvis.Orchestrator.Training.GeneratedQuestionUnit, T> update, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(scope); ArgumentNullException.ThrowIfNull(update);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            var questionIds = scope.QuestionIds.ToHashSet(); var operationIds = scope.OperationIds.ToHashSet();
+            var purgeSessions = (scope.PurgeSessions ?? []).ToHashSet();
+            var loaded = _generated.Values.Where(r => questionIds.Contains(r.Question.Id) || operationIds.Contains(r.OperationId) || purgeSessions.Contains(r.Question.SessionId))
+                .Select(Jarvis.Orchestrator.Training.GeneratedQuestionRecord.Detached).ToArray();
+            var created = _generated.Values.Where(r => r.Question.SessionId == scope.SessionId).Select(r => r.Question.CreatedAt).ToArray();
+            var unit = new Jarvis.Orchestrator.Training.GeneratedQuestionUnit(scope, loaded, created, _generated.Count);
+            var previousLease = _state.AudioLease;
+            var copy = Copy(_state);
+            var result = update(copy, unit);
+            var rows = new Dictionary<Guid, Jarvis.Orchestrator.Training.GeneratedQuestionRecord>(_generated);
+            foreach (var (id, write) in unit.Adds)
+                rows[id] = new(new(id, write.SessionId, write.Topic, write.OutlineKey, write.OutlineVersion, 1, write.Prompt, write.ReferenceOutline,
+                    Array.AsReadOnly(write.FollowUps.ToArray()), write.CreatedAt, null), write.OperationId, write.Fingerprint, write.ProvenanceJson, write.LineageJson);
+
+            foreach (var (id, at) in unit.Purges)
+                if (rows.TryGetValue(id, out var row) && row.Question.PurgedAt is null)
+                    rows[id] = row with { Fingerprint = "", LineageJson = "[]", Question = row.Question with { Prompt = null, ReferenceOutline = null, FollowUps = [], PurgedAt = at } };
+            _state = Copy(copy); _generated = rows;
+            audioChanges?.LeaseChanged(previousLease, _state.AudioLease);
+            return Task.FromResult(result);
+        }
+    }
+
+    // Retention: unpurged generated questions in conversations being retired, then their content-free tombstones.
+    public IReadOnlySet<Guid> GeneratedQuestionsIn(IReadOnlySet<Guid> sessions)
+    {
+        lock (_gate) return _generated.Values.Where(r => sessions.Contains(r.Question.SessionId) && r.Question.PurgedAt is null).Select(r => r.Question.Id).ToHashSet();
+    }
+    public void TombstoneGeneratedQuestions(IReadOnlySet<Guid> ids, DateTimeOffset at)
+    {
+        lock (_gate)
+            foreach (var id in ids)
+                if (_generated.TryGetValue(id, out var row) && row.Question.PurgedAt is null)
+                    _generated[id] = row with { Fingerprint = "", LineageJson = "[]", Question = row.Question with { Prompt = null, ReferenceOutline = null, FollowUps = [], PurgedAt = at } };
+    }
+
+    // Whole-Core erasure only (not composite commits or retention): deletes every generated row; the store itself remains.
+    public void EraseGeneratedQuestions()
+    {
+        lock (_gate) _generated = [];
+    }
+
+    // Read-only snapshot for the in-memory resolver/reader; never exposes the internal dictionary.
+    public IReadOnlyList<Jarvis.Orchestrator.Training.GeneratedQuestionRecord> GeneratedQuestionsSnapshot()
+    {
+        lock (_gate) return _generated.Values.Select(Jarvis.Orchestrator.Training.GeneratedQuestionRecord.Detached).ToArray();
     }
 }
 

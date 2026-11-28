@@ -209,6 +209,9 @@ builder.Services.AddSingleton<CompanionVoiceService>();
 builder.Services.AddSingleton<WakeCandidateArbiter>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Training.VoicePracticeService>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Training.PracticeQuestionResolver>();
+// Off unless explicitly enabled; never enabled by default or by any code path.
+builder.Services.AddSingleton(new Jarvis.Orchestrator.Training.PracticeGenerationOptions(builder.Configuration.GetValue(Jarvis.Orchestrator.Training.PracticeGenerationOptions.ConfigKey, false)));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Training.GeneratedPracticeService>();
 builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();
 builder.Services.AddSingleton<DeviceGrantService>();
@@ -220,7 +223,7 @@ builder.Services.AddSingleton<OwnerAuthorization>();
 builder.Services.AddSingleton<BrowserOwnerAccess>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.IWorkflowCatalog, Jarvis.Orchestrator.Domains.WorkflowCatalog>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Domains.ICapabilityCatalog>(s => new Jarvis.Orchestrator.Domains.CapabilityCatalog(
-    Jarvis.Api.Voice.CoreVoiceTools.Capabilities.Concat(AgentCapabilityIds.BuiltIns).Concat(
+    Jarvis.Api.Voice.CoreVoiceTools.CapabilitiesFor(s.GetRequiredService<Jarvis.Orchestrator.Training.PracticeGenerationOptions>().Enabled).Concat(AgentCapabilityIds.BuiltIns).Concat(
         s.GetRequiredService<IDeviceCapabilityCatalog>().Installed.Select(d => new Jarvis.Orchestrator.Domains.CapabilityDescriptor(d.Id, d.Description,
             Jarvis.Orchestrator.Domains.CapabilityRisk.ExternalAction, d.Version, d.ArgumentSchemaJson, [ReasoningDataClass.Personal],
             d.Risk is DeviceCapabilityRisk.Sensitive or DeviceCapabilityRisk.Irreversible, d.Risk == DeviceCapabilityRisk.Irreversible, ActionRisk: d.Risk)))));

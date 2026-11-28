@@ -30,7 +30,8 @@ public sealed class ManagedAi(IHttpClientFactory clients, IConfiguration config,
             var rates = ReviewedRealtime(mode);
             var cap = mode == VoiceMode.Serious ? SeriousDailyCap : null;
             Guard.Require(mode != VoiceMode.Serious || cap is > 0 and <= 200, 503, "Configure a positive Serious voice daily GBP cap.");
-            var (usd, windows) = RealtimeWindowCost.EstimateTenMinutes(window ?? RealtimeWindow(), rates.Pricing, RealtimePersona());
+            var (usd, windows) = RealtimeWindowCost.EstimateTenMinutes(window ?? RealtimeWindow(), rates.Pricing, RealtimePersona(),
+                config.GetValue(Jarvis.Orchestrator.Training.PracticeGenerationOptions.ConfigKey, false));
             return new(mode, true, rates.Route.Model, budget.EstimateGbp(usd) * windows, "Reviewed maximum reservation for ten minutes.", cap);
         }
         catch (DomainException error) { return new(mode, false, null, null, error.Message); }

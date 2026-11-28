@@ -27,7 +27,10 @@ public sealed class TrainingQueryHandlers(IRuntimeReader reader, TimeProvider cl
     IQueryHandler<GetTrainingDashboard, TrainingDashboard>, IQueryHandler<ListTrainingCards, IReadOnlyList<LearningItem>>
 {
     public Task<IReadOnlyList<LearningItem>> HandleAsync(ListTrainingCards q, CancellationToken ct = default) =>
-        reader.ReadAsync<IReadOnlyList<LearningItem>>(s => QuestionBank.All.Where(x => s.Learning.ContainsKey(x.Id)).Select(x => s.Learning[x.Id]).ToList(), ct);
+        // Owner-wide: authored cards in bank order, then retained AI-generated cards from every conversation, each carrying its
+        // own GeneratedQuestionId as the origin label. Purged generated cards are already removed by generated purge.
+        reader.ReadAsync<IReadOnlyList<LearningItem>>(s => QuestionBank.All.Where(x => s.Learning.ContainsKey(x.Id)).Select(x => s.Learning[x.Id])
+            .Concat(s.Learning.Values.Where(x => x.GeneratedQuestionId == x.Id).OrderBy(x => x.CreatedAt).ThenBy(x => x.Id)).ToList(), ct);
     public Task<TrainingAttempt> HandleAsync(GetTraining q, CancellationToken ct = default) => reader.ReadAsync(s =>
     {
         Guard.Require(s.TrainingAttempts.TryGetValue(q.Id, out var attempt) && attempt.DeletedAt is null, 404, "Training attempt not found.");
@@ -44,12 +47,15 @@ public sealed class TrainingQueryHandlers(IRuntimeReader reader, TimeProvider cl
         {
             var attempts = s.TrainingAttempts.Values.Where(x => x.DeletedAt is null).ToList();
             var ids = QuestionBank.All.Select(x => x.Id).ToHashSet();
-            var cards = s.Learning.Values.Where(x => ids.Contains(x.Id)).ToList();
+            var cards = s.Learning.Values.Where(x => ids.Contains(x.Id) || x.GeneratedQuestionId == x.Id).ToList();
+            // A domain mean that includes AI-generated questions says so in its source label.
+            static string Sources(IEnumerable<LearningItem> group) => string.Join(", ", group.Select(x => x.MasterySource)
+                .Concat(group.Any(x => x.GeneratedQuestionId is not null) ? [TrainingProjection.GeneratedOrigin] : []).Distinct());
             return new TrainingDashboard(attempts.Count(x => !x.Skipped), attempts.Count(x => x.Skipped),
                 attempts.Where(x => !x.Skipped).Select(x => TimeZoneInfo.ConvertTime(x.SubmittedAt, zone).Date).Distinct().Count(),
                 cards.Count(x => x.DueAt <= clock.GetUtcNow()),
                 cards.Where(x => x.MasteryScore.HasValue).GroupBy(x => x.Domain)
-                    .Select(g => new WeakDomain(g.Key, g.Average(x => x.MasteryScore!.Value), g.Count(), string.Join(", ", g.Select(x => x.MasterySource).Distinct()))).OrderBy(x => x.MeanScore).ToList(),
+                    .Select(g => new WeakDomain(g.Key, g.Average(x => x.MasteryScore!.Value), g.Count(), Sources(g))).OrderBy(x => x.MeanScore).ToList(),
                 attempts.OrderByDescending(x => x.Sequence).Take(10).Select(TrainingProjection.Summary).ToList(), zone.Id);
         }, ct);
     }

@@ -85,5 +85,9 @@ public static class TrainingProjection
 
     public static TrainingAttemptSummary Summary(TrainingAttempt attempt) => new(attempt.Id, attempt.SessionId,
         attempt.QuestionId, attempt.Revision, attempt.Skipped, attempt.SubmittedAt,
-        attempt.CanonicalAssessment?.ContentScore, attempt.CanonicalAssessment?.Source ?? "unassessed");
+        attempt.CanonicalAssessment?.ContentScore, attempt.CanonicalAssessment?.Source ?? "unassessed", Origin(attempt.QuestionId));
+    // Trusted origin: only the authored submit path (QuestionBank-enforced) and the generated-practice path write attempts, so
+    // a question outside the authored bank is AI-generated and its reference unverified. Null means authored.
+    public const string GeneratedOrigin = "ai-generated-unverified";
+    public static string? Origin(Guid questionId) => QuestionBank.All.Any(q => q.Id == questionId) ? null : GeneratedOrigin;
 }

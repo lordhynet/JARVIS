@@ -40,6 +40,9 @@ public sealed class GuardedMemoryRuntime(InMemoryRuntimeStore inner, MemoryPriva
     public Task<T> ReadAsync<T>(Func<RuntimeState,T> read, CancellationToken ct = default) => boundary.Run(() => inner.ReadAsync(read, ct));
     public Task<bool> ReadPaidAiPausedAsync(CancellationToken ct = default) => boundary.Run(() => inner.ReadPaidAiPausedAsync(ct));
     public Task<T> UpdateAsync<T>(Func<RuntimeState,T> update, CancellationToken ct = default) => boundary.Run(() => inner.UpdateAsync(update, ct));
+    public Task<T> UpdateWithGeneratedQuestionsAsync<T>(Jarvis.Orchestrator.Training.GeneratedQuestionScope scope,
+        Func<RuntimeState, Jarvis.Orchestrator.Training.GeneratedQuestionUnit, T> update, CancellationToken ct = default) =>
+        boundary.Run(() => inner.UpdateWithGeneratedQuestionsAsync(scope, update, ct));
 }
 public sealed class GuardedMemorySessions(InMemorySessionStore inner, MemoryPrivacyBoundary boundary) : ISessionStore
 {
@@ -191,7 +194,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             };
             removed = RecordingRetention.Counts(boundary.Recordings, removed);
             recordingFiles?.EraseAsync(ct).GetAwaiter().GetResult();
-            runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear(); deviceGrants.Clear();
+            runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); runtime.EraseGeneratedQuestions(); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear(); deviceGrants.Clear();
             boundary.DeviceCommands.Clear();
             boundary.DeviceReceipts.Clear();
             boundary.Travel = new();
@@ -228,7 +231,11 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var recordingState = JsonSerializer.Deserialize<RecordingState>(JsonSerializer.Serialize(boundary.Recordings))!;
             var recordingCounts = RecordingRetention.Counts(recordingState, selection.Counts, request.AsOf);
             RecordingRetention.ApplyAsync(recordingState, state, recordingFiles, request.AsOf, ct).GetAwaiter().GetResult();
+            var storiesBefore = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.StoryVersions(state);
             var voice = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
+            var storyAffected = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.AffectedByStoryChanges(state, storiesBefore);
+            var retiredGenerated = runtime.GeneratedQuestionsIn(selection.Sessions.Union(storyAffected).ToHashSet());
+            Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.PurgeRuntime(state, retiredGenerated, storyAffected.Except(selection.Sessions).ToHashSet(), request.AsOf);
             var kept = list.Where(x => !selection.Sessions.Contains(x.Id)).Select(session =>
             {
                 if (state.RetiredSessions.Contains(session.Id)) return RecordedPracticePrivacy.Redact(session, request.AsOf);
@@ -239,7 +246,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var events = snapshot.Events;
             var runs = snapshot.Runs.Select(x => selection.Workflows.Contains(x.Id) ? PrivacyData.PurgeWorkflow(x, request.AsOf) : x).ToList();
             foreach (var run in runs.Where(x => selection.Workflows.Contains(x.Id))) events.Add(new(Guid.NewGuid(), run.Id, run.Revision, run.Status, run.UpdatedAt));
-            runtime.ReplacePrivacyData(state); sessions.ReplacePrivacyData(kept); workflows.ReplacePrivacyData(runs, events);
+            runtime.ReplacePrivacyData(state); runtime.TombstoneGeneratedQuestions(retiredGenerated, request.AsOf); sessions.ReplacePrivacyData(kept); workflows.ReplacePrivacyData(runs, events);
             boundary.Recordings = recordingState;
             var prunedGrants = deviceGrants.PruneCore(request.AsOf);
             var prunedCommands = PrunableCommands(policy, request.AsOf).ToArray();
