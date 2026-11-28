@@ -172,3 +172,23 @@ public sealed class ForgeTurnTranscriptionTests
                 .TranscribeForgeTurnAsync(TwoSeconds, Guid.NewGuid(), Guid.NewGuid(), "fr-FR", null!, default));
     }
 }
+
+public sealed partial class PostgresSessionTests
+{
+    [PostgresFact]
+    public async Task Forge_dispatch_pause_read_uses_the_bounded_controls_read_with_legacy_fallback()
+    {
+        await using var database = await TestDatabase.CreateAsync(); var clock = new BudgetClock();
+        using var host = new PostgresApiFactory(database.ConnectionString);
+        var store = host.Services.GetRequiredService<IRuntimeStore>();
+        var budget = new Jarvis.Orchestrator.Workflows.UsageBudget(store, clock, new TestBudgetSource(clock));
+        Assert.False(await budget.PaidAiPausedAsync(default));
+        await store.UpdateAsync(s => { s.AgentControls = s.AgentControls with { PaidAiPaused = true }; return true; });
+        Assert.True(await budget.PaidAiPausedAsync(default));
+        // Null PaidAiPaused keeps the historical meaning of the legacy Paused flag.
+        await store.UpdateAsync(s => { s.AgentControls = s.AgentControls with { PaidAiPaused = null, Paused = true }; return true; });
+        Assert.True(await budget.PaidAiPausedAsync(default));
+        await store.UpdateAsync(s => { s.AgentControls = s.AgentControls with { PaidAiPaused = false, Paused = true }; return true; });
+        Assert.False(await budget.PaidAiPausedAsync(default));
+    }
+}
