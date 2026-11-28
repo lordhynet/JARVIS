@@ -642,6 +642,68 @@ namespace Jarvis.Persistence.Migrations
                     b.ToTable("ForgeProgrammes", (string)null);
                 });
 
+            modelBuilder.Entity("Jarvis.Persistence.GeneratedPracticeQuestionRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Json")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Lineage")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OutlineKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("OutlineVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Provenance")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset?>("PurgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Topic")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Verified")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OperationId")
+                        .IsUnique();
+
+                    b.HasIndex("SessionId", "CreatedAt");
+
+                    b.HasIndex("SessionId", "Topic", "OutlineKey");
+
+                    b.ToTable("GeneratedPracticeQuestions", (string)null);
+                });
+
             modelBuilder.Entity("Jarvis.Persistence.InterviewRecordingRow", b =>
                 {
                     b.Property<Guid>("Id")
