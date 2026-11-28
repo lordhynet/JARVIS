@@ -29,7 +29,9 @@ public sealed record LearningItem(
     int StrongStreak = 0,
     string SchedulingRuleVersion = "manual-interval-v1", string MasterySource = "unknown",
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? SourceRecordingId = null,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? RecordedQuestionId = null);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? RecordedQuestionId = null,
+    // Set when the card comes from an AI-generated, unverified practice question; purge finds every copy through it.
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? GeneratedQuestionId = null);
 
 /// <summary>How well a review went, on the standard 4-point scale used by FSRS/Anki.</summary>
 public enum ReviewRating
