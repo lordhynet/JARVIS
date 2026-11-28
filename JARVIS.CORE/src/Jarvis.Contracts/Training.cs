@@ -14,7 +14,16 @@ public sealed record TrainingDrill(Guid Id, Guid SessionId, TrainingMode Mode, G
     string Status, DateTimeOffset CreatedAt, IReadOnlyList<TrainingDrillStep> Steps, IReadOnlyList<Guid> AttemptIds,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] LearningDomain? RequestedTopic = null,
     // Request IDs that successfully resumed this drill, with their input fingerprint, so a replay stays bound here.
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<Guid, string>? ResumedBy = null);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<Guid, string>? ResumedBy = null,
+    // Present only for drills whose questions are generated; authored drills keep exactly their existing shape and behaviour.
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] GeneratedDrillState? Generated = null);
+
+// Core-owned binding for the next question a generated drill needs. Logical identity (drill revision, step, outline) plus the
+// current capture/authority binding (trigger utterance, privacy epoch, prepared route) that a generator response must match.
+public sealed record PendingNeed(int DrillRevision, int StepIndex, string OutlineKey, int OutlineVersion, Guid TriggerUtteranceId,
+    long PrivacyEpoch, string RouteRevision);
+public sealed record GeneratedDrillState(LearningDomain Topic, PendingNeed? Pending, int QuestionsPrepared,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? EndReason = null);
 public sealed record TrainingDrillView(TrainingDrill Drill, IReadOnlyList<TrainingAttempt> Answers);
 public enum AssessmentDimension { TechnicalAccuracy, Specificity, PersonalOwnership, ArchitectureReasoning, TradeOffs, CommunicationStructure, RecallStability }
 public sealed record TrainingQuestion(Guid Id, int Version, LearningDomain Domain, string Title,
