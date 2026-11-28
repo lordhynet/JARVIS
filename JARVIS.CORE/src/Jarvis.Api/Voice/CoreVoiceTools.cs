@@ -262,9 +262,14 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
                     }
                     result = await practice.StartAsync(sessionId, source, mode, ct, topic); break;
                 case "core_practice_answer":
-                    var answer = await practice.AnswerAsync(sessionId, source, ct);
+                    var answerGeneration = GenerationAvailable(generationRoute) && PrivacyContext.Epoch is long answerEpoch
+                        ? new GenerationContext(sessionId, source, answerEpoch, GeneratedPracticeService.RouteRevision(generationRoute!), GeneratedPracticeService.Provenance(generationRoute!))
+                        : null;
+                    var answer = await practice.AnswerAsync(sessionId, source, ct, answerGeneration);
                     result = new { answer.AnswerId, CapturedAnswer = Clip(answer.CapturedAnswer, 1200), Reference = Clip(answer.Reference, 1200), answer.SourceUrl, answer.Progress,
-                        assessment = "Authored reference only. No calibrated AI or acoustic score has been assigned." }; break;
+                        assessment = answer.AiGenerated
+                            ? "AI-generated question. The reference answer is AI-written, not authored or verified. No calibrated AI or acoustic score has been assigned."
+                            : "Authored reference only. No calibrated AI or acoustic score has been assigned." }; break;
                 case "core_recall":
                     var review = await recall.RunAsync(sessionId, args.GetProperty("action").GetString()!, source, args.GetProperty("rating").GetString()!, ct);
                     result = review is null ? null : new { review.RecallId, review.CardId, review.Status, review.Domain,

@@ -8,7 +8,7 @@ namespace Jarvis.Orchestrator.Training;
 
 // Voice reuses the canonical drill/answer services; there is no second practice history.
 public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader sessions,
-    TrainingDrillService drills, TrainingService training)
+    TrainingDrillService drills, TrainingService training, GeneratedPracticeService? generated = null)
 {
     public static Guid Operation(string kind, Guid session, Guid utterance) =>
         new(SHA256.HashData(Encoding.UTF8.GetBytes($"voice-practice-v1:{kind}:{session}:{utterance}"))[..16]);
@@ -44,7 +44,7 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
             resumeActiveInSession: true);
         return View(result.Drill);
     }
-    public async Task<VoicePracticeAnswer> AnswerAsync(Guid sessionId, Guid utteranceId, CancellationToken ct)
+    public async Task<VoicePracticeAnswer> AnswerAsync(Guid sessionId, Guid utteranceId, CancellationToken ct, GenerationContext? generation = null)
     {
         var session = await Session(sessionId, ct);
         Guard.Require(session.Messages?.Any(m => m.RequestId == utteranceId && m.Restricted) != true, 403, "Locked-room speech cannot become a saved practice answer.");
@@ -63,8 +63,17 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
             409, "The practice-start instruction is not an answer. Ask the question and wait for the user.");
         var step = drill.Steps[drill.AttemptIds.Count];
         TrainingAttempt saved;
-        try { saved = await training.SubmitAsync(new(id, sessionId, step.QuestionId, step.QuestionVersion,
-            drill.Mode, source.Text, DrillId: drill.Id, StepIndex: step.Index), ct); }
+        // Generated steps save through the generated-practice transaction, bound to this answer's live capture/route.
+        if (step.GeneratedQuestionId is not null)
+            Guard.Require(generated is not null && generation is { } g && g.SessionId == sessionId && g.UtteranceId == utteranceId, 503,
+                "Answers to AI-generated practice need the live voice session.");
+        try
+        {
+            saved = step.GeneratedQuestionId is not null
+                ? await generated!.SubmitAsync(generation!, id, drill.Id, step.Index, source.Text, ct)
+                : await training.SubmitAsync(new(id, sessionId, step.QuestionId, step.QuestionVersion,
+                    drill.Mode, source.Text, DrillId: drill.Id, StepIndex: step.Index), ct);
+        }
         catch (DomainException e) when (e.StatusCode == 409)
         {
             // Another host may have saved this utterance and advanced the stage after our read.
@@ -85,7 +94,7 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
     {
         var drill = s.TrainingDrills[answer.DrillId!.Value];
         var step = drill.Steps[answer.StepIndex!.Value];
-        return new VoicePracticeAnswer(answer.Id, answer.CurrentAnswer, step.Reference, step.SourceUrl, View(drill));
+        return new VoicePracticeAnswer(answer.Id, answer.CurrentAnswer, step.Reference, step.SourceUrl, View(drill), step.GeneratedQuestionId is not null);
     }, ct);
     // A generated drill waiting for its next question has no current step: it reports the outline entry it is waiting on
     // instead of indexing past the end. Generated steps are labelled so their AI-written reference is never passed as authored.
@@ -101,4 +110,5 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
 public sealed record VoicePracticeView(Guid DrillId, string Mode, string Status, int Answered, int Total,
     string? Title, string? Prompt, string? CodeSnippet, int? SuggestedSeconds, string? Topic = null,
     string? AwaitingOutline = null, bool AiGenerated = false);
-public sealed record VoicePracticeAnswer(Guid AnswerId, string CapturedAnswer, string Reference, string SourceUrl, VoicePracticeView Progress);
+public sealed record VoicePracticeAnswer(Guid AnswerId, string CapturedAnswer, string Reference, string SourceUrl, VoicePracticeView Progress,
+    bool AiGenerated = false);

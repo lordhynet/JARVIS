@@ -91,6 +91,49 @@ public sealed class GeneratedPracticeService(IRuntimeStore store, PracticeGenera
         }, ct);
     }
 
+    public const string SubmitKind = "generated-submit";
+
+    // Saves a canonical answer to the current generated step and, once the question group is answered, prepares the next need
+    // (least-practised outline entry) bound to this answer's capture, or ends the drill on quota/outline exhaustion. One
+    // port transaction, so the answer, the drill advance and the next need commit together. No revision card is created
+    // yet: recall and dashboards do not label generated cards until the consumer slice lands.
+    public Task<TrainingAttempt> SubmitAsync(GenerationContext context, Guid requestId, Guid drillId, int stepIndex, string answer, CancellationToken ct = default)
+    {
+        Guard.Require(Enabled, 503, "Generated practice is not enabled.");
+        Guard.Require(requestId != Guid.Empty && drillId != Guid.Empty, 400, "Answer identities are required.");
+        var text = Guard.Text(answer, "Answer", 20000);
+        return store.UpdateWithGeneratedQuestionsAsync(new(context.SessionId, [], [], [context.SessionId]), (s, unit) =>
+        {
+            var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { Version = 1, context.SessionId, drillId, stepIndex, text })));
+            if (s.TrainingOperations.TryGetValue(requestId, out var prior))
+            {
+                Guard.Require(prior.Kind == SubmitKind && prior.Fingerprint.Length > 0 && prior.Fingerprint == fingerprint, 409, "RequestId was used for different training input.");
+                var replay = s.TrainingAttempts[prior.AttemptId];
+                Guard.Require(replay.DeletedAt is null, 409, "This training attempt was deleted; use a new RequestId for new practice.");
+                return replay;
+            }
+            Guard.Require(!s.RetiredSessions.Contains(context.SessionId), 409, "This session was retired by retention.");
+            Guard.Require(s.TrainingDrills.TryGetValue(drillId, out var drill) && drill is { Status: "Active", Generated: not null } && drill.SessionId == context.SessionId,
+                409, "Generated practice changed, was stopped, or belongs to another conversation.");
+            Guard.Require(!GeneratedDrillFlow.AwaitingQuestion(drill) && stepIndex == drill.AttemptIds.Count && stepIndex < drill.Steps.Count, 409, "Drill step changed. Reload before saving.");
+            var step = drill.Steps[stepIndex];
+            var question = step.GeneratedQuestionId is { } qid ? unit.LoadedIn(context.SessionId).FirstOrDefault(r => r.Question.Id == qid) : null;
+            Guard.Require(question is not null, 409, "This practice question was removed; start a new practice request.");
+            Guard.Require(s.TrainingAttempts.Count < 10000, 409, "Training history is full. Additional attempts are unavailable in this personal test build.");
+            var now = clock.GetUtcNow();
+            var sequence = s.NextTrainingSequence; s.NextTrainingSequence = checked(sequence + 1);
+            var attempt = new TrainingAttempt(requestId, context.SessionId, question.Question.Id, step.QuestionVersion, drill.Mode, sequence, 1, false, now,
+                [new(1, text, "text_only", now)], [], DrillId: drill.Id, StepIndex: stepIndex);
+            s.TrainingAttempts.Add(attempt.Id, attempt);
+            s.TrainingOperations.Add(requestId, new(SubmitKind, attempt.Id, fingerprint));
+            var answered = drill with { AttemptIds = [.. drill.AttemptIds, attempt.Id], Revision = checked(drill.Revision + 1) };
+            var next = PracticeOutlines.NextEntry(drill.Generated.Topic, AnsweredByEntry(s, unit, context.SessionId, drill.Generated.Topic));
+            var quota = unit.SessionCountSince(now.AddHours(-1)) < HourlyLimit;
+            s.TrainingDrills[drill.Id] = GeneratedDrillFlow.AfterAnswer(answered, next, context.Binding, quota);
+            return attempt;
+        }, ct);
+    }
+
     // Answers per outline entry in this conversation, from retained canonical attempts on its generated questions.
     private static IReadOnlyDictionary<string, int> AnsweredByEntry(RuntimeState s, GeneratedQuestionUnit unit, Guid session, LearningDomain topic)
     {
