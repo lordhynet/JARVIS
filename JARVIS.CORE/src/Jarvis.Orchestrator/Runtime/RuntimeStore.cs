@@ -256,6 +256,19 @@ public sealed class InMemoryRuntimeStore(AudioFenceChanges? audioChanges = null)
         }
     }
 
+    // Retention: unpurged generated questions in conversations being retired, then their content-free tombstones.
+    public IReadOnlySet<Guid> GeneratedQuestionsIn(IReadOnlySet<Guid> sessions)
+    {
+        lock (_gate) return _generated.Values.Where(r => sessions.Contains(r.Question.SessionId) && r.Question.PurgedAt is null).Select(r => r.Question.Id).ToHashSet();
+    }
+    public void TombstoneGeneratedQuestions(IReadOnlySet<Guid> ids, DateTimeOffset at)
+    {
+        lock (_gate)
+            foreach (var id in ids)
+                if (_generated.TryGetValue(id, out var row) && row.Question.PurgedAt is null)
+                    _generated[id] = row with { Fingerprint = "", LineageJson = "[]", Question = row.Question with { Prompt = null, ReferenceOutline = null, FollowUps = [], PurgedAt = at } };
+    }
+
     // Whole-Core erasure only (not composite commits or retention): deletes every generated row; the store itself remains.
     public void EraseGeneratedQuestions()
     {

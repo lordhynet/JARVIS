@@ -162,6 +162,11 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         foreach (var chunk in db.RecordingChunks.Local.ToArray()) if (!recordingState.Chunks.ContainsKey(chunk.Id)) db.RecordingChunks.Remove(chunk);
         var selection = PrivacyData.Select(state, sessionRows.Select(x => x.ToContract()).ToList(), runs, policy, request.AsOf);
         var voiceIds = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
+        // Retired conversations lose their generated practice in this same transaction: runtime copies and row text.
+        var retiredSessions = selection.Sessions.ToArray();
+        var generatedRows = await db.GeneratedPracticeQuestions.Where(r => retiredSessions.Contains(r.SessionId) && r.PurgedAt == null).ToListAsync(ct);
+        Jarvis.Orchestrator.Training.GeneratedPracticePrivacy.Purge(state, generatedRows.Select(r => r.Id).ToHashSet(), request.AsOf);
+        foreach (var generated in generatedRows) { generated.Json = null; generated.Fingerprint = ""; generated.Lineage = "[]"; generated.PurgedAt = request.AsOf; }
         foreach (var session in sessionRows)
         {
             if (session.Status == SessionStatus.Ended && session.UpdatedAt < request.AsOf.AddDays(-policy.SessionDays)) db.Sessions.Remove(session);

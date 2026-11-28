@@ -232,6 +232,8 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var recordingCounts = RecordingRetention.Counts(recordingState, selection.Counts, request.AsOf);
             RecordingRetention.ApplyAsync(recordingState, state, recordingFiles, request.AsOf, ct).GetAwaiter().GetResult();
             var voice = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
+            var retiredGenerated = runtime.GeneratedQuestionsIn(selection.Sessions);
+            Jarvis.Orchestrator.Training.GeneratedPracticePrivacy.Purge(state, retiredGenerated, request.AsOf);
             var kept = list.Where(x => !selection.Sessions.Contains(x.Id)).Select(session =>
             {
                 if (state.RetiredSessions.Contains(session.Id)) return RecordedPracticePrivacy.Redact(session, request.AsOf);
@@ -242,7 +244,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var events = snapshot.Events;
             var runs = snapshot.Runs.Select(x => selection.Workflows.Contains(x.Id) ? PrivacyData.PurgeWorkflow(x, request.AsOf) : x).ToList();
             foreach (var run in runs.Where(x => selection.Workflows.Contains(x.Id))) events.Add(new(Guid.NewGuid(), run.Id, run.Revision, run.Status, run.UpdatedAt));
-            runtime.ReplacePrivacyData(state); sessions.ReplacePrivacyData(kept); workflows.ReplacePrivacyData(runs, events);
+            runtime.ReplacePrivacyData(state); runtime.TombstoneGeneratedQuestions(retiredGenerated, request.AsOf); sessions.ReplacePrivacyData(kept); workflows.ReplacePrivacyData(runs, events);
             boundary.Recordings = recordingState;
             var prunedGrants = deviceGrants.PruneCore(request.AsOf);
             var prunedCommands = PrunableCommands(policy, request.AsOf).ToArray();

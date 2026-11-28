@@ -2,6 +2,7 @@ using Jarvis.Contracts;
 using Jarvis.Orchestrator.Cqrs.Stories;
 using Jarvis.Orchestrator.Runtime;
 using Jarvis.Orchestrator.Training;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Jarvis.Tests;
 
@@ -92,5 +93,38 @@ public sealed class GeneratedPracticeTriggerTests
         PracticeLineage.Record(s, a, [new(PracticeLineage.Story, story, "1")], At);
         PracticeLineage.Record(s, b, [new(PracticeLineage.Learning, story, "x")], At);   // same ID, different kind
         Assert.Equal(new HashSet<Guid> { a }, GeneratedPracticeTriggers.Affected(s, PracticeLineage.Story, story));
+    }
+}
+
+public sealed class GeneratedPracticeRetentionTests
+{
+    [Fact]
+    public async Task Retention_retiring_a_conversation_purges_its_generated_practice_and_spares_active_ones()
+    {
+        using var host = new ProviderFactory(_ => throw new InvalidOperationException("No provider call"));
+        var services = host.Services;
+        var store = services.GetRequiredService<IRuntimeStore>(); var inner = services.GetRequiredService<InMemoryRuntimeStore>();
+        var now = DateTimeOffset.UtcNow; var old = Guid.NewGuid(); var active = Guid.NewGuid();
+        var sessions = services.GetRequiredService<Jarvis.Orchestrator.Sessions.ISessionStore>();
+        await sessions.AddAsync(new(old, ActivityType.General, "Old practice", SessionStatus.Ended, null, null, now.AddDays(-30), now.AddDays(-30), []));
+        await sessions.AddAsync(new(active, ActivityType.General, "Current practice", SessionStatus.Active, null, null, now, now, []));
+        async Task<Guid> Generate(Guid session)
+        {
+            var op = Guid.NewGuid();
+            var id = await store.UpdateWithGeneratedQuestionsAsync(new(session, [op], []), (_, unit) => unit.Add(GeneratedQuestionStorePortTests.Write(session, op)));
+            await store.UpdateAsync(s => { s.Learning[id] = new(id, LearningDomain.SystemDesign, "Generated prompt", "AI reference", 1, 5, now, now, GeneratedQuestionId: id); return true; });
+            return id;
+        }
+        var retiredQuestion = await Generate(old); var keptQuestion = await Generate(active);
+
+        var privacy = services.GetRequiredService<IPrivacyStore>(); var policy = new RetentionPolicy(Enabled: true, SessionDays: 7);
+        var preview = await privacy.PreviewAsync(policy, now);
+        await privacy.RetainAsync(new(Guid.NewGuid(), now, preview.PolicyFingerprint, PrivacyData.RetentionPhrase), policy, now);
+
+        var rows = inner.GeneratedQuestionsSnapshot();
+        Assert.Null(rows.Single(r => r.Question.Id == retiredQuestion).Question.Prompt);
+        Assert.NotNull(rows.Single(r => r.Question.Id == keptQuestion).Question.Prompt);
+        Assert.False(await store.ReadAsync(s => s.Learning.ContainsKey(retiredQuestion)));
+        Assert.True(await store.ReadAsync(s => s.Learning.ContainsKey(keptQuestion)));
     }
 }
