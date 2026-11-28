@@ -43,7 +43,8 @@ public static partial class ContextSelector
                 Clip(x.Content.TechnicalDecisions), Clip(x.Content.TradeOffs), Clip(x.Content.Result), Clip(x.Content.Metrics)));
             if (Size() > maxBytes) chosenStories.RemoveAt(chosenStories.Count - 1);
         }
-        foreach (var x in cards.Where(x => x.SourceRecordingId is null && x.DueAt <= now).Select(x => new { Card = x, Score = Score(x.Prompt + " " + x.Domain, terms) })
+        // Recording-derived and AI-generated (unverified) cards are never placed back into model context.
+        foreach (var x in cards.Where(x => x.SourceRecordingId is null && x.GeneratedQuestionId is null && x.DueAt <= now).Select(x => new { Card = x, Score = Score(x.Prompt + " " + x.Domain, terms) })
             .OrderByDescending(x => x.Score).ThenBy(x => x.Card.MasteryScore ?? 0).ThenBy(x => x.Card.DueAt).ThenBy(x => x.Card.Id))
         {
             if (chosenCards.Count >= maxCards) break;

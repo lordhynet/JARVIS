@@ -157,6 +157,8 @@ internal sealed partial class RealtimeVoiceSession(RealtimeVoiceClient client, A
                 maxBytes: RealtimeWindowCost.PracticeContextByteLimit - Encoding.UTF8.GetByteCount(travelText)),
             s.TrainingDrills.Values.Where(item => item.SessionId == session.Id && item.Status == "Active")
                 .OrderByDescending(item => item.CreatedAt).ThenBy(item => item.Id).FirstOrDefault()?.Mode), ct);
+        // Lineage of what this window shows the model (off by default). Saved travel context has no checkable version.
+        await tools.RecordWindowContextAsync(session.Id, practice, ct, unverifiable: travel.Length > 0);
         recommendedMode = VoiceModePolicy.Recommend(session.Activity, drill);
         return RealtimeVoicePrompt.Build(persona, contextText, JsonSerializer.Serialize(practice), continuing: number > 1 || client.LocalGreeting) + travelText;
     }

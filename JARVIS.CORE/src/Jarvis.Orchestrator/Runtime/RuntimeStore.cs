@@ -68,6 +68,8 @@ public sealed class RuntimeState
     public Dictionary<Guid, UsageReconciliation> UsageReconciliations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public HashSet<Guid> RetiredSessions { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, TrainingDrill> TrainingDrills { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
+    // Per-conversation record of personal sources shown to the realtime model (generated-practice lineage). Content-free: IDs and versions only.
+    public Dictionary<Guid, Jarvis.Orchestrator.Training.PracticeContextManifest> PracticeContextManifests { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, UsageReservation> UsageReservations { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public Dictionary<Guid, ProviderResult> ProviderResults { get { LoadColdProperties(); return field; } set { LoadColdProperties(); field = value; } } = [];
     public AgentControls AgentControls { get; set; } = new();

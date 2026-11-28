@@ -11,7 +11,8 @@ namespace Jarvis.Api.Voice;
 /// <summary>Fixed Core capabilities, never a provider-selected URL or arbitrary command.</summary>
 public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService practice, TimeProvider clock, VoiceRecallService recall,
     VoiceCoachingService coaching, CoreHomeVoiceTool home, Jarvis.Orchestrator.Domains.IDomainFactory? domains = null, Jarvis.Orchestrator.Workflows.AgentActionService? runs = null, CoreWindowsVoiceTool? windows = null,
-    Jarvis.Orchestrator.Travel.TravelService? travel = null, CoreHandoffVoiceTool? handoff = null, VoiceBriefingService? briefing = null)
+    Jarvis.Orchestrator.Travel.TravelService? travel = null, CoreHandoffVoiceTool? handoff = null, VoiceBriefingService? briefing = null,
+    IRuntimeStore? lineageStore = null, PracticeGenerationOptions? generation = null)
 {
     public const string BriefingName = "core_briefing";
     public static IReadOnlyList<Jarvis.Orchestrator.Domains.CapabilityDescriptor> Capabilities => Definitions.Select(tool => {
@@ -103,6 +104,23 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         Definitions.Where(tool => JsonSerializer.SerializeToElement(tool).GetProperty("name").GetString() is TravelName or CoreHomeVoiceTool.Name or CoreWindowsVoiceTool.Name).ToArray();
     private static string Clip(string value, int length) => value.Length <= length ? value : value[..length];
 
+    // Generated-practice lineage (off unless explicitly enabled). Tools that expose only authored or session-own content are
+    // neutral; story search records the exact story versions it returns; every other tool may expose personal context whose
+    // freshness cannot be re-checked, so the conversation is marked unverifiable before it runs and generation will refuse.
+    private static readonly HashSet<string> LineageNeutralTools = new(StringComparer.Ordinal)
+        { "core_practice_start", "core_practice_current", "core_practice_answer", "core_practice_stop", "core_coaching_catalog", "core_story_search" };
+    private bool LineageEnabled => generation?.Enabled == true && lineageStore is not null;
+
+    private Task RecordToolExposureAsync(string name, Guid sessionId, CancellationToken ct) =>
+        !LineageEnabled || LineageNeutralTools.Contains(name) ? Task.CompletedTask
+            : lineageStore!.UpdateAsync(s => PracticeLineage.Record(s, sessionId, [], clock.GetUtcNow(), unverifiable: true), ct);
+
+    // Called by the realtime session after it chooses the stories and due cards placed in the window's instructions.
+    internal Task RecordWindowContextAsync(Guid sessionId, Jarvis.Orchestrator.Intelligence.SelectedContext selected, CancellationToken ct,
+        bool unverifiable = false) =>
+        !LineageEnabled ? Task.CompletedTask
+            : lineageStore!.UpdateAsync(s => PracticeLineage.Record(s, sessionId, PracticeLineage.FromSelection(s, selected), clock.GetUtcNow(), unverifiable), ct);
+
     public async Task<string> ExecuteAsync(string name, string arguments, Guid sessionId, IReadOnlySet<Guid> windowUtterances,
         CancellationToken ct, Guid latestUtterance = default, Func<CancellationToken, Task<bool>>? currentAudio = null, VoiceMode voiceMode = VoiceMode.Everyday)
     {
@@ -113,6 +131,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             Guard.Require(name is TravelName or CoreHomeVoiceTool.Name or CoreWindowsVoiceTool.Name || !await runtime.ReadAsync(s => VoiceAccessRules.ToolRestricted(s, sessionId), ct),
                 403, "Personal voice tools are unavailable while the device is locked.");
             Guard.Require(Encoding.UTF8.GetByteCount(arguments) <= 2048, 400, "Tool arguments exceeded the Core limit.");
+            await RecordToolExposureAsync(name, sessionId, ct);
             using var parsed = JsonDocument.Parse(arguments, new JsonDocumentOptions { MaxDepth = 8 });
             var args = parsed.RootElement;
             Guard.Require(args.ValueKind == JsonValueKind.Object, 400, "Tool arguments must be an object.");
@@ -209,8 +228,10 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
                 case "core_context": result = await Context(args.GetProperty("section").GetString()!, ct); break;
                 case "core_story_search":
                     var query = Guard.Text(args.GetProperty("query").GetString(), "Story query", 200);
-                    result = await runtime.ReadAsync(s => ContextSelector.Select(s.Stories.Values, [], query,
-                        clock.GetUtcNow(), maxBytes: 5000, maxCards: 0, requireStoryMatch: true).Stories, ct); break;
+                    var found = await runtime.ReadAsync(s => ContextSelector.Select(s.Stories.Values, [], query,
+                        clock.GetUtcNow(), maxBytes: 5000, maxCards: 0, requireStoryMatch: true), ct);
+                    await RecordWindowContextAsync(sessionId, found, ct);   // the exact story versions shown to the model
+                    result = found.Stories; break;
                 case "core_practice_current": result = await practice.CurrentAsync(sessionId, ct); break;
                 case BriefingName:
                     Guard.Require(briefing is not null, 503, "The daily briefing is unavailable.");
