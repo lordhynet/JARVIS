@@ -23,6 +23,14 @@ public sealed class GeneratedPracticeService(IRuntimeStore store, PracticeGenera
     public static readonly TimeSpan AuthoredWindow = TimeSpan.FromDays(30);
     public bool Enabled => options.Enabled;
 
+    // Core-side identity of the prepared realtime route, and the provenance stored with each generated question.
+    public static string RouteRevision(ModelRoute route) => $"{route.Provider}/{route.Model}/{route.PolicyVersion}/{route.RateCardRevision}";
+    public static string Provenance(ModelRoute route) => JsonSerializer.Serialize(new
+        { source = "ai-realtime", provider = route.Provider, model = route.Model, policyVersion = route.PolicyVersion, rateCardRevision = route.RateCardRevision });
+    // One deterministic operation per captured request: retries of the same tool call replay instead of duplicating.
+    public static Guid OperationFor(Guid session, Guid utterance) =>
+        new(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"generated-practice-op-v1:{session:N}:{utterance:N}")).AsSpan(0, 16));
+
     // Null means "not applicable": generation off, unsupported style, or authored questions not yet exhausted. The caller
     // then keeps its existing authored behaviour unchanged.
     public Task<TrainingDrill?> TryStartAsync(Guid requestId, TrainingMode mode, LearningDomain topic, GenerationContext context, CancellationToken ct = default)

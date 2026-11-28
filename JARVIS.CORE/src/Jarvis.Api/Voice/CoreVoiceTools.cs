@@ -12,7 +12,7 @@ namespace Jarvis.Api.Voice;
 public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService practice, TimeProvider clock, VoiceRecallService recall,
     VoiceCoachingService coaching, CoreHomeVoiceTool home, Jarvis.Orchestrator.Domains.IDomainFactory? domains = null, Jarvis.Orchestrator.Workflows.AgentActionService? runs = null, CoreWindowsVoiceTool? windows = null,
     Jarvis.Orchestrator.Travel.TravelService? travel = null, CoreHandoffVoiceTool? handoff = null, VoiceBriefingService? briefing = null,
-    IRuntimeStore? lineageStore = null, PracticeGenerationOptions? generation = null)
+    IRuntimeStore? lineageStore = null, PracticeGenerationOptions? generation = null, GeneratedPracticeService? generatedPractice = null)
 {
     public const string BriefingName = "core_briefing";
     public static IReadOnlyList<Jarvis.Orchestrator.Domains.CapabilityDescriptor> Capabilities => Definitions.Select(tool => {
@@ -99,8 +99,17 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             ["rating"] = new { type = "string", @enum = new[] { "None", "Again", "Hard", "Good", "Easy" } }
         })
     ];
+    // Writes an AI-generated practice question for the drill waiting on one. Not in Definitions: it is offered only when
+    // generation is enabled and the realtime session supplies its prepared route, which binds the question's provenance.
+    public const string GenerateName = "core_practice_generate";
+    public const int GenerateArgumentLimit = 6144;
+    public static readonly object GenerateDefinition = Tool(GenerateName, "Only when Core says the current practice is waiting for a question: write one fresh practice question for the outline_key Core named, using the same utterance_id that started or answered the drill. Ground it in the topic, not in personal records. Give a concise model reference answer and up to two short follow-ups. Then ask the prompt and wait for an answer. Never claim the reference is authored or verified.",
+        new() { ["utterance_id"] = Utterance, ["outline_key"] = new { type = "string" }, ["title"] = new { type = "string" },
+            ["prompt"] = new { type = "string" }, ["reference"] = new { type = "string" },
+            ["follow_ups"] = new { type = "array", items = new { type = "string" } } });
+    private bool GenerationAvailable(ModelRoute? route) => generatedPractice?.Enabled == true && route is not null;
     public static string Failure(string message) => JsonSerializer.Serialize(new { ok = false, error = message }, Json);
-    public static IReadOnlyList<object> DefinitionsFor(bool locked) => !locked ? Definitions :
+    public static IReadOnlyList<object> DefinitionsFor(bool locked, bool generation = false) => !locked ? (generation ? [.. Definitions, GenerateDefinition] : Definitions) :
         Definitions.Where(tool => JsonSerializer.SerializeToElement(tool).GetProperty("name").GetString() is TravelName or CoreHomeVoiceTool.Name or CoreWindowsVoiceTool.Name).ToArray();
     private static string Clip(string value, int length) => value.Length <= length ? value : value[..length];
 
@@ -108,7 +117,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
     // neutral; story search records the exact story versions it returns; every other tool may expose personal context whose
     // freshness cannot be re-checked, so the conversation is marked unverifiable before it runs and generation will refuse.
     private static readonly HashSet<string> LineageNeutralTools = new(StringComparer.Ordinal)
-        { "core_practice_start", "core_practice_current", "core_practice_answer", "core_practice_stop", "core_coaching_catalog", "core_story_search" };
+        { "core_practice_start", "core_practice_current", "core_practice_answer", "core_practice_stop", "core_coaching_catalog", "core_story_search", GenerateName };
     private bool LineageEnabled => generation?.Enabled == true && lineageStore is not null;
 
     private Task RecordToolExposureAsync(string name, Guid sessionId, CancellationToken ct) =>
@@ -122,7 +131,8 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             : lineageStore!.UpdateAsync(s => PracticeLineage.Record(s, sessionId, PracticeLineage.FromSelection(s, selected), clock.GetUtcNow(), unverifiable), ct);
 
     public async Task<string> ExecuteAsync(string name, string arguments, Guid sessionId, IReadOnlySet<Guid> windowUtterances,
-        CancellationToken ct, Guid latestUtterance = default, Func<CancellationToken, Task<bool>>? currentAudio = null, VoiceMode voiceMode = VoiceMode.Everyday)
+        CancellationToken ct, Guid latestUtterance = default, Func<CancellationToken, Task<bool>>? currentAudio = null, VoiceMode voiceMode = VoiceMode.Everyday,
+        ModelRoute? generationRoute = null)
     {
         try
         {
@@ -130,7 +140,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
                 403, "This private interview conversation only supports its selected coaching activity. Use a separate conversation for other tools.");
             Guard.Require(name is TravelName or CoreHomeVoiceTool.Name or CoreWindowsVoiceTool.Name || !await runtime.ReadAsync(s => VoiceAccessRules.ToolRestricted(s, sessionId), ct),
                 403, "Personal voice tools are unavailable while the device is locked.");
-            Guard.Require(Encoding.UTF8.GetByteCount(arguments) <= 2048, 400, "Tool arguments exceeded the Core limit.");
+            Guard.Require(Encoding.UTF8.GetByteCount(arguments) <= (name == GenerateName ? GenerateArgumentLimit : 2048), 400, "Tool arguments exceeded the Core limit.");
             await RecordToolExposureAsync(name, sessionId, ct);
             using var parsed = JsonDocument.Parse(arguments, new JsonDocumentOptions { MaxDepth = 8 });
             var args = parsed.RootElement;
@@ -149,6 +159,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
                 "core_practice_start" => ["utterance_id", "mode", "topic"],
                 "core_practice_answer" or "core_practice_stop" => ["utterance_id"],
                 "core_recall" => ["action", "utterance_id", "rating"],
+                GenerateName when GenerationAvailable(generationRoute) => ["utterance_id", "outline_key", "title", "prompt", "reference", "follow_ups"],
                 _ => throw new DomainException(400, "That action is not available through Core voice.")
             };
             var properties = args.EnumerateObject().Select(p => p.Name).ToArray();
@@ -261,6 +272,18 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
                         Reference = review.Reference is not null ? Clip(review.Reference, 700) : null,
                         contentTruncated = review.Status == "Question" && review.Prompt?.Length > 700 || review.Reference?.Length > 700,
                         review.Rating, review.NextDueAt, review.TimingSource }; break;
+                case GenerateName:
+                    Guard.Require(PrivacyContext.Epoch is not null, 503, "Practice questions need the current privacy context.");
+                    var followArg = args.GetProperty("follow_ups");
+                    Guard.Require(followArg.ValueKind == JsonValueKind.Array && followArg.GetArrayLength() <= 2 &&
+                        followArg.EnumerateArray().All(x => x.ValueKind == JsonValueKind.String), 400, "Follow-ups must be up to two strings.");
+                    var generationContext = new GenerationContext(sessionId, source, PrivacyContext.Epoch!.Value,
+                        GeneratedPracticeService.RouteRevision(generationRoute!), GeneratedPracticeService.Provenance(generationRoute!));
+                    var generated = await generatedPractice!.GenerateAsync(generationContext, GeneratedPracticeService.OperationFor(sessionId, source),
+                        new(args.GetProperty("outline_key").GetString()!, args.GetProperty("title").GetString()!, args.GetProperty("prompt").GetString()!,
+                            args.GetProperty("reference").GetString()!, followArg.EnumerateArray().Select(x => x.GetString()!).ToArray()), ct);
+                    result = new { generated.QuestionId, DrillId = generated.Drill.Id, generated.Replayed,
+                        label = "AI-generated practice question. The reference answer is AI-written, not authored or verified." }; break;
                 default: result = await practice.CancelAsync(sessionId, source, ct); break;
             }
             var json = JsonSerializer.Serialize(new { ok = true, result }, Json);
