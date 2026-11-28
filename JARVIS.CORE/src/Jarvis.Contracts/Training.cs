@@ -8,7 +8,8 @@ public sealed record StartTrainingDrillRequest(Guid RequestId, Guid SessionId, T
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] LearningDomain? Topic = null);
 public sealed record CancelTrainingDrillRequest(int ExpectedRevision);
 public sealed record TrainingDrillStep(int Index, Guid QuestionId, int QuestionVersion, string Title, string Prompt,
-    string Reference, string SourceUrl, string? CodeSnippet = null, int? SuggestedSeconds = null);
+    string Reference, string SourceUrl, string? CodeSnippet = null, int? SuggestedSeconds = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? GeneratedQuestionId = null);
 public sealed record TrainingDrill(Guid Id, Guid SessionId, TrainingMode Mode, Guid? RequestedQuestionId, int Revision,
     string Status, DateTimeOffset CreatedAt, IReadOnlyList<TrainingDrillStep> Steps, IReadOnlyList<Guid> AttemptIds,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] LearningDomain? RequestedTopic = null,
