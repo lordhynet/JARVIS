@@ -22,6 +22,8 @@ async function openWith(page, view) {
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await page.getByRole('button', { name: 'Technical practice', exact: true }).click();
   const panel = page.locator('[data-panel=training]');
+  // Starting an authored drill creates the conversation the guided history is read from; its history read is stubbed.
+  await panel.getByRole('button', { name: 'Start guided drill', exact: true }).click();
   await panel.getByRole('button', { name: 'Load saved guided drills', exact: true }).click();
   await panel.getByRole('button', { name: new RegExp('^AI-generated · RapidDrill · Active') }).click();
   return panel;
