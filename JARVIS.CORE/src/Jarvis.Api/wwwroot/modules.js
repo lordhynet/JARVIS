@@ -220,7 +220,7 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
     const session = selectedSession(); if (!session) return; const epoch = guideEpoch;
     const saved = await api(`/training/sessions/${session.id}/drills`); if (epoch !== guideEpoch) return;
     guideHistory.replaceChildren();
-    saved.forEach(view => action(guideHistory, `${view.drill.mode} · ${view.drill.status} · ${view.drill.attemptIds.length}/${view.drill.steps.length} stages`, async () => {
+    saved.forEach(view => action(guideHistory, `${view.drill.generated ? 'AI-generated · ' : ''}${view.drill.mode} · ${view.drill.status} · ${view.drill.attemptIds.length}/${view.drill.steps.length} stages`, async () => {
       const token = guideEpoch; const value = await api(`/training/drills/${view.drill.id}`);
       if (token !== guideEpoch) return; guided = value; renderGuided();
     }));
@@ -228,8 +228,14 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
   function renderGuided() {
     guideBody.replaceChildren(); if (!guided) return; const plan = guided.drill;
     el('h4', `${plan.mode} · ${plan.status}`, guideBody); el('p', `${plan.attemptIds.length}/${plan.steps.length} stages answered or skipped. Completion is not a mastery grade.`, guideBody);
-    if (plan.status === 'Active') {
-      const step = plan.steps[plan.attemptIds.length]; const draftKey = `${plan.id}:${step.index}`;
+    if (plan.generated) el('small', 'AI-generated practice. Questions and reference answers are AI-written and not verified.', guideBody);
+    const current = plan.status === 'Active' ? plan.steps[plan.attemptIds.length] : undefined;
+    if (plan.status === 'Active' && (!current || current.generatedQuestionId)) {
+      // AI-generated practice continues by voice, where answers bind to the live capture. A waiting drill has no stage yet.
+      if (current) { el('h4', `Stage ${current.index + 1}: ${current.title}`, guideBody); el('p', current.prompt, guideBody); }
+      el('p', current ? 'Answer this AI-generated question by voice.' : 'Waiting for the next AI-generated question. Continue this practice by voice.', guideBody);
+    } else if (plan.status === 'Active') {
+      const step = current; const draftKey = `${plan.id}:${step.index}`;
       el('h4', `Stage ${step.index + 1}: ${step.title}`, guideBody); el('p', step.prompt, guideBody);
       if (step.suggestedSeconds) el('small', `Target: 20–${step.suggestedSeconds}s. Text does not measure duration.`, guideBody);
       if (step.codeSnippet) el('pre', step.codeSnippet, guideBody);
@@ -251,7 +257,8 @@ export function initModules({ api, notice, node, button, on, selectedSession, en
     }
     guided.answers.filter(a => !a.skipped).forEach(attempt => {
       const details = el('details', '', guideBody); el('summary', `Saved stage ${(attempt.stepIndex ?? 0) + 1} · ${attempt.canonicalAssessment?.source || 'unrated'}`, details);
-      el('p', attempt.currentAnswer, details); const step = plan.steps[attempt.stepIndex]; el('p', `Reference: ${step.reference}`, details);
+      el('p', attempt.currentAnswer, details); const step = plan.steps[attempt.stepIndex];
+      el('p', step?.generatedQuestionId ? `AI-written reference (not verified): ${step.reference || 'question removed'}` : `Reference: ${step.reference}`, details);
       action(details, 'Review this guided answer', () => { drill = attempt; drillAnswer.value = attempt.currentAnswer; renderDrill(); });
     });
     for (const [key, text] of guideDrafts) {

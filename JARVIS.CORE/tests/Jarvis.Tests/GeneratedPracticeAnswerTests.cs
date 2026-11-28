@@ -197,4 +197,40 @@ public sealed class GeneratedPracticeAnswerTests
         Assert.Null(summaries.Single(x => x.QuestionId == authored.Id).Origin);
         Assert.Contains(dashboard.RecentAttempts, x => x.QuestionId == w.Question && x.Origin == TrainingProjection.GeneratedOrigin);
     }
+
+    [Fact]
+    public async Task Self_assessment_correction_and_recall_rating_keep_the_generated_origin_on_cards_and_review_snapshots()
+    {
+        using var host = new ProviderFactory(_ => throw new InvalidOperationException("No provider call"));
+        var w = await Asked(host); await Answered(w);
+        var training = w.Services.GetRequiredService<TrainingService>();
+        var attempt = await w.Store.ReadAsync(s => s.TrainingAttempts.Values.Single(a => a.SessionId == w.Session));
+        attempt = await training.AssessAsync(attempt.Id, new(Guid.NewGuid(), attempt.Revision, attempt.TextRevision,
+            [new(AssessmentDimension.TechnicalAccuracy, 2, "", "Self rating")]), default);
+        var assessed = await w.Store.ReadAsync(s => s.Learning[w.Question]);
+        Assert.Equal(w.Question, assessed.GeneratedQuestionId); Assert.Equal("self", assessed.MasterySource);
+        attempt = await training.CorrectAsync(attempt.Id, new(Guid.NewGuid(), attempt.Revision, "Corrected: latency and retention first."), default);
+        Assert.Equal(w.Question, (await w.Store.ReadAsync(s => s.Learning[w.Question])).GeneratedQuestionId);
+        var start = await Say(w.Services, w.Session, "Review cards please.");
+        await Tool(w.Services, w.Session, "core_recall", new { action = "start", utterance_id = start, rating = "None" }, start);
+        var said = await Say(w.Services, w.Session, "Latency first.");
+        await Tool(w.Services, w.Session, "core_recall", new { action = "reveal", utterance_id = said, rating = "None" }, said);
+        var rated = await Say(w.Services, w.Session, "Good.");
+        var rate = await Tool(w.Services, w.Session, "core_recall", new { action = "rate", utterance_id = rated, rating = "Good" }, rated);
+        Assert.True(Ok(rate), rate);
+        var snapshot = await w.Store.ReadAsync(s => s.Reviews.Values.Single(r => r.Event.LearningItemId == w.Question));
+        Assert.Equal(w.Question, snapshot.Result.GeneratedQuestionId);
+        Assert.Equal(w.Question, (await w.Store.ReadAsync(s => s.Learning[w.Question])).GeneratedQuestionId);
+    }
+
+    [Fact]
+    public async Task Stopping_generated_practice_by_voice_clears_the_pending_need_and_records_why_it_ended()
+    {
+        using var host = new ProviderFactory(_ => throw new InvalidOperationException("No provider call"));
+        var w = await Asked(host); await Answered(w);   // now awaiting the next question
+        var stop = await Say(w.Services, w.Session, "Stop practising.");
+        Assert.True(Ok(await Tool(w.Services, w.Session, "core_practice_stop", new { utterance_id = stop }, stop, Route)));
+        var drill = await w.Store.ReadAsync(s => s.TrainingDrills[w.Drill]);
+        Assert.Equal("Cancelled", drill.Status); Assert.Null(drill.Generated!.Pending); Assert.Equal(GeneratedDrillFlow.EndCancelled, drill.Generated.EndReason);
+    }
 }

@@ -99,7 +99,8 @@ public sealed class TrainingDrillService(IRuntimeStore store, ISessionReader ses
         Guard.Require(s.TrainingDrills.TryGetValue(id, out var drill), 404, "Drill not found.");
         if (drill.Status == "Cancelled") return View(s, drill);
         Guard.Require(drill.Revision == expectedRevision && drill.Status == "Active", 409, "Drill changed or is already finished.");
-        var updated = drill with { Status = "Cancelled", Revision = drill.Revision + 1 }; s.TrainingDrills[id] = updated; return View(s, updated);
+        // Shared with generated drills: also clears a pending need and records why it ended. Authored drills are unchanged.
+        var updated = GeneratedDrillFlow.Cancel(drill); s.TrainingDrills[id] = updated; return View(s, updated);
     }, ct);
     public static TrainingDrillView View(RuntimeState state, TrainingDrill drill) => new(drill, drill.AttemptIds.Select(id => state.TrainingAttempts[id]).Where(x => x.DeletedAt is null).ToList());
 }
