@@ -40,6 +40,21 @@ public sealed class GeneratedPracticeService(IRuntimeStore store, PracticeGenera
         {
             if (s.TrainingDrills.TryGetValue(requestId, out var replay)) return replay;
             Guard.Require(!s.RetiredSessions.Contains(context.SessionId), 409, "This session was retired by retention.");
+            // One active practice per conversation, decided in this same transaction. An active authored drill is left to the
+            // authored path (which resumes or refuses it). The same generated practice resumes, re-binding a pending need to
+            // this newer request so an older generator response can no longer land; a different one is refused.
+            var active = s.TrainingDrills.Values.Where(d => d.SessionId == context.SessionId && d.Status == "Active")
+                .OrderByDescending(d => d.CreatedAt).ThenBy(d => d.Id).FirstOrDefault();
+            if (active is not null)
+            {
+                if (active.Generated is null) return null;
+                Guard.Require(active.Mode == mode && active.Generated.Topic == topic, 409,
+                    "A different practice is active. Ask whether to stop it before starting another.");
+                if (!GeneratedDrillFlow.AwaitingQuestion(active)) return active;
+                var refreshed = GeneratedDrillFlow.RefreshBinding(active, context.Binding);
+                s.TrainingDrills[active.Id] = refreshed;
+                return refreshed;
+            }
             var now = clock.GetUtcNow();
             if (!PracticeOutlines.AuthoredExhausted(s.TrainingAttempts.Values, topic, now, AuthoredWindow)) return null;
             var next = PracticeOutlines.NextEntry(topic, AnsweredByEntry(s, unit, context.SessionId, topic));

@@ -37,9 +37,14 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
     // The one-active-drill check (resume same mode/topic, otherwise refuse) runs inside the drill service's update,
     // so two concurrent starts in a session cannot both create drills.
     public async Task<VoicePracticeView> StartAsync(Guid sessionId, Guid utteranceId, TrainingMode mode, CancellationToken ct,
-        LearningDomain? topic = null)
+        LearningDomain? topic = null, GenerationContext? generation = null)
     {
         Utterance(await Session(sessionId, ct), utteranceId);
+        // Named topic with generation available: generated practice applies only once authored questions are exhausted
+        // (decided inside its transaction); otherwise the authored path below runs exactly as before.
+        if (topic is { } named && generated is { Enabled: true } && generation is { } g && g.SessionId == sessionId && g.UtteranceId == utteranceId &&
+            await generated.TryStartAsync(Operation("start", sessionId, utteranceId), mode, named, g, ct) is { } generatedDrill)
+            return View(generatedDrill);
         var result = await drills.StartAsync(new(Operation("start", sessionId, utteranceId), sessionId, mode, Topic: topic), ct,
             resumeActiveInSession: true);
         return View(result.Drill);

@@ -108,6 +108,10 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
             ["prompt"] = new { type = "string" }, ["reference"] = new { type = "string" },
             ["follow_ups"] = new { type = "array", items = new { type = "string" } } });
     private bool GenerationAvailable(ModelRoute? route) => generatedPractice?.Enabled == true && route is not null;
+    // Core-held binding for this captured request; null (authored behaviour only) unless generation is fully available.
+    private GenerationContext? GenerationContextFor(Guid sessionId, Guid source, ModelRoute? route) =>
+        GenerationAvailable(route) && PrivacyContext.Epoch is long epoch
+            ? new(sessionId, source, epoch, GeneratedPracticeService.RouteRevision(route!), GeneratedPracticeService.Provenance(route!)) : null;
     public static string Failure(string message) => JsonSerializer.Serialize(new { ok = false, error = message }, Json);
     public static IReadOnlyList<object> DefinitionsFor(bool locked, bool generation = false) => !locked ? (generation ? [.. Definitions, GenerateDefinition] : Definitions) :
         Definitions.Where(tool => JsonSerializer.SerializeToElement(tool).GetProperty("name").GetString() is TravelName or CoreHomeVoiceTool.Name or CoreWindowsVoiceTool.Name).ToArray();
@@ -260,12 +264,9 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
                         Guard.Require(named is not null, 400, "Unsupported practice topic.");
                         topic = named;
                     }
-                    result = await practice.StartAsync(sessionId, source, mode, ct, topic); break;
+                    result = await practice.StartAsync(sessionId, source, mode, ct, topic, GenerationContextFor(sessionId, source, generationRoute)); break;
                 case "core_practice_answer":
-                    var answerGeneration = GenerationAvailable(generationRoute) && PrivacyContext.Epoch is long answerEpoch
-                        ? new GenerationContext(sessionId, source, answerEpoch, GeneratedPracticeService.RouteRevision(generationRoute!), GeneratedPracticeService.Provenance(generationRoute!))
-                        : null;
-                    var answer = await practice.AnswerAsync(sessionId, source, ct, answerGeneration);
+                    var answer = await practice.AnswerAsync(sessionId, source, ct, GenerationContextFor(sessionId, source, generationRoute));
                     result = new { answer.AnswerId, CapturedAnswer = Clip(answer.CapturedAnswer, 1200), Reference = Clip(answer.Reference, 1200), answer.SourceUrl, answer.Progress,
                         assessment = answer.AiGenerated
                             ? "AI-generated question. The reference answer is AI-written, not authored or verified. No calibrated AI or acoustic score has been assigned."
