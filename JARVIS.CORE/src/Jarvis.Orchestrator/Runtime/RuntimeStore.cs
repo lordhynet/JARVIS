@@ -234,7 +234,8 @@ public sealed class InMemoryRuntimeStore(AudioFenceChanges? audioChanges = null)
         lock (_gate)
         {
             var questionIds = scope.QuestionIds.ToHashSet(); var operationIds = scope.OperationIds.ToHashSet();
-            var loaded = _generated.Values.Where(r => questionIds.Contains(r.Question.Id) || operationIds.Contains(r.OperationId))
+            var purgeSessions = (scope.PurgeSessions ?? []).ToHashSet();
+            var loaded = _generated.Values.Where(r => questionIds.Contains(r.Question.Id) || operationIds.Contains(r.OperationId) || purgeSessions.Contains(r.Question.SessionId))
                 .Select(Jarvis.Orchestrator.Training.GeneratedQuestionRecord.Detached).ToArray();
             var created = _generated.Values.Where(r => r.Question.SessionId == scope.SessionId).Select(r => r.Question.CreatedAt).ToArray();
             var unit = new Jarvis.Orchestrator.Training.GeneratedQuestionUnit(scope, loaded, created, _generated.Count);

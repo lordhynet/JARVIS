@@ -69,7 +69,9 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock, ICore
         state.ImportedDocuments[id] = document; return document;
     }
 
-    public Task<SourceClaim> AttachClaimAsync(Guid documentId, AttachSourceClaimRequest request, CancellationToken ct = default) => store.UpdateAsync(s =>
+    // Attaching a claim edits the story, so generated practice shown that story is purged in the same transaction.
+    public Task<SourceClaim> AttachClaimAsync(Guid documentId, AttachSourceClaimRequest request, CancellationToken ct = default) =>
+        Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.UpdateAsync(store, Jarvis.Orchestrator.Training.PracticeLineage.Story, request.StoryId, s =>
     {
         Guard.Require(request.RequestId != Guid.Empty, 400, "Claim operation ID required.");
         Guard.Require(s.ImportedDocuments.TryGetValue(documentId, out var document) && document.DeletedAt is null && document.Kind == "cv", 404, "CV document not found.");
@@ -86,7 +88,7 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock, ICore
         s.Stories[story.Id] = story with { Content = story.Content with { CvClaims = [..claims, quote] }, Version = story.Version + 1, UpdatedAt = clock.GetUtcNow() };
         var result = new SourceClaim(request.RequestId, documentId, document.Revision, story.Id, quote, request.Start, request.Length, clock.GetUtcNow());
         s.SourceClaims.Add(result.Id, result); return result;
-    }, ct);
+    }, clock, ct);
 
     public Task<bool> DeleteAsync(Guid id, int revision, CancellationToken ct = default)
     {

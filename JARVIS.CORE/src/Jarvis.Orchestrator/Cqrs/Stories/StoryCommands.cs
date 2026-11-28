@@ -34,17 +34,18 @@ public sealed class StoryCommandHandlers(IRuntimeStore store, TimeProvider clock
     public Task<Story> HandleAsync(UpdateStory command, CancellationToken ct = default)
     {
         var content = Validate(command.Request.Content);
-        return store.UpdateAsync(s =>
+        // Generated practice shown this story is purged in the same transaction (lineage trigger).
+        return Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.UpdateAsync(store, Jarvis.Orchestrator.Training.PracticeLineage.Story, command.Id, s =>
         {
             var story = Current(s, command.Id, command.Request.ExpectedVersion);
             var updated = story with { Content = content, Version = checked(story.Version + 1), UpdatedAt = clock.GetUtcNow() };
             s.Stories[story.Id] = updated;
             return updated;
-        }, ct);
+        }, clock, ct);
     }
 
     public Task<CommandCompleted> HandleAsync(DeleteStory command, CancellationToken ct = default) =>
-        store.UpdateAsync(s =>
+        Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.UpdateAsync(store, Jarvis.Orchestrator.Training.PracticeLineage.Story, command.Id, s =>
         {
             Current(s, command.Id, command.ExpectedVersion);
             foreach (var attempt in s.CoachingAttempts.Values.Where(x => x.StoryId == command.Id && x.DeletedAt is null).ToList())
@@ -53,7 +54,7 @@ public sealed class StoryCommandHandlers(IRuntimeStore store, TimeProvider clock
             foreach (var claim in s.SourceClaims.Values.Where(x => x.StoryId == command.Id).ToList()) s.SourceClaims.Remove(claim.Id);
             Jarvis.Orchestrator.Workflows.AgentRuntime.InvalidateSource(s, "story", command.Id);
             return new CommandCompleted();
-        }, ct);
+        }, clock, ct);
 
     private static Story Current(RuntimeState state, Guid id, int version)
     {

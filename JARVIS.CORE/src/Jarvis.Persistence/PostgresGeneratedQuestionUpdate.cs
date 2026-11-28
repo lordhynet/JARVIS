@@ -20,11 +20,11 @@ public sealed partial class PostgresRuntimeStore
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await PostgresPrivacyGate.LockAsync(db, ct);
         phase = CoreTelemetry.RecordStoragePhase(phase, "generated.update.privacy_gate");
-        var ids = scope.QuestionIds.ToArray(); var operations = scope.OperationIds.ToArray();
+        var ids = scope.QuestionIds.ToArray(); var operations = scope.OperationIds.ToArray(); var sessions = (scope.PurgeSessions ?? []).ToArray();
         var outcome = await UpdateInTransactionAsync(db, async state =>
         {
             // Rows are read only after the root lock is held (inside UpdateInTransactionAsync), so writers and purges serialize.
-            var rows = await db.GeneratedPracticeQuestions.Where(r => ids.Contains(r.Id) || operations.Contains(r.OperationId)).ToArrayAsync(ct);
+            var rows = await db.GeneratedPracticeQuestions.Where(r => ids.Contains(r.Id) || operations.Contains(r.OperationId) || sessions.Contains(r.SessionId)).ToArrayAsync(ct);
             var created = await db.GeneratedPracticeQuestions.AsNoTracking().Where(r => r.SessionId == scope.SessionId).Select(r => r.CreatedAt).ToArrayAsync(ct);
             var total = await db.GeneratedPracticeQuestions.CountAsync(ct);
             var unit = new GeneratedQuestionUnit(scope, rows.Select(r => r.Record()), created, total);

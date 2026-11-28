@@ -6,7 +6,9 @@ using Jarvis.Orchestrator.Runtime;
 namespace Jarvis.Orchestrator.Training;
 
 // Which generated-question rows a canonical update needs, loaded inside its transaction.
-public sealed record GeneratedQuestionScope(Guid SessionId, IReadOnlyCollection<Guid> OperationIds, IReadOnlyCollection<Guid> QuestionIds);
+// PurgeSessions: other conversations whose generated rows this update may purge (lineage triggers); rows are loaded, never added to.
+public sealed record GeneratedQuestionScope(Guid SessionId, IReadOnlyCollection<Guid> OperationIds, IReadOnlyCollection<Guid> QuestionIds,
+    IReadOnlyCollection<Guid>? PurgeSessions = null);
 
 // A stored row with the identity/replay data and the Core-supplied provenance and lineage (never shown to users).
 // Instances are always detached: nested collections are private read-only copies, so no alias can change a committed row.
@@ -58,6 +60,9 @@ public sealed class GeneratedQuestionUnit
     }
 
     public GeneratedQuestionRecord? ById(Guid id) => byId.GetValueOrDefault(id);
+    // Every loaded, not-yet-purged generated question in the given conversations (for lineage-triggered purge).
+    public IReadOnlyList<Guid> UnpurgedIn(IReadOnlySet<Guid> sessions) =>
+        byId.Values.Where(r => sessions.Contains(r.Question.SessionId) && r.Question.PurgedAt is null).Select(r => r.Question.Id).ToArray();
     public GeneratedQuestionRecord? ByOperation(Guid operationId) => byId.Values.FirstOrDefault(r => r.OperationId == operationId);
     public int SessionCount => sessionCreated.Length + adds.Count;
     public int SessionCountSince(DateTimeOffset since) => sessionCreated.Count(at => at >= since) + adds.Count(a => a.Write.CreatedAt >= since);
