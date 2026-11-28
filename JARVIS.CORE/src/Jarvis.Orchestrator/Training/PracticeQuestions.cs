@@ -38,6 +38,8 @@ public sealed class EmptyGeneratedPracticeQuestionReader : IGeneratedPracticeQue
 // never inferred authored or verified. Not yet used by any consumer (slice 2a scaffolding).
 public sealed class PracticeQuestionResolver(IGeneratedPracticeQuestionReader generated)
 {
+    private static readonly IReadOnlySet<Guid> AuthoredIds = QuestionBank.All.Select(q => q.Id).ToHashSet();
+
     public async Task<PracticeQuestionLookup> ResolveAsync(Guid sessionId, Guid id, CancellationToken ct = default)
     {
         if (QuestionBank.All.FirstOrDefault(q => q.Id == id) is { } authored) return new(new(authored, PracticeQuestionOrigin.Authored, true), false);
@@ -53,8 +55,12 @@ public sealed class PracticeQuestionResolver(IGeneratedPracticeQuestionReader ge
             .Select(q => new PracticeQuestion(q, PracticeQuestionOrigin.Authored, true));
         if (sessionId == Guid.Empty) return authored.ToList();
         var rows = await generated.ListAsync(sessionId, ct);
-        var available = rows.Where(r => r.SessionId == sessionId && r.PurgedAt is null && r.Prompt is not null && (topic is null || r.Topic == topic))
-            .OrderBy(r => r.CreatedAt).ThenBy(r => r.Id).Select(r => new PracticeQuestion(ToQuestion(r), PracticeQuestionOrigin.Generated, false));
+        // Same precedence as ResolveAsync: an authored ID always wins, so a colliding generated row is never listed (whatever
+        // the topic filter). Duplicate generated IDs keep only the earliest row, so every listed ID has one canonical identity.
+        var available = rows.Where(r => r.SessionId == sessionId && r.PurgedAt is null && r.Prompt is not null && !AuthoredIds.Contains(r.Id))
+            .OrderBy(r => r.CreatedAt).ThenBy(r => r.Id).DistinctBy(r => r.Id)
+            .Where(r => topic is null || r.Topic == topic)
+            .Select(r => new PracticeQuestion(ToQuestion(r), PracticeQuestionOrigin.Generated, false));
         return authored.Concat(available).ToList();
     }
 

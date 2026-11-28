@@ -158,3 +158,39 @@ public sealed partial class PostgresSessionTests
         public SessionDbContext CreateDbContext() => SchemaContext(connection);
     }
 }
+
+public sealed class PracticeQuestionListPrecedenceTests
+{
+    private static readonly Guid Session = Guid.NewGuid();
+    private sealed class Reader(params GeneratedPracticeQuestion[] rows) : IGeneratedPracticeQuestionReader
+    {
+        public Task<GeneratedPracticeQuestion?> GetAsync(Guid sessionId, Guid id, CancellationToken ct = default) => Task.FromResult(rows.FirstOrDefault(r => r.Id == id));
+        public Task<IReadOnlyList<GeneratedPracticeQuestion>> ListAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<GeneratedPracticeQuestion>>(rows);
+    }
+    private static GeneratedPracticeQuestion Row(Guid id, LearningDomain topic, int minutes, string prompt = "Synthetic generated prompt") =>
+        new(id, Session, topic, "outline", 1, 1, prompt, "Synthetic outline", [], DateTimeOffset.UnixEpoch.AddMinutes(minutes), null);
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(LearningDomain.SystemDesign)]
+    [InlineData(LearningDomain.Databases)]   // a different topic from the authored question it collides with
+    public async Task List_applies_the_same_authored_precedence_as_resolve(LearningDomain? topic)
+    {
+        var authored = QuestionBank.All.First(q => q.Domain == LearningDomain.SystemDesign);
+        var resolver = new PracticeQuestionResolver(new Reader(Row(authored.Id, topic ?? LearningDomain.SystemDesign, 1)));
+        var list = await resolver.ListAsync(Session, topic);
+        Assert.DoesNotContain(list, q => q.Question.Id == authored.Id && q.Origin == PracticeQuestionOrigin.Generated);
+        Assert.True(list.Count(q => q.Question.Id == authored.Id) <= 1);
+        Assert.Equal(list.Count, list.Select(q => q.Question.Id).Distinct().Count());
+        Assert.Equal(PracticeQuestionOrigin.Authored, (await resolver.ResolveAsync(Session, authored.Id)).Question!.Origin);
+    }
+
+    [Fact]
+    public async Task Duplicate_generated_IDs_list_once_keeping_the_earliest_row()
+    {
+        var id = Guid.NewGuid();
+        var resolver = new PracticeQuestionResolver(new Reader(Row(id, LearningDomain.Databases, 5, "later"), Row(id, LearningDomain.Databases, 1, "earlier")));
+        var generated = Assert.Single(await resolver.ListAsync(Session), q => q.Origin == PracticeQuestionOrigin.Generated);
+        Assert.Equal("earlier", generated.Question.Prompt);
+    }
+}
