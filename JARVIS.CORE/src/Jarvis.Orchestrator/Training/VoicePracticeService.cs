@@ -58,6 +58,7 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
         var source = Utterance(session, utteranceId);
         var drill = await Active(sessionId, ct);
         Guard.Require(drill is not null, 409, "Start a practice question before saving an answer.");
+        Guard.Require(!GeneratedDrillFlow.AwaitingQuestion(drill), 409, "No practice question has been asked yet. Ask the question before saving an answer.");
         Guard.Require(drill.Id != Operation("start", sessionId, utteranceId) && source.At >= drill.CreatedAt,
             409, "The practice-start instruction is not an answer. Ask the question and wait for the user.");
         var step = drill.Steps[drill.AttemptIds.Count];
@@ -86,13 +87,18 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
         var step = drill.Steps[answer.StepIndex!.Value];
         return new VoicePracticeAnswer(answer.Id, answer.CurrentAnswer, step.Reference, step.SourceUrl, View(drill));
     }, ct);
+    // A generated drill waiting for its next question has no current step: it reports the outline entry it is waiting on
+    // instead of indexing past the end. Generated steps are labelled so their AI-written reference is never passed as authored.
     private static VoicePracticeView View(TrainingDrill drill)
     {
-        var step = drill.Status == "Active" ? drill.Steps[drill.AttemptIds.Count] : null;
+        var awaiting = GeneratedDrillFlow.AwaitingQuestion(drill);
+        var step = drill.Status == "Active" && !awaiting && drill.AttemptIds.Count < drill.Steps.Count ? drill.Steps[drill.AttemptIds.Count] : null;
         return new(drill.Id, drill.Mode.ToString(), drill.Status, drill.AttemptIds.Count, drill.Steps.Count,
-            step?.Title, step?.Prompt, step?.CodeSnippet, step?.SuggestedSeconds, drill.RequestedTopic?.ToString());
+            step?.Title, step?.Prompt, step?.CodeSnippet, step?.SuggestedSeconds, drill.RequestedTopic?.ToString(),
+            awaiting ? drill.Generated!.Pending!.OutlineKey : null, step?.GeneratedQuestionId is not null);
     }
 }
 public sealed record VoicePracticeView(Guid DrillId, string Mode, string Status, int Answered, int Total,
-    string? Title, string? Prompt, string? CodeSnippet, int? SuggestedSeconds, string? Topic = null);
+    string? Title, string? Prompt, string? CodeSnippet, int? SuggestedSeconds, string? Topic = null,
+    string? AwaitingOutline = null, bool AiGenerated = false);
 public sealed record VoicePracticeAnswer(Guid AnswerId, string CapturedAnswer, string Reference, string SourceUrl, VoicePracticeView Progress);
