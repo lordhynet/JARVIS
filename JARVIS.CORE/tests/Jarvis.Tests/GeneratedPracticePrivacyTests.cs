@@ -126,3 +126,49 @@ public sealed class GeneratedPracticePrivacyTests
         Assert.Equal(id, JsonSerializer.Deserialize<LearningItem>(JsonSerializer.Serialize(Card(Guid.NewGuid(), id)))!.GeneratedQuestionId);
     }
 }
+
+// Review GP1: the helper returns generated-question identities, never card identities.
+public sealed class GeneratedPracticePrivacyReturnContractTests
+{
+    private static readonly DateTimeOffset At = DateTimeOffset.Parse("2026-11-28T12:00:00Z");
+    private const string Secret = "PRIVATE-CONTEXT-TEXT";
+
+    [Theory]
+    [InlineData("card")]
+    [InlineData("baseline")]
+    [InlineData("review-result")]
+    [InlineData("creation-receipt")]
+    public void A_provenance_only_copy_returns_the_question_ID_not_the_card_ID(string where)
+    {
+        var s = new RuntimeState(); var q = Guid.NewGuid(); var c = Guid.NewGuid();   // card ID differs from question ID
+        var card = new LearningItem(c, LearningDomain.SystemDesign, $"Prompt {Secret}", $"Reference {Secret}", 1, 5, At, At, GeneratedQuestionId: q);
+        var receipt = Guid.NewGuid();
+        switch (where)
+        {
+            case "card": s.Learning[c] = card; break;
+            case "baseline": s.TrainingBaselines[c] = card; break;
+            case "review-result": var r = Guid.NewGuid(); s.Reviews[r] = new(r, new(Guid.NewGuid(), Guid.NewGuid(), ReviewRating.Good, TimeSpan.Zero, At), card); break;
+            default: s.CreationReceipts[receipt] = new(receipt, 0, LearningCreationReceipt.Created, 1, "content-fingerprint", card, null); break;
+        }
+        var returned = GeneratedPracticePrivacy.Purge(s, new HashSet<Guid> { q }, At);
+        Assert.Contains(q, returned); Assert.DoesNotContain(c, returned);
+        Assert.Empty(s.Learning); Assert.Empty(s.TrainingBaselines); Assert.Empty(s.Reviews);
+        if (where == "creation-receipt") { Assert.Null(s.CreationReceipts[receipt].Result); Assert.Null(s.CreationReceipts[receipt].Fingerprint); }
+        Assert.DoesNotContain(Secret, JsonSerializer.Serialize(new { s.Learning, s.TrainingBaselines, s.Reviews, s.CreationReceipts }));
+    }
+
+    [Fact]
+    public void A_requested_question_with_no_runtime_copy_is_still_returned_so_its_row_is_purged()
+    {
+        var q = Guid.NewGuid();
+        Assert.Equal(new HashSet<Guid> { q }, GeneratedPracticePrivacy.Purge(new RuntimeState(), new HashSet<Guid> { q }, At));
+    }
+
+    [Fact]
+    public void Authored_and_empty_IDs_are_still_excluded_from_the_returned_set()
+    {
+        var q = Guid.NewGuid();
+        var returned = GeneratedPracticePrivacy.Purge(new RuntimeState(), new HashSet<Guid> { q, QuestionBank.All[0].Id, Guid.Empty }, At);
+        Assert.Equal(new HashSet<Guid> { q }, returned);
+    }
+}

@@ -13,7 +13,9 @@ public static class GeneratedPracticePrivacy
     public const string TombstoneTitle = "Removed practice question";
     public const string TombstoneText = "This AI-generated practice question was removed.";
 
-    // Returns the question IDs whose content was found and purged in state (the caller purges their rows too).
+    // Returns every eligible requested generated-question ID (authored and empty IDs removed). The caller must purge all of
+    // their canonical rows in the same transaction, whether or not any runtime copy was found: absence of a runtime copy is
+    // never a reason to keep a row's private payload. Card IDs are never substituted for question IDs.
     private static readonly IReadOnlySet<Guid> AuthoredIds = QuestionBank.All.Select(q => q.Id).ToHashSet();
 
     public static IReadOnlySet<Guid> Purge(RuntimeState state, IReadOnlySet<Guid> requested, DateTimeOffset at)
@@ -57,18 +59,15 @@ public static class GeneratedPracticePrivacy
 
         // Drill steps carry the prompt/reference too: replace them with a fixed content-free tombstone. A drill whose
         // unanswered step was purged can no longer be answered, so an active one is cancelled rather than left pointing at it.
-        var found = new HashSet<Guid>(cardIds.Where(questionIds.Contains));
-        foreach (var attempt in attempts) found.Add(attempt.QuestionId);
         foreach (var drill in state.TrainingDrills.Values.ToArray())
         {
             if (!drill.Steps.Any(step => Purgeable(step) && !IsTombstone(step))) continue;   // idempotent: already purged
             var steps = drill.Steps.Select(step => Purgeable(step) && !IsTombstone(step) ? Tombstone(step) : step).ToArray();
-            foreach (var step in drill.Steps.Where(Purgeable)) found.Add(step.GeneratedQuestionId ?? step.QuestionId);
             var pendingPurged = drill.Status == "Active" && drill.AttemptIds.Count < drill.Steps.Count && Purgeable(drill.Steps[drill.AttemptIds.Count]);
             state.TrainingDrills[drill.Id] = drill with { Steps = steps, Revision = checked(drill.Revision + 1),
                 Status = pendingPurged ? "Cancelled" : drill.Status };
         }
-        return found;
+        return questionIds;
 
         bool Purgeable(TrainingDrillStep step) => step.GeneratedQuestionId is { } q ? questionIds.Contains(q) : questionIds.Contains(step.QuestionId);
     }
