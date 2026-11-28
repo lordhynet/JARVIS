@@ -58,3 +58,47 @@ Slices 3 (languages) and 4 (Forge attribution) are **blocked** until a revised d
   - **P4:** practice minutes stay unknown until a reviewed per-capture measurement exists.
 
 #61 is **held** until it is revised to this realtime/canonical flow.
+
+## Proposed resolution of S1 and S2 (design only; for review)
+Grounded in current source: `RealtimeVoiceSession.ReserveWindowAsync` (one reservation per window, made before the window's provider work), the existing successor renewal (`window_renewing`, prepared in the background and dispatched only after handoff), `UsageBudget.ReserveCoreAsync` (the Forge sub-cap is checked under the same lock as the global ceiling; unsettled charges count at their maximum), and `ForgeProgramme(Id, OwnerScope, Revision, ConfigurationVersion, …, Paused, DeletedAt)`.
+
+### S1: classify whole windows; switch at a window boundary
+- **Rule.** Attribution belongs to a window and is fixed when that window is reserved. It is never changed afterwards. Settled or unsettled usage keeps the label it was reserved with.
+- **Start inside an open global window.** `core_practice_start` for a Forge programme does not run Forge work in the current window.
+  - Core records a pending Forge binding (S2) on the conversation and returns `forge_admission_pending`.
+  - The session ends the current window through the existing renewal path, and reserves the successor with `programme = Forge` before any Forge audio, generation or capture.
+  - Until a Forge-attributed window is live, Forge tools refuse with 409, so the model can't do Forge work under the global label.
+- **Stop.** Stopping Forge practice clears the binding. The current Forge window stays Forge-attributed until it ends, because it is never relabelled. The next window is reserved as global.
+- **Prewarm and renewal.** Every successor reservation re-reads the binding and runs S2 admission. If admission fails (no allowance configured, allowance exhausted, programme paused or deleted, or revision changed):
+  - the successor is reserved global, or not at all if the global budget also refuses;
+  - the Forge drill ends with a recorded reason;
+  - Forge tools refuse;
+  - no automatic retry and no new Forge request IDs.
+- **Mode and provider fallback.** A fallback route's reservation carries the same programme attribution and re-runs admission. The Serious daily cap and the global ceiling still apply, because the Forge sub-cap can only refuse.
+- **Reconnect and handoff.** The binding is conversation state, not device state. The new device's first window runs admission from the stored binding. The old device's in-flight results bind to its own capture and route as before, so they are refused as stale.
+- **Unknown outcomes.** Existing holds stay counted at their maximum in both the global and Forge sums. Admission doesn't release or re-label them.
+
+### S2: programme authority bound and re-checked
+- **Binding.** Add `ForgeBinding(ProgrammeId, OwnerScope, ConfigurationVersion, AdmittedAt)` on the conversation's practice state.
+  - Bind `ConfigurationVersion`, not `Revision`, because `Revision` changes with ordinary check-ins. The binding comes from the owner-authorized programme read; the model never supplies it.
+- **Admission check, inside one composite transaction** (`ICoreTransaction`, which already reads `ForgeProgrammes`):
+  - the programme exists with matching owner scope;
+  - `DeletedAt` is null and it isn't `Paused`;
+  - its `ConfigurationVersion` equals the bound value;
+  - the conversation isn't retired, the device isn't locked, and the privacy epoch is current.
+  - The reservation is then written in the same transaction, which needs a composite-writes reservation method, so a pause or delete can't race between the check and the reservation.
+- **Canonical writes** (practice answers, generated questions) run the same programme check inside their existing store transaction. A stale programme can't write merely because its audio lease survived.
+- **Pause is local to Forge.** A paused programme refuses Forge admission and Forge writes only. Technical practice, ordinary voice and global budgets continue unchanged.
+- **Delete** clears bindings in the programme-deletion transaction, so later windows are global.
+
+### Tests required before slice 4 is built
+- Start inside a global window: the Forge window is reserved before any Forge tool succeeds, and the old window's reservation keeps its global label.
+- Stop: the current window keeps the Forge label, and the next window is global.
+- Renewal while paused, deleted, at a changed configuration version, or with the allowance exhausted: the successor is global or refused, the drill ends with a reason, and there is no retry.
+- Fallback route: same attribution, admission re-run.
+- Handoff: the new device's admission uses the stored binding, and the old device's late writes are refused.
+- Pause racing a reservation, and pause racing an answer save: no Forge reservation or write after the pause commits.
+- Unknown-outcome holds are counted in the Forge sum.
+- No paid provider call anywhere; fixture sockets only.
+
+S3 (languages) is unchanged by this revision and stays blocked.
