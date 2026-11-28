@@ -36,6 +36,8 @@ internal sealed class GeneratedPracticeQuestionRow
 
     private sealed record Payload(string Prompt, string ReferenceOutline, IReadOnlyList<string> FollowUps);
 
+    public GeneratedQuestionRecord Record() => new(Contract(), OperationId, Fingerprint);
+
     // Fixed refusals: never echo stored text in an error.
     public GeneratedPracticeQuestion Contract()
     {

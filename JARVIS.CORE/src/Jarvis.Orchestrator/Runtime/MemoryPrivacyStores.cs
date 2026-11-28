@@ -40,6 +40,9 @@ public sealed class GuardedMemoryRuntime(InMemoryRuntimeStore inner, MemoryPriva
     public Task<T> ReadAsync<T>(Func<RuntimeState,T> read, CancellationToken ct = default) => boundary.Run(() => inner.ReadAsync(read, ct));
     public Task<bool> ReadPaidAiPausedAsync(CancellationToken ct = default) => boundary.Run(() => inner.ReadPaidAiPausedAsync(ct));
     public Task<T> UpdateAsync<T>(Func<RuntimeState,T> update, CancellationToken ct = default) => boundary.Run(() => inner.UpdateAsync(update, ct));
+    public Task<T> UpdateWithGeneratedQuestionsAsync<T>(Jarvis.Orchestrator.Training.GeneratedQuestionScope scope,
+        Func<RuntimeState, Jarvis.Orchestrator.Training.GeneratedQuestionUnit, T> update, CancellationToken ct = default) =>
+        boundary.Run(() => inner.UpdateWithGeneratedQuestionsAsync(scope, update, ct));
 }
 public sealed class GuardedMemorySessions(InMemorySessionStore inner, MemoryPrivacyBoundary boundary) : ISessionStore
 {
@@ -191,7 +194,7 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             };
             removed = RecordingRetention.Counts(boundary.Recordings, removed);
             recordingFiles?.EraseAsync(ct).GetAwaiter().GetResult();
-            runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear(); deviceGrants.Clear();
+            runtime.ReplacePrivacyData(PrivacyData.EmptyAfterErase(state)); runtime.EraseGeneratedQuestions(); sessions.ReplacePrivacyData([]); workflows.ReplacePrivacyData([], []); boundary.Jobs.Clear(); deviceGrants.Clear();
             boundary.DeviceCommands.Clear();
             boundary.DeviceReceipts.Clear();
             boundary.Travel = new();

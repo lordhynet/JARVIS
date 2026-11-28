@@ -112,6 +112,7 @@ public sealed class PostgresPrivacyStore(IDbContextFactory<SessionDbContext> fac
         await db.InterviewRecordings.ExecuteDeleteAsync(ct);
         hot.Apply(row, PrivacyData.EmptyAfterErase(state), applyTraining: false);
         await db.RuntimeTrainingRows.ExecuteDeleteAsync(ct);
+        await db.GeneratedPracticeQuestions.ExecuteDeleteAsync(ct);   // rows only; the table and migration history remain
         await db.DomainDefinitions.ExecuteUpdateAsync(x => x.SetProperty(d => d.CurrentVersionId, (Guid?)null), ct);
         await db.DomainDefinitions.ExecuteDeleteAsync(ct);
         await db.TravelRoutes.ExecuteDeleteAsync(ct); await db.TravelLineStates.ExecuteDeleteAsync(ct);
