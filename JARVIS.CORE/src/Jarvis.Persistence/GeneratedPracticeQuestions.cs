@@ -36,6 +36,8 @@ internal sealed class GeneratedPracticeQuestionRow
 
     private sealed record Payload(string Prompt, string ReferenceOutline, IReadOnlyList<string> FollowUps);
 
+    public GeneratedQuestionRecord Record() => new(Contract(), OperationId, Fingerprint, Provenance, Lineage);
+
     // Fixed refusals: never echo stored text in an error.
     public GeneratedPracticeQuestion Contract()
     {
@@ -49,7 +51,7 @@ internal sealed class GeneratedPracticeQuestionRow
         if (payload is not { Prompt.Length: > 0, ReferenceOutline: not null, FollowUps: not null } || payload.FollowUps.Any(f => f is null))
             throw new InvalidDataException("Invalid generated practice question row.");
         return new(Id, SessionId, (LearningDomain)Topic, OutlineKey, OutlineVersion, Version, payload.Prompt, payload.ReferenceOutline,
-            payload.FollowUps.ToArray(), CreatedAt, null);
+            Array.AsReadOnly(payload.FollowUps.ToArray()), CreatedAt, null);
     }
 }
 
