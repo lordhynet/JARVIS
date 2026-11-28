@@ -108,3 +108,85 @@ Generation uses the already-open realtime window's tokens; it is not free. Bound
 - **Provenance:** untrusted tool-argument provenance ignored.
 - **G4 rules:** AI assessment refused before provider; no SRS change from storage; malicious text is inert in prompts and UI.
 - **Engine:** locked session refused; no Forge attribution path touched.
+
+---
+
+## Revision 2 (28 November 2026): answers to R3-1 to R3-4
+
+Slice 2a (empty table and read-only resolver) is merged (#63; L1 fix in #64). **Slices 2b and 2c are merged into one slice, "2b"**: the first generated writer ships together with provenance, lineage and all-copy purge (R3-1). No generated writer exists until that combined slice is reviewed.
+
+### R3-1: privacy before the first writer, covering every durable copy
+- **Reuse the recorded-practice precedent.** `RecordedPracticePrivacy.Purge` already removes every durable copy of recording-derived practice in one transaction: learning cards, `TrainingBaselines`/`TrainingBaselineReviews`, `Reviews` (with their `Result` snapshots) and manual sequences, `VoiceRecalls`, creation receipts, `AgentRuntime.InvalidateSource`, attempts (answers and assessments cleared and tombstoned) and receipt fingerprints (purged). `GeneratedPracticePrivacy.Purge(state, questionIds, at)` follows the **same steps**, plus:
+  - drill steps whose `QuestionId` is generated get their `Prompt`/`Reference`/follow-up text replaced by a fixed content-free tombstone;
+  - the question row gets `Json = null` and `PurgedAt = at`, keeping its ID.
+
+  Retained evidence afterwards: IDs, timestamps, topic, outline key and tombstone flags only.
+- **Provenance on every copy.** `LearningItem` gains optional `GeneratedQuestionId` (mirroring `RecordedQuestionId`), and `TrainingDrillStep` gains optional `GeneratedQuestionId`. Both are omitted when null, so authored JSON is unchanged. Cards, baselines and `LearningReview.Result` snapshots copy it, so origin survives projection and restore, and purge can find every copy.
+- **Lineage is the actual context manifest.** The realtime session already decides what personal context the model receives: instructions built by `ContextSelector` (stories and cards), plus tool results such as `core_context` and `core_story_search`. Core will accumulate, **per realtime session**, the source references it actually exposed: story ID/version, card ID, import ID, coaching/attempt IDs, and handoff-inherited context. At generation, the question's `Lineage` is a snapshot of that manifest, taken from Core state rather than tool arguments.
+- **Purge triggers**, all inside the canonical transaction that performs the triggering change:
+  - a lineage source deleted, edited to a new version, restricted or retired;
+  - session retirement by retention;
+  - recording purge;
+  - whole-Core erasure, which deletes the table.
+
+  Every trigger calls `GeneratedPracticePrivacy.Purge` for affected question IDs.
+- **Protected data:** Forge protected baseline/capacity records are never placed in realtime context today. Generation is refused (409) if the manifest contains any protected-record reference, so protected data can't be downgraded to raw JSON.
+- **Atomic boundary:** a new store port, `IRuntimeStore.UpdateWithGeneratedQuestionsAsync`, runs the runtime-state callback and the `GeneratedPracticeQuestions` row changes in **one** database transaction. It reuses the existing D2 root lock and privacy gate. Source deletion paths that may purge generated questions use the same port, so generation and deletion serialize: a deletion committed first makes generation refuse; a generation committed first is purged by the deletion.
+- **Commit fence** (inside that transaction): session active and not retired; privacy epoch current; drill active with a matching pending need (R3-2); every lineage source still present at its recorded version; the capture still current; not locked/restricted; quotas. A failure gives 409 with a fixed message and writes nothing.
+- **Logs and errors:** no raw question, reference or answer text in logs, audit, outbox or exceptions.
+
+### R3-2: pending generation inside the existing drill lifecycle
+`TrainingDrill` gains optional `Generated: GeneratedDrillState?` (omitted for authored drills):
+
+    GeneratedDrillState(LearningDomain Topic, PendingNeed? Pending, int QuestionsPrepared)
+    PendingNeed(int DrillRevision, int StepIndex, string OutlineKey, int OutlineVersion,
+                Guid TriggerUtteranceId, long PrivacyEpoch, string RouteRevision)
+
+| State | Event | Result |
+|---|---|---|
+| none | `core_practice_start(topic)`, authored available | Existing authored drill (unchanged) |
+| none | start, authored exhausted (R2 rule) | **Active** generated drill, `Steps = []`, `Pending` set for step 0 |
+| Active, Pending | `core_practice_generate` matching `Pending` | One transaction: question row + steps appended (RapidDrill: 1 step; DeepDive: prompt + up to 2 follow-ups as 3 steps of one question group) + `Pending = null` + `Revision++` |
+| Active, no Pending, unanswered step | `core_practice_answer` (distinct learner capture) | Existing `SubmitAsync`. When the last step of the **current question group** is answered, the drill stays **Active** and Core sets a new `Pending` (next outline entry), instead of Completed |
+| Active, Pending | answer, current or view | `Current`/`View` return `awaiting question` (no step index), so there's no out-of-range access. An answer gives 409 "no question asked yet" |
+| Active | stop or browser cancel | Cancelled; `Pending` cleared. A later generate gives 409 and never reopens |
+| Active | quota or hourly limit reached when setting `Pending` | **Completed**, with reason `quota`. No pending need |
+| Cancelled/Completed | replay of any generate/answer/start | Bound result (PR62 receipts / generate fingerprint); never new work |
+
+- **Generate replay after the need is cleared:** an identical `(operation, fingerprint)` returns the frozen question and steps. A different payload, or a stale `PendingNeed` (revision, step, outline, epoch or route mismatch), gives 409.
+- **Two generators:** both target the same `Pending`. The first commit clears it, and the second gets 409, unless it's an identical replay.
+- **Reconnect or handoff:** a resumed session sees `awaiting question` or the current step; the new device's model generates against the same `Pending`, and the old device's late response is refused.
+- **Authored completion semantics are unchanged** (`Generated == null`).
+
+### R3-3: extended consumer matrix
+| Surface | Behaviour |
+|---|---|
+| `ContextSelector` due cards (`Intelligence/ContextSelector.cs:46`) | **Excludes** cards with `GeneratedQuestionId`, exactly as it already excludes recording-derived cards. Unverified material isn't re-injected into model context |
+| `VoiceRecallService` view (`Runtime/VoiceRecallService.cs:82`) | `VoiceRecallView` gains optional `Origin` (`ai-generated-unverified`). The recall tool description tells the model to say so when revealing the reference |
+| `TrainingHandlers` owner-wide cards and dashboard (`:24–30, 40–46`) | Owner-scoped (no session), using the **card's own** `GeneratedQuestionId`. Retained cards from every session appear with their origin label; purged ones are already removed by purge. No active-session substitution |
+| Attempt detail/list, session review | Resolver; purged gives "question removed"; origin shown |
+| Learning projection, replay, correction | Carries `GeneratedQuestionId` from the baseline; a correction after purge finds the tombstoned attempt and refuses (existing deleted-attempt rule) |
+| `LearningReview.Result` snapshots | Copy `GeneratedQuestionId`; purged with the card |
+| `AiCoach` assessment | Refused (409) for generated questions **before** any provider call |
+| Self-rating / manual review | Allowed, keeping its `self` source label |
+| Browser renderers (training cards, attempt detail, session review) | Show "AI-generated question; reference is AI opinion, not verified" whenever `GeneratedQuestionId` or `Origin = Generated` is present |
+
+### R3-4: prepared is not presented
+The metric is **prepared steps** (stored). **Presented/heard is unknown**: there is no delivery evidence, and none is invented. **Answered** comes only from validly captured canonical attempts. Replay doesn't inflate anything, because all three are derived from canonical rows.
+
+### Revised slices
+1. **2b (combined):** store port, generation tool, R3-2 state machine, provenance, lineage manifest and all-copy purge, protected-ref refusal, and the R3-3 consumer changes. One review.
+2. **Promotion:** optional, later.
+
+### Additional tests (beyond the original matrix)
+- Purge after answer: card, baseline, review result and recall all removed; drill step tombstoned; correction, self-rating and replay don't restore text.
+- Source deletion racing generation, both orders.
+- Protected reference in the manifest: refused.
+- Context selector excludes generated cards.
+- Recall shows origin.
+- Owner-wide dashboard across two sessions.
+- Pending-state view/answer safety.
+- DeepDive group completion then the next need.
+- Two generators.
+- Quota completion.
+- Commit-then-disconnect counts as prepared, not presented.
