@@ -211,6 +211,7 @@ builder.Services.AddSingleton<Jarvis.Orchestrator.Training.VoicePracticeService>
 builder.Services.AddSingleton<Jarvis.Orchestrator.Training.PracticeQuestionResolver>();
 // Off unless explicitly enabled; never enabled by default or by any code path.
 builder.Services.AddSingleton(new Jarvis.Orchestrator.Training.PracticeGenerationOptions(builder.Configuration.GetValue(Jarvis.Orchestrator.Training.PracticeGenerationOptions.ConfigKey, false)));
+builder.Services.AddSingleton<Jarvis.Orchestrator.Training.GeneratedPracticeService>();
 builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();
 builder.Services.AddSingleton<DeviceGrantService>();

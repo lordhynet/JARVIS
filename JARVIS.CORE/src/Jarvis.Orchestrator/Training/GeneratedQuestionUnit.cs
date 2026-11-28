@@ -60,6 +60,9 @@ public sealed class GeneratedQuestionUnit
     }
 
     public GeneratedQuestionRecord? ById(Guid id) => byId.GetValueOrDefault(id);
+    // Loaded, not-yet-purged rows of one conversation (requires it in the scope's PurgeSessions or loaded by ID/operation).
+    public IReadOnlyList<GeneratedQuestionRecord> LoadedIn(Guid session) =>
+        byId.Values.Where(r => r.Question.SessionId == session && r.Question.PurgedAt is null).ToArray();
     // Every loaded, not-yet-purged generated question in the given conversations (for lineage-triggered purge).
     public IReadOnlyList<Guid> UnpurgedIn(IReadOnlySet<Guid> sessions) =>
         byId.Values.Where(r => sessions.Contains(r.Question.SessionId) && r.Question.PurgedAt is null).Select(r => r.Question.Id).ToArray();
