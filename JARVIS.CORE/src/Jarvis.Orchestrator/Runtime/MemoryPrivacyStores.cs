@@ -231,9 +231,11 @@ public sealed class InMemoryPrivacyStore(InMemoryRuntimeStore runtime, InMemoryS
             var recordingState = JsonSerializer.Deserialize<RecordingState>(JsonSerializer.Serialize(boundary.Recordings))!;
             var recordingCounts = RecordingRetention.Counts(recordingState, selection.Counts, request.AsOf);
             RecordingRetention.ApplyAsync(recordingState, state, recordingFiles, request.AsOf, ct).GetAwaiter().GetResult();
+            var storiesBefore = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.StoryVersions(state);
             var voice = PrivacyData.RetainRuntime(state, policy, request.AsOf, selection);
-            var retiredGenerated = runtime.GeneratedQuestionsIn(selection.Sessions);
-            Jarvis.Orchestrator.Training.GeneratedPracticePrivacy.Purge(state, retiredGenerated, request.AsOf);
+            var storyAffected = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.AffectedByStoryChanges(state, storiesBefore);
+            var retiredGenerated = runtime.GeneratedQuestionsIn(selection.Sessions.Union(storyAffected).ToHashSet());
+            Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.PurgeRuntime(state, retiredGenerated, storyAffected.Except(selection.Sessions).ToHashSet(), request.AsOf);
             var kept = list.Where(x => !selection.Sessions.Contains(x.Id)).Select(session =>
             {
                 if (state.RetiredSessions.Contains(session.Id)) return RecordedPracticePrivacy.Redact(session, request.AsOf);

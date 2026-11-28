@@ -92,15 +92,27 @@ public sealed class ImportService(IRuntimeStore store, TimeProvider clock, ICore
 
     public Task<bool> DeleteAsync(Guid id, int revision, CancellationToken ct = default)
     {
-        async Task<bool> Delete(RuntimeState s, Func<Guid, Func<ConversationSession, ConversationSession>, Task<ConversationSession?>>? update) {
+        async Task<bool> Delete(RuntimeState s, Func<Guid, Func<ConversationSession, ConversationSession>, Task<ConversationSession?>>? update,
+            Func<IReadOnlySet<Guid>, DateTimeOffset, Task<IReadOnlySet<Guid>>>? tombstoneGenerated) {
         Guard.Require(s.ImportedDocuments.TryGetValue(id, out var document) && document.DeletedAt is null, 404, "Import not found.");
         Guard.Require(document.Revision == revision, 409, "Import changed. Reload before deleting.");
         var sessions = document.SourceRecordingId is { } recording ? s.VoiceCoachings.Values.Where(p => p.SourceRecordingId == recording).Select(p => p.SessionId).ToArray() : [];
         await Jarvis.Orchestrator.Recordings.RecordedPracticePrivacy.RedactSessionsAsync(s, update, sessions, clock.GetUtcNow());
-        Purge(s, document, clock.GetUtcNow()); return true;
+        var before = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.StoryVersions(s);
+        var at = clock.GetUtcNow();
+        Purge(s, document, at);
+        // Removing CV claims edits stories; generated practice shown those stories is purged in this same transaction.
+        var affected = Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.AffectedByStoryChanges(s, before);
+        if (affected.Count > 0)
+        {
+            Guard.Require(tombstoneGenerated is not null, 503, "Deleting this import requires the composite transaction because practice depends on it.");
+            var questions = await tombstoneGenerated(affected, at);
+            Jarvis.Orchestrator.Training.GeneratedPracticeTriggers.PurgeRuntime(s, questions, affected, at);
         }
-        return transaction is not null ? transaction.ExecuteAsync(w => Delete(w.Runtime, w.UpdateSessionAsync), ct)
-            : store.UpdateAsync(s => Delete(s, null).GetAwaiter().GetResult(), ct);
+        return true;
+        }
+        return transaction is not null ? transaction.ExecuteAsync(w => Delete(w.Runtime, w.UpdateSessionAsync, w.TombstoneGeneratedQuestionsInAsync), ct)
+            : store.UpdateAsync(s => Delete(s, null, null).GetAwaiter().GetResult(), ct);
     }
 
     public static void Purge(RuntimeState s, ImportedDocument document, DateTimeOffset at)

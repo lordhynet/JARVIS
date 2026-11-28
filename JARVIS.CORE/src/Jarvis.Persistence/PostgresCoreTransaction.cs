@@ -35,6 +35,14 @@ public sealed class PostgresCoreTransaction(IDbContextFactory<SessionDbContext> 
         List<(ConversationSession Before, ConversationSession After)> sessions, long epoch, CancellationToken ct) : ICoreTransactionWrites
     {
         public RuntimeState Runtime => runtime;
+        // Tracked row updates are saved by this transaction's own SaveChanges, so tombstones commit with the runtime change.
+        public async Task<IReadOnlySet<Guid>> TombstoneGeneratedQuestionsInAsync(IReadOnlySet<Guid> sessions, DateTimeOffset at)
+        {
+            var ids = sessions.ToArray();
+            var rows = await db.GeneratedPracticeQuestions.Where(r => ids.Contains(r.SessionId) && r.PurgedAt == null).ToListAsync(ct);
+            foreach (var row in rows) { row.Json = null; row.Fingerprint = ""; row.Lineage = "[]"; row.PurgedAt = at; }
+            return rows.Select(r => r.Id).ToHashSet();
+        }
         public async Task<ForgeProgramme?> ReadForgeProgrammeAsync(string ownerScope, Guid id) =>
             (db.ForgeProgrammes.Local.SingleOrDefault(x => x.OwnerScope == ownerScope && x.Id == id) ??
                 await db.ForgeProgrammes.SingleOrDefaultAsync(x => x.OwnerScope == ownerScope && x.Id == id, ct))?.Contract();

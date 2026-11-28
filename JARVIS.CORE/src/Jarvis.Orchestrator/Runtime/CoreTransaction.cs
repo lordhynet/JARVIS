@@ -35,6 +35,10 @@ public interface ICoreTransactionWrites
     Task<IReadOnlyList<DeviceReceiptView>> ReadDeviceReceiptsAsync(Guid commandId);
     Task AddDeviceReceiptAsync(DeviceReceiptView receipt);
     Task<bool> HasHomeDispatchCapacityAsync(string deviceId, string entityId, DateTimeOffset since, int limit);
+    // Tombstones every unpurged generated practice question in the given conversations inside this transaction and returns
+    // their IDs so the caller purges runtime copies too. No permissive default: a writer without the table refuses.
+    Task<IReadOnlySet<Guid>> TombstoneGeneratedQuestionsInAsync(IReadOnlySet<Guid> sessions, DateTimeOffset at) =>
+        throw new DomainException(503, "Generated practice storage is unavailable in this transaction.");
 }
 
 public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemorySessionStore sessions,
@@ -44,7 +48,7 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
         boundary.Run(async () =>
         {
             var state = await runtime.ReadAsync(x => x, ct);
-            var writes = new Writes(state, sessions, boundary, ct);
+            var writes = new Writes(state, runtime, sessions, boundary, ct);
             var result = await operation(writes);
             ct.ThrowIfCancellationRequested();
             runtime.ReplacePrivacyData(state);
@@ -52,10 +56,17 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
             return result;
         });
 
-    private sealed class Writes(RuntimeState state, InMemorySessionStore sessions, MemoryPrivacyBoundary boundary,
+    private sealed class Writes(RuntimeState state, InMemoryRuntimeStore runtime, InMemorySessionStore sessions, MemoryPrivacyBoundary boundary,
         CancellationToken ct) : ICoreTransactionWrites
     {
         private readonly Dictionary<Guid, ConversationSession> stagedSessions = [];
+        private readonly Dictionary<Guid, DateTimeOffset> stagedGeneratedTombstones = [];
+        public Task<IReadOnlySet<Guid>> TombstoneGeneratedQuestionsInAsync(IReadOnlySet<Guid> sessions, DateTimeOffset at)
+        {
+            var ids = runtime.GeneratedQuestionsIn(sessions);
+            foreach (var id in ids) stagedGeneratedTombstones.TryAdd(id, at);
+            return Task.FromResult(ids);
+        }
         private readonly Dictionary<(string Owner, Guid Id), ForgeProgramme> stagedForge = [];
         private readonly List<ForgeProtectedRecord> stagedProtected = [];
         private Dictionary<Guid, DeviceGrant>? stagedGrants;
@@ -156,6 +167,7 @@ public sealed class MemoryCoreTransaction(InMemoryRuntimeStore runtime, InMemory
 
         public void Commit()
         {
+            foreach (var group in stagedGeneratedTombstones.GroupBy(p => p.Value)) runtime.TombstoneGeneratedQuestions(group.Select(p => p.Key).ToHashSet(), group.Key);
             foreach (var (key, programme) in stagedForge) boundary.ForgeProgrammes[key] = programme;
             boundary.ForgeProtectedRecords.AddRange(stagedProtected);
             // Remove every encrypted revision and its retry material, including newly staged values.

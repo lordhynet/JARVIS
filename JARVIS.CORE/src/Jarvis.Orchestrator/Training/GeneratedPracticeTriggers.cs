@@ -10,6 +10,24 @@ public static class GeneratedPracticeTriggers
     private const string RetryCode = "generated_lineage_changed";
     private const int Attempts = 3;
 
+    // For changes that may touch several stories at once (import deletion, retention): snapshot story versions before the
+    // change, then find every conversation shown a story that was edited or removed by it.
+    public static IReadOnlyDictionary<Guid, int> StoryVersions(RuntimeState state) => state.Stories.ToDictionary(p => p.Key, p => p.Value.Version);
+
+    public static IReadOnlySet<Guid> AffectedByStoryChanges(RuntimeState state, IReadOnlyDictionary<Guid, int> before)
+    {
+        var changed = before.Where(p => !state.Stories.TryGetValue(p.Key, out var story) || story.Version != p.Value).Select(p => p.Key).ToHashSet();
+        return changed.Count == 0 ? new HashSet<Guid>() : state.PracticeContextManifests.Values
+            .Where(m => m.Sources.Any(s => s.Kind == PracticeLineage.Story && changed.Contains(s.Id))).Select(m => m.SessionId).ToHashSet();
+    }
+
+    // Purge runtime copies for the given generated questions and stop those conversations generating from stale context.
+    public static void PurgeRuntime(RuntimeState state, IReadOnlySet<Guid> questionIds, IReadOnlySet<Guid> sessions, DateTimeOffset at)
+    {
+        GeneratedPracticePrivacy.Purge(state, questionIds, at);
+        foreach (var session in sessions) PracticeLineage.Record(state, session, [], at, unverifiable: true);
+    }
+
     public static IReadOnlySet<Guid> Affected(RuntimeState state, string kind, Guid sourceId) =>
         state.PracticeContextManifests.Values.Where(m => PracticeLineage.Exposes(m, kind, sourceId)).Select(m => m.SessionId).ToHashSet();
 
