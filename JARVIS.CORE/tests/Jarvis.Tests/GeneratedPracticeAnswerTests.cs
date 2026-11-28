@@ -171,4 +171,30 @@ public sealed class GeneratedPracticeAnswerTests
             new(Guid.NewGuid(), attempt.Revision, attempt.TextRevision, AllowCloudProcessing: true), CancellationToken.None));
         Assert.Equal(409, error.StatusCode); Assert.Contains("AI-generated", error.Message);
     }
+
+    [Fact]
+    public async Task Owner_wide_cards_dashboard_and_summaries_keep_generated_origin_across_conversations()
+    {
+        using var host = new ProviderFactory(_ => throw new InvalidOperationException("No provider call"));
+        var w = await Asked(host); await Answered(w);
+        var other = Guid.NewGuid(); var otherQuestion = Guid.NewGuid(); var authored = QuestionBank.All.First(); var now = DateTimeOffset.UtcNow;
+        await w.Store.UpdateAsync(s =>
+        {
+            s.Learning[otherQuestion] = new(otherQuestion, LearningDomain.Databases, "Other prompt", "Other AI reference", 1, 5, now.AddDays(-2), now.AddDays(-3), MasteryScore: 2, MasterySource: "self", GeneratedQuestionId: otherQuestion);
+            var a = Guid.NewGuid(); s.TrainingAttempts[a] = new(a, other, otherQuestion, 1, TrainingMode.RapidDrill, 90, 1, false, now, [new(1, "x", "text_only", now)], []);
+            var b = Guid.NewGuid(); s.TrainingAttempts[b] = new(b, other, authored.Id, authored.Version, TrainingMode.RapidDrill, 91, 1, false, now, [new(1, "y", "text_only", now)], []);
+            return true;
+        });
+        var queries = new Jarvis.Orchestrator.Cqrs.Training.TrainingQueryHandlers(w.Services.GetRequiredService<IRuntimeReader>(), TimeProvider.System);
+        var cards = await queries.HandleAsync(new Jarvis.Orchestrator.Cqrs.Training.ListTrainingCards());
+        Assert.Contains(cards, c => c.Id == w.Question && c.GeneratedQuestionId == w.Question);
+        Assert.Contains(cards, c => c.Id == otherQuestion && c.GeneratedQuestionId == otherQuestion);
+        var dashboard = await queries.HandleAsync(new Jarvis.Orchestrator.Cqrs.Training.GetTrainingDashboard("Europe/London"));
+        Assert.True(dashboard.DueQuestions >= 2);
+        Assert.Contains(TrainingProjection.GeneratedOrigin, dashboard.WeakDomains.Single(d => d.Domain == LearningDomain.Databases).AssessmentSource);
+        var summaries = await queries.HandleAsync(new Jarvis.Orchestrator.Cqrs.Training.ListTraining(other));
+        Assert.Equal(TrainingProjection.GeneratedOrigin, summaries.Single(x => x.QuestionId == otherQuestion).Origin);
+        Assert.Null(summaries.Single(x => x.QuestionId == authored.Id).Origin);
+        Assert.Contains(dashboard.RecentAttempts, x => x.QuestionId == w.Question && x.Origin == TrainingProjection.GeneratedOrigin);
+    }
 }

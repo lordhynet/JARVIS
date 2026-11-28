@@ -88,5 +88,5 @@ public sealed record VoiceRecallView(Guid RecallId, Guid CardId, string Status, 
     string? Reference, string? Rating, DateTimeOffset? NextDueAt, string TimingSource, string? Origin = null)
 {
     // Trusted origin of an AI-generated card: its reference is AI-written and not verified.
-    public const string GeneratedOrigin = "ai-generated-unverified";
+    public const string GeneratedOrigin = Jarvis.Orchestrator.Training.TrainingProjection.GeneratedOrigin;
 }

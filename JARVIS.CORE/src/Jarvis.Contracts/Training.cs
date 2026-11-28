@@ -49,7 +49,7 @@ public sealed record TrainingAttempt(Guid Id, Guid SessionId, Guid QuestionId, i
     public long? AnswerDurationMs => null;
 }
 public sealed record TrainingAttemptSummary(Guid Id, Guid SessionId, Guid QuestionId, int Revision,
-    bool Skipped, DateTimeOffset SubmittedAt, double? ContentScore, string AssessmentSource);
+    bool Skipped, DateTimeOffset SubmittedAt, double? ContentScore, string AssessmentSource, string? Origin = null);
 public sealed record WeakDomain(LearningDomain Domain, double MeanScore, int RatedQuestions, string AssessmentSource = "self");
 public sealed record TrainingDashboard(int CompletedAttempts, int SkippedAttempts, int PracticeDays,
     int DueQuestions, IReadOnlyList<WeakDomain> WeakDomains, IReadOnlyList<TrainingAttemptSummary> RecentAttempts,
