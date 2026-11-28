@@ -3,12 +3,15 @@ namespace Jarvis.Contracts;
 // Existing numeric values are retained for persisted runtime documents.
 public enum TrainingMode { RapidDrill, ExplainSimply, SpacedReview, DeepDive, ArchitectureChallenge, FailureInjection, ProductionIncident, CodeReview, RandomMixedInterview }
 public sealed record DrillModeInfo(TrainingMode Mode, string Title, string Description);
-public sealed record StartTrainingDrillRequest(Guid RequestId, Guid SessionId, TrainingMode Mode, Guid? QuestionId = null);
+// Topic is optional and omitted when null, so legacy requests, drills and replays keep their exact JSON shape and meaning.
+public sealed record StartTrainingDrillRequest(Guid RequestId, Guid SessionId, TrainingMode Mode, Guid? QuestionId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] LearningDomain? Topic = null);
 public sealed record CancelTrainingDrillRequest(int ExpectedRevision);
 public sealed record TrainingDrillStep(int Index, Guid QuestionId, int QuestionVersion, string Title, string Prompt,
     string Reference, string SourceUrl, string? CodeSnippet = null, int? SuggestedSeconds = null);
 public sealed record TrainingDrill(Guid Id, Guid SessionId, TrainingMode Mode, Guid? RequestedQuestionId, int Revision,
-    string Status, DateTimeOffset CreatedAt, IReadOnlyList<TrainingDrillStep> Steps, IReadOnlyList<Guid> AttemptIds);
+    string Status, DateTimeOffset CreatedAt, IReadOnlyList<TrainingDrillStep> Steps, IReadOnlyList<Guid> AttemptIds,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] LearningDomain? RequestedTopic = null);
 public sealed record TrainingDrillView(TrainingDrill Drill, IReadOnlyList<TrainingAttempt> Answers);
 public enum AssessmentDimension { TechnicalAccuracy, Specificity, PersonalOwnership, ArchitectureReasoning, TradeOffs, CommunicationStructure, RecallStability }
 public sealed record TrainingQuestion(Guid Id, int Version, LearningDomain Domain, string Title,

@@ -132,14 +132,14 @@ public sealed class VoicePracticeTests
         var source = await Say(services, session, "Start practice");
         foreach (var (name, args, ids) in new[] {
             ("shell", "{}", new HashSet<Guid>()),
-            ("core_practice_start", JsonSerializer.Serialize(new { utterance_id = source, mode = "RapidDrill", text = "invented" }), new HashSet<Guid> { source }),
-            ("core_practice_start", JsonSerializer.Serialize(new { utterance_id = source, mode = "RapidDrill" }), new HashSet<Guid>())
+            ("core_practice_start", JsonSerializer.Serialize(new { utterance_id = source, mode = "RapidDrill", topic = (string?)null, text = "invented" }), new HashSet<Guid> { source }),
+            ("core_practice_start", JsonSerializer.Serialize(new { utterance_id = source, mode = "RapidDrill", topic = (string?)null }), new HashSet<Guid>())
         }) {
             using var result = JsonDocument.Parse(await tools.ExecuteAsync(name, args, session, ids, default));
             Assert.False(result.RootElement.GetProperty("ok").GetBoolean());
         }
         Assert.Empty(await services.GetRequiredService<IRuntimeStore>().ReadAsync(s => s.TrainingDrills));
-        using var valid = JsonDocument.Parse(await tools.ExecuteAsync("core_practice_start", JsonSerializer.Serialize(new { utterance_id = source, mode = "RapidDrill" }), session, new HashSet<Guid> { source }, default));
+        using var valid = JsonDocument.Parse(await tools.ExecuteAsync("core_practice_start", JsonSerializer.Serialize(new { utterance_id = source, mode = "RapidDrill", topic = (string?)null }), session, new HashSet<Guid> { source }, default));
         Assert.True(valid.RootElement.GetProperty("ok").GetBoolean());
     }
     [Fact]
