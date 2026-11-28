@@ -9,8 +9,29 @@ public sealed class TrainingDrillService(IRuntimeStore store, ISessionReader ses
     // Topics with authored technical QuestionBank content. Other LearningDomain values (e.g. French) are not practice topics here.
     public static IReadOnlySet<LearningDomain> Topics { get; } = QuestionBank.All.Select(q => q.Domain).ToHashSet();
 
+    private const int MaximumResumes = 200;
+
     private static bool SameInput(TrainingDrill drill, StartTrainingDrillRequest request) => drill.SessionId == request.SessionId &&
         drill.Mode == request.Mode && drill.RequestedQuestionId == request.QuestionId && drill.RequestedTopic == request.Topic;
+
+    // Stable, culture-free fingerprint of everything a start request asks for, including an explicit null topic.
+    private static string InputKey(StartTrainingDrillRequest r) => string.Join('|', r.SessionId.ToString("N"), (int)r.Mode,
+        r.QuestionId?.ToString("N") ?? "-", r.Topic is { } topic ? ((int)topic).ToString(System.Globalization.CultureInfo.InvariantCulture) : "-");
+
+    // A request ID is bound to the drill it created or the drill it successfully resumed. A replay returns that drill in its
+    // current state (even if cancelled or finished) and never creates new work; any changed input is a conflict.
+    private static TrainingDrill? Bound(RuntimeState s, StartTrainingDrillRequest request)
+    {
+        if (s.TrainingDrills.TryGetValue(request.RequestId, out var created))
+        {
+            Guard.Require(SameInput(created, request), 409, "Drill request ID was reused for different input.");
+            return created;
+        }
+        var resumed = s.TrainingDrills.Values.FirstOrDefault(d => d.ResumedBy?.ContainsKey(request.RequestId) == true);
+        if (resumed is null) return null;
+        Guard.Require(resumed.ResumedBy![request.RequestId] == InputKey(request), 409, "Drill request ID was reused for different input.");
+        return resumed;
+    }
 
     // resumeActiveInSession: the voice path's one-active-drill policy, enforced inside the same update as creation so
     // concurrent conflicting starts cannot both create drills. A null topic resumes any active drill of the same mode
@@ -25,26 +46,26 @@ public sealed class TrainingDrillService(IRuntimeStore store, ISessionReader ses
             Guard.Require(request.QuestionId is not Guid pinned || QuestionBank.All.Any(q => q.Id == pinned && q.Domain == requested), 400,
                 "The chosen question does not belong to that topic.");
         }
-        var replay = await store.ReadAsync(s => s.TrainingDrills.TryGetValue(request.RequestId, out var old) ? View(s, old) : null, ct);
-        if (replay is not null)
-        {
-            Guard.Require(SameInput(replay.Drill, request), 409, "Drill request ID was reused for different input."); return replay;
-        }
+        var replay = await store.ReadAsync(s => Bound(s, request) is { } bound ? View(s, bound) : null, ct);
+        if (replay is not null) return replay;
         Guard.Require(await sessions.GetAsync(request.SessionId, ct) is { Status: SessionStatus.Active }, 409, "Open an active session first.");
         return await store.UpdateAsync(s =>
         {
             Guard.Require(!s.RetiredSessions.Contains(request.SessionId), 409, "This session was retired by retention.");
-            if (s.TrainingDrills.TryGetValue(request.RequestId, out var previous))
-            {
-                Guard.Require(SameInput(previous, request), 409, "Drill request ID was reused for different input.");
-                return View(s, previous);
-            }
+            if (Bound(s, request) is { } previous) return View(s, previous);
             if (resumeActiveInSession && s.TrainingDrills.Values.Where(d => d.SessionId == request.SessionId && d.Status == "Active")
                     .OrderByDescending(d => d.CreatedAt).ThenBy(d => d.Id).FirstOrDefault() is { } active)
             {
                 Guard.Require(active.Mode == request.Mode && (request.Topic is null || active.RequestedTopic == request.Topic), 409,
                     "A different practice is active. Ask whether to stop it before starting another.");
-                return View(s, active);
+                // Bind this request to the drill it resumed, in the same update, so a later replay cannot start fresh work.
+                // Revision is unchanged: the receipt is metadata, not a change to the drill's progress.
+                var resumedBy = new Dictionary<Guid, string>(active.ResumedBy ?? new Dictionary<Guid, string>());
+                Guard.Require(resumedBy.Count < MaximumResumes, 409, "This practice has been resumed too many times. Stop it and start a new one.");
+                resumedBy[request.RequestId] = InputKey(request);
+                var bound = active with { ResumedBy = resumedBy };
+                s.TrainingDrills[active.Id] = bound;
+                return View(s, bound);
             }
             Guard.Require(s.TrainingDrills.Count < 1000, 409, "Drill history is full.");
             // Topic filtering happens first, so priority, due ordering and shuffling only ever see that topic.

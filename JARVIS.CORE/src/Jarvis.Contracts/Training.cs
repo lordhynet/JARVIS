@@ -11,7 +11,9 @@ public sealed record TrainingDrillStep(int Index, Guid QuestionId, int QuestionV
     string Reference, string SourceUrl, string? CodeSnippet = null, int? SuggestedSeconds = null);
 public sealed record TrainingDrill(Guid Id, Guid SessionId, TrainingMode Mode, Guid? RequestedQuestionId, int Revision,
     string Status, DateTimeOffset CreatedAt, IReadOnlyList<TrainingDrillStep> Steps, IReadOnlyList<Guid> AttemptIds,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] LearningDomain? RequestedTopic = null);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] LearningDomain? RequestedTopic = null,
+    // Request IDs that successfully resumed this drill, with their input fingerprint, so a replay stays bound here.
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<Guid, string>? ResumedBy = null);
 public sealed record TrainingDrillView(TrainingDrill Drill, IReadOnlyList<TrainingAttempt> Answers);
 public enum AssessmentDimension { TechnicalAccuracy, Specificity, PersonalOwnership, ArchitectureReasoning, TradeOffs, CommunicationStructure, RecallStability }
 public sealed record TrainingQuestion(Guid Id, int Version, LearningDomain Domain, string Title,

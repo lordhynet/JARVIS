@@ -209,4 +209,54 @@ public sealed class PracticeTopicTests
         try { await action(); return true; }
         catch (DomainException e) when (e.StatusCode == 409) { return false; }
     }
+
+    // ---- Review T1: a successful resume binds its request ID to the drill it resumed ----
+
+    private static async Task<JsonElement> StartWith(IServiceProvider services, Guid session, Guid utterance, string mode, string? topic)
+    {
+        using var doc = JsonDocument.Parse(await services.GetRequiredService<CoreVoiceTools>().ExecuteAsync("core_practice_start",
+            JsonSerializer.Serialize(new { utterance_id = utterance, mode, topic }), session, new HashSet<Guid> { utterance }, default));
+        return doc.RootElement.Clone();
+    }
+
+    [Theory]
+    [InlineData("RapidDrill", "Databases", true)]     // identical replay: bound to A, even though A is now cancelled
+    [InlineData("RapidDrill", "ApiSecurity", false)]  // changed topic
+    [InlineData("DeepDive", "Databases", false)]      // changed mode
+    [InlineData("RapidDrill", null, false)]           // explicit versus null topic
+    public async Task A_resumed_request_stays_bound_to_its_drill_after_cancellation_and_never_starts_fresh_work(string mode, string? topic, bool sameInput)
+    {
+        using var host = Host(); var services = host.Services; var session = await Session(services);
+        Assert.True((await StartTool(services, session, "RapidDrill", "Databases", "practise databases")).GetProperty("ok").GetBoolean());
+        var drillA = Assert.Single(await Drills(services));
+        var b = await Say(services, session, "carry on with databases");
+        Assert.True((await StartWith(services, session, b, "RapidDrill", "Databases")).GetProperty("ok").GetBoolean());
+        Assert.Contains(VoicePracticeService.Operation("start", session, b), Assert.Single(await Drills(services)).ResumedBy!.Keys);
+
+        // Cancel A through the browser/API path: no new utterance, so B stays the latest captured user source.
+        await services.GetRequiredService<TrainingDrillService>().CancelAsync(drillA.Id, drillA.Revision, default);
+        var replay = await StartWith(services, session, b, mode, topic);
+
+        var drills = await Drills(services);
+        Assert.Equal(drillA.Id, Assert.Single(drills).Id);              // never a second drill
+        Assert.Equal("Cancelled", drills[0].Status);                   // never resurrected
+        Assert.Equal(sameInput, replay.GetProperty("ok").GetBoolean());
+        if (!sameInput) Assert.Contains("reused for different input", replay.GetRawText());
+    }
+
+    [Fact]
+    public async Task Resume_receipts_do_not_bump_revision_and_are_omitted_from_JSON_until_used()
+    {
+        using var host = Host(); var services = host.Services; var session = await Session(services);
+        await StartTool(services, session, "RapidDrill", "Databases");
+        var created = Assert.Single(await Drills(services));
+        Assert.Null(created.ResumedBy);
+        Assert.DoesNotContain("ResumedBy", JsonSerializer.Serialize(created));
+        await StartTool(services, session, "RapidDrill", "Databases");
+        var resumed = Assert.Single(await Drills(services));
+        Assert.Equal(created.Revision, resumed.Revision);
+        Assert.Single(resumed.ResumedBy!);
+        // The browser/API cancel with the unchanged revision still works.
+        await services.GetRequiredService<TrainingDrillService>().CancelAsync(resumed.Id, created.Revision, default);
+    }
 }
