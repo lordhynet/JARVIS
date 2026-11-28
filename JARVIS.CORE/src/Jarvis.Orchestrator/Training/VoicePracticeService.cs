@@ -34,15 +34,14 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
         var drill = await Active(sessionId, ct);
         return drill is null ? null : View(drill);
     }
-    public async Task<VoicePracticeView> StartAsync(Guid sessionId, Guid utteranceId, TrainingMode mode, CancellationToken ct)
+    // The one-active-drill check (resume same mode/topic, otherwise refuse) runs inside the drill service's update,
+    // so two concurrent starts in a session cannot both create drills.
+    public async Task<VoicePracticeView> StartAsync(Guid sessionId, Guid utteranceId, TrainingMode mode, CancellationToken ct,
+        LearningDomain? topic = null)
     {
         Utterance(await Session(sessionId, ct), utteranceId);
-        if (await Active(sessionId, ct) is { } active)
-        {
-            Guard.Require(active.Mode == mode, 409, "A different practice mode is active. Ask whether to stop it before starting another.");
-            return View(active);
-        }
-        var result = await drills.StartAsync(new(Operation("start", sessionId, utteranceId), sessionId, mode), ct);
+        var result = await drills.StartAsync(new(Operation("start", sessionId, utteranceId), sessionId, mode, Topic: topic), ct,
+            resumeActiveInSession: true);
         return View(result.Drill);
     }
     public async Task<VoicePracticeAnswer> AnswerAsync(Guid sessionId, Guid utteranceId, CancellationToken ct)
@@ -91,9 +90,9 @@ public sealed class VoicePracticeService(IRuntimeReader runtime, ISessionReader 
     {
         var step = drill.Status == "Active" ? drill.Steps[drill.AttemptIds.Count] : null;
         return new(drill.Id, drill.Mode.ToString(), drill.Status, drill.AttemptIds.Count, drill.Steps.Count,
-            step?.Title, step?.Prompt, step?.CodeSnippet, step?.SuggestedSeconds);
+            step?.Title, step?.Prompt, step?.CodeSnippet, step?.SuggestedSeconds, drill.RequestedTopic?.ToString());
     }
 }
 public sealed record VoicePracticeView(Guid DrillId, string Mode, string Status, int Answered, int Total,
-    string? Title, string? Prompt, string? CodeSnippet, int? SuggestedSeconds);
+    string? Title, string? Prompt, string? CodeSnippet, int? SuggestedSeconds, string? Topic = null);
 public sealed record VoicePracticeAnswer(Guid AnswerId, string CapturedAnswer, string Reference, string SourceUrl, VoicePracticeView Progress);

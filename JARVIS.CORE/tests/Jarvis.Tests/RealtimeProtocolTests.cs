@@ -141,7 +141,7 @@ public sealed partial class RealtimeProtocolTests
             var starting = name == "core_practice_start";
             var args = Coaching ? JsonSerializer.Serialize(new { action = starting ? "start" : "answer", utterance_id = captured,
                 exercise_id = starting ? "point-first" : null, story_id = (Guid?)null, story_version = (int?)null, claim_index = (int?)null }) :
-                starting ? JsonSerializer.Serialize(new { utterance_id = captured, mode = "RapidDrill" }) : JsonSerializer.Serialize(new { utterance_id = captured });
+                starting ? JsonSerializer.Serialize(new { utterance_id = captured, mode = "RapidDrill", topic = (string?)null }) : JsonSerializer.Serialize(new { utterance_id = captured });
             if (Coaching) name = "core_coaching";
             var done = new { type = "response.done", response = new { id = "response-" + responses, status = CancelTool ? "cancelled" : "completed",
                 output = new[] { new { type = "function_call", call_id = "call-" + responses, name, arguments = args } }, usage = new { input_tokens = 10, output_tokens = 10 } } };
