@@ -148,6 +148,94 @@ public sealed class GeneratedQuestionStorePortTests
     }
 }
 
+
+// Review SG1/SG2: detached generated data, frozen writes, retained provenance and lineage.
+public sealed class GeneratedQuestionStoreDetachmentTests
+{
+    private static readonly DateTimeOffset At = DateTimeOffset.Parse("2026-11-28T12:00:00Z");
+    private const string Provenance = """{"source":"ai-realtime","model":"synthetic-model-marker","route":"r1"}""";
+    private const string Lineage = """[{"kind":"story","id":"0b8e2f2a-0000-0000-0000-000000000001","version":3}]""";
+    private static GeneratedQuestionWrite Write(Guid s, Guid o, IReadOnlyList<string> followUps) =>
+        GeneratedQuestionStorePortTests.Write(s, o, followUps: followUps) with { ProvenanceJson = Provenance, LineageJson = Lineage };
+
+    private static async Task<(InMemoryRuntimeStore Store, Guid Session, Guid Id)> Seeded()
+    {
+        var store = new InMemoryRuntimeStore(); var session = Guid.NewGuid(); var op = Guid.NewGuid();
+        var id = await store.UpdateWithGeneratedQuestionsAsync(new(session, [op], []), (_, unit) => unit.Add(Write(session, op, ["Original follow-up"])));
+        return (store, session, id);
+    }
+
+    [Fact]
+    public async Task Changing_a_returned_snapshot_cannot_change_a_fresh_read()
+    {
+        var (store, _, _) = await Seeded();
+        var snapshot = Assert.Single(store.GeneratedQuestionsSnapshot());
+        Assert.Throws<NotSupportedException>(() => ((IList<string>)snapshot.Question.FollowUps)[0] = "tampered");
+        Assert.Equal("Original follow-up", Assert.Single(store.GeneratedQuestionsSnapshot()).Question.FollowUps[0]);
+    }
+
+    [Fact]
+    public async Task A_failed_update_that_touched_a_loaded_row_commits_nothing_in_either_half()
+    {
+        var (store, session, id) = await Seeded(); var marker = Guid.NewGuid();
+        var before = System.Text.Json.JsonSerializer.Serialize(store.GeneratedQuestionsSnapshot());
+        await Assert.ThrowsAnyAsync<Exception>(() => store.UpdateWithGeneratedQuestionsAsync<bool>(new(session, [], [id]), (s, unit) =>
+        {
+            s.RetiredSessions.Add(marker);
+            var loaded = unit.ById(id)!;
+            try { ((IList<string>)loaded.Question.FollowUps)[0] = "tampered"; } catch (NotSupportedException) { }
+            throw new InvalidOperationException("fence failed");
+        }));
+        Assert.DoesNotContain(marker, await store.ReadAsync(s => s.RetiredSessions));
+        Assert.Equal(before, System.Text.Json.JsonSerializer.Serialize(store.GeneratedQuestionsSnapshot()));
+    }
+
+    [Fact]
+    public async Task Changing_the_callers_list_after_Add_cannot_change_the_payload_or_bypass_the_limit()
+    {
+        var store = new InMemoryRuntimeStore(); var session = Guid.NewGuid(); var op = Guid.NewGuid();
+        var followUps = new List<string> { "Short follow-up" };
+        await store.UpdateWithGeneratedQuestionsAsync(new(session, [op], []), (_, unit) =>
+        {
+            var id = unit.Add(Write(session, op, followUps));
+            followUps[0] = new string('x', GeneratedQuestionUnit.MaximumFollowUp + 1);   // after validation
+            followUps.Add("extra");
+            return id;
+        });
+        var stored = Assert.Single(store.GeneratedQuestionsSnapshot()).Question.FollowUps;
+        Assert.Equal(["Short follow-up"], stored);
+    }
+
+    [Fact]
+    public async Task Changing_the_callers_scope_after_the_unit_is_built_cannot_widen_what_it_allows()
+    {
+        var store = new InMemoryRuntimeStore(); var session = Guid.NewGuid(); var allowed = Guid.NewGuid(); var sneaked = Guid.NewGuid();
+        var operations = new List<Guid> { allowed };
+        var error = await Assert.ThrowsAsync<DomainException>(() => store.UpdateWithGeneratedQuestionsAsync(new(session, operations, []), (_, unit) =>
+        {
+            operations.Add(sneaked);
+            return unit.Add(Write(session, sneaked, []));
+        }));
+        Assert.Equal(409, error.StatusCode); Assert.Empty(store.GeneratedQuestionsSnapshot());
+    }
+
+    [Fact]
+    public async Task Provenance_and_lineage_round_trip_purge_clears_lineage_and_erasure_removes_both()
+    {
+        var (store, session, id) = await Seeded();
+        var row = Assert.Single(store.GeneratedQuestionsSnapshot());
+        Assert.Equal(Provenance, row.ProvenanceJson); Assert.Equal(Lineage, row.LineageJson);
+        var loaded = await store.UpdateWithGeneratedQuestionsAsync(new(session, [], [id]), (_, unit) => unit.ById(id));
+        Assert.Equal(Lineage, loaded!.LineageJson);
+        await store.UpdateWithGeneratedQuestionsAsync(new(session, [], [id]), (_, unit) => { unit.Purge([id], At); return true; });
+        var purged = Assert.Single(store.GeneratedQuestionsSnapshot());
+        Assert.Equal("[]", purged.LineageJson); Assert.Equal("", purged.Fingerprint); Assert.Null(purged.Question.Prompt);
+        Assert.Equal(Provenance, purged.ProvenanceJson);   // route/model provenance is content-free and kept with the tombstone
+        store.EraseGeneratedQuestions();
+        Assert.Empty(store.GeneratedQuestionsSnapshot());
+    }
+}
+
 public sealed partial class PostgresSessionTests
 {
     [PostgresFact]
@@ -183,6 +271,11 @@ public sealed partial class PostgresSessionTests
             var row = await db.GeneratedPracticeQuestions.AsNoTracking().SingleAsync(r => r.Id == id);
             Assert.Null(row.Json); Assert.Equal("", row.Fingerprint); Assert.Equal("[]", row.Lineage);
         }
+        var meta = GeneratedQuestionStorePortTests.Write(session, Guid.NewGuid()) with { ProvenanceJson = """{"model":"synthetic-model-marker"}""", LineageJson = """[{"kind":"story","version":3}]""" };
+        var metaId = await store.UpdateWithGeneratedQuestionsAsync(new(session, [meta.OperationId], []), (_, unit) => unit.Add(meta));
+        var record = await store.UpdateWithGeneratedQuestionsAsync(new(session, [], [metaId]), (_, unit) => unit.ById(metaId));
+        // PostgreSQL keeps the same supplied provenance and lineage as the in-memory adapter (review SG2 parity).
+        Assert.Contains("synthetic-model-marker", record!.ProvenanceJson); Assert.Contains("\"version\":3", record.LineageJson.Replace(" ", ""));
     }
 
     [PostgresFact]

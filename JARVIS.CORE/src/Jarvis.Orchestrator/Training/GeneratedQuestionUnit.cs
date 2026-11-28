@@ -8,8 +8,16 @@ namespace Jarvis.Orchestrator.Training;
 // Which generated-question rows a canonical update needs, loaded inside its transaction.
 public sealed record GeneratedQuestionScope(Guid SessionId, IReadOnlyCollection<Guid> OperationIds, IReadOnlyCollection<Guid> QuestionIds);
 
-// A stored row with the identity/replay data the writer needs (never shown to users).
-public sealed record GeneratedQuestionRecord(GeneratedPracticeQuestion Question, Guid OperationId, string Fingerprint);
+// A stored row with the identity/replay data and the Core-supplied provenance and lineage (never shown to users).
+// Instances are always detached: nested collections are private read-only copies, so no alias can change a committed row.
+public sealed record GeneratedQuestionRecord(GeneratedPracticeQuestion Question, Guid OperationId, string Fingerprint,
+    string ProvenanceJson, string LineageJson)
+{
+    public static GeneratedQuestionRecord Detached(GeneratedQuestionRecord record) => record with
+    {
+        Question = record.Question with { FollowUps = Array.AsReadOnly(record.Question.FollowUps.ToArray()) }
+    };
+}
 
 // What a trusted Core writer asks to store. ProvenanceJson and LineageJson come from Core-held context, never tool arguments.
 public sealed record GeneratedQuestionWrite(Guid SessionId, Guid OperationId, LearningDomain Topic, string OutlineKey, int OutlineVersion,
@@ -31,31 +39,39 @@ public sealed class GeneratedQuestionUnit
     public const int MaximumPrompt = 1200, MaximumReference = 2000, MaximumFollowUps = 2, MaximumFollowUp = 300, MaximumMetadata = 4000;
     private static readonly IReadOnlySet<Guid> AuthoredIds = QuestionBank.All.Select(q => q.Id).ToHashSet();
 
-    private readonly GeneratedQuestionScope scope;
+    private readonly Guid sessionId;
+    private readonly IReadOnlySet<Guid> operationIds;
     private readonly Dictionary<Guid, GeneratedQuestionRecord> byId;
-    private readonly IReadOnlyList<DateTimeOffset> sessionCreated;
+    private readonly DateTimeOffset[] sessionCreated;
     private readonly int total;
     private readonly List<(Guid Id, GeneratedQuestionWrite Write)> adds = [];
     private readonly Dictionary<Guid, DateTimeOffset> purges = [];
 
+    // Everything is copied on entry (scope collections, loaded rows, timestamps), so later changes to the caller's objects
+    // cannot widen the allowed set or alter what the transaction loaded.
     public GeneratedQuestionUnit(GeneratedQuestionScope scope, IEnumerable<GeneratedQuestionRecord> loaded, IReadOnlyList<DateTimeOffset> sessionCreated, int total)
     {
-        this.scope = scope; this.sessionCreated = sessionCreated; this.total = total;
-        byId = loaded.ToDictionary(r => r.Question.Id);
+        ArgumentNullException.ThrowIfNull(scope);
+        sessionId = scope.SessionId; operationIds = scope.OperationIds.ToHashSet();
+        this.sessionCreated = sessionCreated.ToArray(); this.total = total;
+        byId = loaded.Select(GeneratedQuestionRecord.Detached).ToDictionary(r => r.Question.Id);
     }
 
     public GeneratedQuestionRecord? ById(Guid id) => byId.GetValueOrDefault(id);
     public GeneratedQuestionRecord? ByOperation(Guid operationId) => byId.Values.FirstOrDefault(r => r.OperationId == operationId);
-    public int SessionCount => sessionCreated.Count + adds.Count;
+    public int SessionCount => sessionCreated.Length + adds.Count;
     public int SessionCountSince(DateTimeOffset since) => sessionCreated.Count(at => at >= since) + adds.Count(a => a.Write.CreatedAt >= since);
 
-    public IReadOnlyList<(Guid Id, GeneratedQuestionWrite Write)> Adds => adds;
-    public IReadOnlyDictionary<Guid, DateTimeOffset> Purges => purges;
+    // Read-only snapshots of the staged changes; the staging collections themselves are never exposed.
+    public IReadOnlyList<(Guid Id, GeneratedQuestionWrite Write)> Adds => adds.ToArray();
+    public IReadOnlyDictionary<Guid, DateTimeOffset> Purges => new Dictionary<Guid, DateTimeOffset>(purges);
 
-    public Guid Add(GeneratedQuestionWrite write)
+    public Guid Add(GeneratedQuestionWrite input)
     {
-        ArgumentNullException.ThrowIfNull(write);
-        Guard.Require(write.SessionId == scope.SessionId && write.SessionId != Guid.Empty && scope.OperationIds.Contains(write.OperationId) &&
+        ArgumentNullException.ThrowIfNull(input); ArgumentNullException.ThrowIfNull(input.FollowUps);
+        // Freeze the write before validating it: the accepted payload can't change through the caller's list afterwards.
+        var write = input with { FollowUps = Array.AsReadOnly(input.FollowUps.ToArray()) };
+        Guard.Require(write.SessionId == sessionId && write.SessionId != Guid.Empty && operationIds.Contains(write.OperationId) &&
             write.OperationId != Guid.Empty, 409, "Generated question is outside this update's scope.");
         var id = GeneratedQuestionIds.For(write.SessionId, write.OperationId);
         Guard.Require(!AuthoredIds.Contains(id), 409, "Generated question identity conflicts with authored content.");

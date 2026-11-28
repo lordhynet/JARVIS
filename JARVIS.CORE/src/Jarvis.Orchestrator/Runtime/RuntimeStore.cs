@@ -231,7 +231,9 @@ public sealed class InMemoryRuntimeStore(AudioFenceChanges? audioChanges = null)
         ct.ThrowIfCancellationRequested();
         lock (_gate)
         {
-            var loaded = _generated.Values.Where(r => scope.QuestionIds.Contains(r.Question.Id) || scope.OperationIds.Contains(r.OperationId)).ToArray();
+            var questionIds = scope.QuestionIds.ToHashSet(); var operationIds = scope.OperationIds.ToHashSet();
+            var loaded = _generated.Values.Where(r => questionIds.Contains(r.Question.Id) || operationIds.Contains(r.OperationId))
+                .Select(Jarvis.Orchestrator.Training.GeneratedQuestionRecord.Detached).ToArray();
             var created = _generated.Values.Where(r => r.Question.SessionId == scope.SessionId).Select(r => r.Question.CreatedAt).ToArray();
             var unit = new Jarvis.Orchestrator.Training.GeneratedQuestionUnit(scope, loaded, created, _generated.Count);
             var previousLease = _state.AudioLease;
@@ -240,11 +242,11 @@ public sealed class InMemoryRuntimeStore(AudioFenceChanges? audioChanges = null)
             var rows = new Dictionary<Guid, Jarvis.Orchestrator.Training.GeneratedQuestionRecord>(_generated);
             foreach (var (id, write) in unit.Adds)
                 rows[id] = new(new(id, write.SessionId, write.Topic, write.OutlineKey, write.OutlineVersion, 1, write.Prompt, write.ReferenceOutline,
-                    write.FollowUps.ToArray(), write.CreatedAt, null), write.OperationId, write.Fingerprint);
+                    Array.AsReadOnly(write.FollowUps.ToArray()), write.CreatedAt, null), write.OperationId, write.Fingerprint, write.ProvenanceJson, write.LineageJson);
 
             foreach (var (id, at) in unit.Purges)
                 if (rows.TryGetValue(id, out var row) && row.Question.PurgedAt is null)
-                    rows[id] = row with { Fingerprint = "", Question = row.Question with { Prompt = null, ReferenceOutline = null, FollowUps = [], PurgedAt = at } };
+                    rows[id] = row with { Fingerprint = "", LineageJson = "[]", Question = row.Question with { Prompt = null, ReferenceOutline = null, FollowUps = [], PurgedAt = at } };
             _state = Copy(copy); _generated = rows;
             audioChanges?.LeaseChanged(previousLease, _state.AudioLease);
             return Task.FromResult(result);
@@ -260,7 +262,7 @@ public sealed class InMemoryRuntimeStore(AudioFenceChanges? audioChanges = null)
     // Read-only snapshot for the in-memory resolver/reader; never exposes the internal dictionary.
     public IReadOnlyList<Jarvis.Orchestrator.Training.GeneratedQuestionRecord> GeneratedQuestionsSnapshot()
     {
-        lock (_gate) return _generated.Values.ToArray();
+        lock (_gate) return _generated.Values.Select(Jarvis.Orchestrator.Training.GeneratedQuestionRecord.Detached).ToArray();
     }
 }
 
