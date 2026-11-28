@@ -37,3 +37,24 @@ Realtime costs more per minute than turn-based. The existing global caps (£10 d
 
 ## Out of scope
 Raising budgets, setting the Forge allowance, live config, deploy, pronunciation scoring, French/Spanish domain activation, and native Android UI.
+
+## Gates before language or Forge-attributed practice (from design review, 28 November 2026)
+Slices 3 (languages) and 4 (Forge attribution) are **blocked** until a revised design satisfies each gate below and is reviewed. Technical-topic practice (slices 1–2) keeps the existing global-budget path and isn't affected.
+- **S1, Forge admission across realtime windows:** decide whether the whole window is classified at admission, or a transition closes the old window and reserves a new Forge-attributed window before any Forge audio or work.
+  - Never relabel settled usage.
+  - Cover start/stop, prewarm, renewal, mode/provider fallback, reconnect and handoff.
+  - Missing allowance, pause or exhaustion refuses before further Forge provider work and keeps unknown-outcome holds.
+- **S2, programme authority:** trusted owner/programme identity and revision, plus enable/pause/delete checks at admission and again inside the canonical write transaction.
+  - A surviving audio lease never authorizes a stale programme.
+  - Project pause is local to Forge.
+  - An unpaid fallback has no automatic retry and no new IDs.
+- **S3, language eligibility and persistence:** language entry stays blocked until canonical mapping, locale/content/source versioning, quality evidence, no-baseline/no-SRS behaviour and interview-statistics exclusion are reviewed.
+  - Realtime-generated text is never pronunciation evidence or a score.
+  - Accents are preserved.
+- **PF-04 persistence (#61) prerequisites:**
+  - **P1:** an explicit rollback baseline and a concrete Up/Down algorithm, because migration 26's Down can't be widened by a later migration. Test 27 → 26 → 25.
+  - **P2:** a consumer/lifecycle matrix for practice-marked attempts (views, resume, correction, assessment refused before any paid assessor call, projection, deletion, retention, export, erasure), plus a catalogue-aware content lookup.
+  - **P3:** a Core-owned capture envelope with an atomic source/privacy/programme fence immediately before persistence.
+  - **P4:** practice minutes stay unknown until a reviewed per-capture measurement exists.
+
+#61 is **held** until it is revised to this realtime/canonical flow.
