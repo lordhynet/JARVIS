@@ -12,6 +12,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
     public DbSet<ForgeProtectedRow> ForgeCapacity => Set<ForgeProtectedRow>(nameof(ForgeCapacity));
     public DbSet<RuntimeLearningRow> RuntimeLearningRows => Set<RuntimeLearningRow>();
     internal DbSet<RuntimeTrainingRow> RuntimeTrainingRows => Set<RuntimeTrainingRow>();
+    internal DbSet<GeneratedPracticeQuestionRow> GeneratedPracticeQuestions => Set<GeneratedPracticeQuestionRow>();
     public DbSet<RuntimeLearningControlRow> RuntimeLearningState => Set<RuntimeLearningControlRow>();
     public DbSet<SessionRow> Sessions => Set<SessionRow>();
     public DbSet<PrivacyControlRow> PrivacyControls => Set<PrivacyControlRow>();
@@ -44,6 +45,7 @@ public sealed class SessionDbContext(DbContextOptions<SessionDbContext> options)
         ForgeProtectedRow.Configure(model);
         RuntimeLearningModel.Configure(model);
         RuntimeTrainingModel.Configure(model);
+        GeneratedPracticeQuestionRow.Configure(model);
         DomainModel.Configure(model);
         RuntimeHotModel.Configure(model);
         TravelModel.Configure(model);

@@ -6,6 +6,7 @@ SELECT json_build_object(
     'TrainingRows', (SELECT count(*) FROM "RuntimeTrainingRows"),
     'TrainingAttempts', (SELECT count(*) FROM "RuntimeTrainingRows" WHERE "Kind"='TrainingAttempts'),
     'TrainingOperations', (SELECT count(*) FROM "RuntimeTrainingRows" WHERE "Kind"='TrainingOperations'),
+    'GeneratedPracticeQuestions', (SELECT count(*) FROM "GeneratedPracticeQuestions"),
     'LearningControl', (SELECT count(*) FROM "RuntimeLearningState" WHERE "Id"=1),
     'NextTrainingSequence', (SELECT "NextTrainingSequence" FROM "RuntimeLearningState" WHERE "Id"=1),
     'AudioSingleton', (SELECT count(*) FROM "RuntimeAudioState" WHERE "Id"=1),

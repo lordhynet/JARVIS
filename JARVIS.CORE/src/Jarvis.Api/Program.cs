@@ -111,6 +111,7 @@ if (storageProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IRuntimeStore, PostgresRuntimeStore>();
     builder.Services.AddSingleton<ITravelStore, PostgresTravelStore>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Forge.IForgeProgrammeReader, PostgresForgeProgrammeReader>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Training.IGeneratedPracticeQuestionReader, PostgresGeneratedPracticeQuestionReader>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingStore, PostgresRecordingStore>();
     builder.Services.AddSingleton<ICoreTransaction, PostgresCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, PostgresWorkflowStore>();
@@ -129,6 +130,7 @@ else if (storageProvider.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IRuntimeStore, GuardedMemoryRuntime>();
     builder.Services.AddSingleton<ITravelStore, MemoryTravelStore>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Forge.IForgeProgrammeReader, Jarvis.Orchestrator.Forge.MemoryForgeProgrammeReader>();
+    builder.Services.AddSingleton<Jarvis.Orchestrator.Training.IGeneratedPracticeQuestionReader, Jarvis.Orchestrator.Training.EmptyGeneratedPracticeQuestionReader>();
     builder.Services.AddSingleton<Jarvis.Orchestrator.Recordings.IRecordingStore, Jarvis.Orchestrator.Recordings.MemoryRecordingStore>();
     builder.Services.AddSingleton<ICoreTransaction, MemoryCoreTransaction>();
     builder.Services.AddSingleton<IWorkflowStore, GuardedMemoryWorkflows>();
@@ -206,6 +208,7 @@ builder.Services.AddSingleton<AudioOwnership>();
 builder.Services.AddSingleton<CompanionVoiceService>();
 builder.Services.AddSingleton<WakeCandidateArbiter>();
 builder.Services.AddSingleton<Jarvis.Orchestrator.Training.VoicePracticeService>();
+builder.Services.AddSingleton<Jarvis.Orchestrator.Training.PracticeQuestionResolver>();
 builder.Services.AddSingleton<VoiceRecallService>();
 builder.Services.AddSingleton<DeviceCredentials>();
 builder.Services.AddSingleton<DeviceGrantService>();
