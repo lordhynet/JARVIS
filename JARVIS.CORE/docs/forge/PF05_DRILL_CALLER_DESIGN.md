@@ -55,3 +55,11 @@ Paid pilot, setting the allowance, live config, model change, pronunciation scor
 - **D4:** **Windows first** (`JARVIS.WINDOWS`), not the browser. Android follows after a real owner hardware check.
 
 With D1 and D2, a first French drill spends AI money only on transcription (`gpt-transcribe`, Forge-attributed, inside the Forge allowance once the owner sets one).
+
+## Owner clarification (28 November 2026): audio-first, browser then tray
+"Windows first" means option (c). **The drill is audio-first on every client.**
+1. **First: the browser main window (`JARVIS.FRONTEND`) on the owner's Windows PC.** It's usable from 1 December with nothing to install. The flow is voice-driven: device TTS speaks the instruction, the mic captures the turn, and device TTS speaks the French model answer and hints. On-screen text is a fallback and accessibility aid, not the primary interface.
+2. **Then: the Windows tray companion (`JARVIS.WINDOWS`)** for hands-free drills, reusing its existing fenced `VoiceSocket`/WASAPI path and Windows `SpeechSynthesis`. This is gated on the owner signing and installing the MSIX, device registration, the live Core update, and a real microphone check.
+3. Android follows under its existing audio-only companion rules.
+
+The Core drill session (slice 2) is client-neutral, so both clients use the same fenced turn API.
