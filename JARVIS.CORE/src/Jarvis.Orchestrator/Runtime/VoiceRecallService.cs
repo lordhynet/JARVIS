@@ -80,8 +80,13 @@ public sealed class VoiceRecallService(IRuntimeStore store, ISessionReader sessi
         var card = finished ? s.Learning.GetValueOrDefault(recall.CardId) : Card(s, recall);
         var due = recall.RatingUtteranceId is Guid rated ? s.Reviews.GetValueOrDefault(VoicePracticeService.Operation("recall-rate", recall.SessionId, rated))?.Result.DueAt : null;
         return new(recall.Id, recall.CardId, recall.Status, card?.Domain.ToString(), finished ? null : card?.Prompt,
-            recall.Status == "Rating" ? card?.Answer : null, recall.Rating?.ToString(), due, "not_measured");
+            recall.Status == "Rating" ? card?.Answer : null, recall.Rating?.ToString(), due, "not_measured",
+            card?.GeneratedQuestionId is not null ? VoiceRecallView.GeneratedOrigin : null);
     }
 }
 public sealed record VoiceRecallView(Guid RecallId, Guid CardId, string Status, string? Domain, string? Prompt,
-    string? Reference, string? Rating, DateTimeOffset? NextDueAt, string TimingSource);
+    string? Reference, string? Rating, DateTimeOffset? NextDueAt, string TimingSource, string? Origin = null)
+{
+    // Trusted origin of an AI-generated card: its reference is AI-written and not verified.
+    public const string GeneratedOrigin = "ai-generated-unverified";
+}

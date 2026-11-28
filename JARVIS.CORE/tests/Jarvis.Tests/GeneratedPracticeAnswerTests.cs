@@ -79,7 +79,8 @@ public sealed class GeneratedPracticeAnswerTests
         Assert.Equal("Active", drill.Status);
         Assert.Equal("data-ownership", drill.Generated!.Pending!.OutlineKey);
         Assert.Equal(answer, drill.Generated.Pending.TriggerUtteranceId);
-        Assert.False(await w.Store.ReadAsync(s => s.Learning.ContainsKey(w.Question)));   // no card until consumers label it
+        var card = await w.Store.ReadAsync(s => s.Learning[w.Question]);   // revision card carries its trusted origin
+        Assert.Equal(w.Question, card.GeneratedQuestionId); Assert.Equal(LearningDomain.SystemDesign, card.Domain);
         var replay = await Tool(w.Services, w.Session, "core_practice_answer", new { utterance_id = answer }, answer, Route);
         Assert.Equal(AnswerId(json), AnswerId(replay));
         Assert.Single(await w.Store.ReadAsync(s => s.TrainingAttempts.Values.Where(a => a.SessionId == w.Session).ToArray()));
@@ -122,5 +123,52 @@ public sealed class GeneratedPracticeAnswerTests
         var json = await Tool(w.Services, w.Session, "core_practice_answer", new { utterance_id = answer }, answer, Route);
         Assert.False(Ok(json)); Assert.Contains("removed", json);
         Assert.Empty(await w.Store.ReadAsync(s => s.TrainingAttempts.Values.Where(a => a.SessionId == w.Session).ToArray()));
+    }
+
+    private static async Task<Guid> Answered(World w)
+    {
+        var answer = await Say(w.Services, w.Session, "Read and write ratio, latency targets and retention.");
+        Assert.True(Ok(await Tool(w.Services, w.Session, "core_practice_answer", new { utterance_id = answer }, answer, Route)));
+        await w.Store.UpdateAsync(s => { s.Learning[w.Question] = s.Learning[w.Question] with { DueAt = DateTimeOffset.UtcNow.AddDays(-1) }; return true; });
+        return answer;
+    }
+
+    [Fact]
+    public async Task A_due_generated_card_is_recalled_with_its_unverified_origin_through_the_voice_tool()
+    {
+        using var host = new ProviderFactory(_ => throw new InvalidOperationException("No provider call"));
+        var w = await Asked(host); await Answered(w);
+        var start = await Say(w.Services, w.Session, "Let's do my review cards.");
+        var question = JsonDocument.Parse(await Tool(w.Services, w.Session, "core_recall", new { action = "start", utterance_id = start, rating = "None" }, start)).RootElement;
+        Assert.True(question.GetProperty("ok").GetBoolean(), question.ToString());
+        var result = question.GetProperty("result");
+        Assert.Equal(w.Question, result.GetProperty("cardId").GetGuid());
+        Assert.Equal(VoiceRecallView.GeneratedOrigin, result.GetProperty("origin").GetString());
+        var said = await Say(w.Services, w.Session, "Requirements first.");
+        var reveal = JsonDocument.Parse(await Tool(w.Services, w.Session, "core_recall", new { action = "reveal", utterance_id = said, rating = "None" }, said)).RootElement;
+        Assert.Equal("Scale, latency, durability.", reveal.GetProperty("result").GetProperty("reference").GetString());
+        Assert.Equal(VoiceRecallView.GeneratedOrigin, reveal.GetProperty("result").GetProperty("origin").GetString());
+    }
+
+    [Fact]
+    public async Task A_due_generated_card_is_never_selected_into_ordinary_model_context()
+    {
+        using var host = new ProviderFactory(_ => throw new InvalidOperationException("No provider call"));
+        var w = await Asked(host); await Answered(w);
+        var selected = await w.Store.ReadAsync(s => Jarvis.Orchestrator.Intelligence.ContextSelector.Select(s.Stories.Values, s.Learning.Values,
+            "system design requirements", DateTimeOffset.UtcNow, maxBytes: 5000));
+        Assert.DoesNotContain(selected.Due, c => c.Id == w.Question);
+    }
+
+    [Fact]
+    public async Task AI_feedback_is_refused_for_a_generated_answer_before_any_provider_call()
+    {
+        using var host = new ProviderFactory(_ => throw new InvalidOperationException("No provider call"));
+        var w = await Asked(host); await Answered(w);
+        var attempt = await w.Store.ReadAsync(s => s.TrainingAttempts.Values.Single(a => a.SessionId == w.Session));
+        var coach = w.Services.GetRequiredService<Jarvis.Api.Integrations.AiCoach>();
+        var error = await Assert.ThrowsAsync<DomainException>(() => coach.TechnicalAsync(attempt.Id,
+            new(Guid.NewGuid(), attempt.Revision, attempt.TextRevision, AllowCloudProcessing: true), CancellationToken.None));
+        Assert.Equal(409, error.StatusCode); Assert.Contains("AI-generated", error.Message);
     }
 }

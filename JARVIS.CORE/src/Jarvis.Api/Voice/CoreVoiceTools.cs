@@ -95,7 +95,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
         Tool("core_practice_answer", "Save a finished practice answer from the latest captured user speech verbatim. Never use for instructions, questions or ordinary conversation. Ask one authored stage at a time. After a successful save, briefly discuss the returned reference before asking the next stage. The reference is not a calibrated score.",
             new() { ["utterance_id"] = Utterance }),
         Tool("core_practice_stop", "Stop the current drill only when the user asks; saved answers remain on Core.", new() { ["utterance_id"] = Utterance }),
-        Tool("core_recall", "Start or resume due-card recall, ask the prompt and wait for an answer before revealing the reference. Then ask the user to say Again, Hard, Good or Easy. Rate only with the separate captured utterance containing their explicit rating. Never infer a rating or claim response timing was measured. Use rating None except for rate, and empty utterance_id only for current. Stop leaves scheduling unchanged.", new() {
+        Tool("core_recall", "Start or resume due-card recall, ask the prompt and wait for an answer before revealing the reference. Then ask the user to say Again, Hard, Good or Easy. Rate only with the separate captured utterance containing their explicit rating. Never infer a rating or claim response timing was measured. Use rating None except for rate, and empty utterance_id only for current. Stop leaves scheduling unchanged. When origin is ai-generated-unverified, say the question was AI-generated and its reference is an AI-written opinion, not verified, when you reveal it.", new() {
             ["action"] = new { type = "string", @enum = new[] { "start", "current", "reveal", "rate", "stop" } },
             ["utterance_id"] = Utterance,
             ["rating"] = new { type = "string", @enum = new[] { "None", "Again", "Hard", "Good", "Easy" } }
@@ -280,7 +280,7 @@ public sealed class CoreVoiceTools(IRuntimeReader runtime, VoicePracticeService 
                         Prompt = review.Status == "Question" && review.Prompt is not null ? Clip(review.Prompt, 700) : null,
                         Reference = review.Reference is not null ? Clip(review.Reference, 700) : null,
                         contentTruncated = review.Status == "Question" && review.Prompt?.Length > 700 || review.Reference?.Length > 700,
-                        review.Rating, review.NextDueAt, review.TimingSource }; break;
+                        review.Rating, review.NextDueAt, review.TimingSource, review.Origin }; break;
                 case GenerateName:
                     Guard.Require(PrivacyContext.Epoch is not null, 503, "Practice questions need the current privacy context.");
                     var followArg = args.GetProperty("follow_ups");

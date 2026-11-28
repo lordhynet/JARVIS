@@ -71,9 +71,12 @@ public sealed class AiCoach(ITextReasoningProvider reasoning, IRuntimeStore stor
                 409, "AI request ID was reused for different input."); return attempt;
         }
         Guard.Require(attempt.Revision == request.ExpectedRevision && attempt.TextRevision == request.TextRevision, 409, "Answer changed. Reload before requesting AI feedback.");
-        var question = QuestionBank.Get(attempt.QuestionId);
         var step = attempt.DrillId is Guid drillId && attempt.StepIndex is int index
             ? await store.ReadAsync(s => s.TrainingDrills.GetValueOrDefault(drillId)?.Steps.ElementAtOrDefault(index), ct) : null;
+        // An AI-written reference is not a verified basis for AI scoring: refuse before any provider call.
+        Guard.Require(step?.GeneratedQuestionId is null && QuestionBank.All.Any(q => q.Id == attempt.QuestionId), 409,
+            "AI feedback isn't available for AI-generated practice questions, because their reference answer isn't verified.");
+        var question = QuestionBank.Get(attempt.QuestionId);
         var generated = await Generate(ManagedAi.Operation("technical-coach", id, request.RequestId), id,
             new { Question = step?.Prompt ?? question.Prompt, Code = step?.CodeSnippet, Reference = step?.Reference ?? question.Reference, Answer = attempt.CurrentAnswer }, attempt.CurrentAnswer, true, ct);
         return await training.AssessAiAsync(id, new(request.RequestId, request.ExpectedRevision, request.TextRevision, generated.Scores, request.TimeZone), generated.Model, ct);

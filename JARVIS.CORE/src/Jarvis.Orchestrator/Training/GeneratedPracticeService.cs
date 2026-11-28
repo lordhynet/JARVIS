@@ -141,6 +141,17 @@ public sealed class GeneratedPracticeService(IRuntimeStore store, PracticeGenera
                 [new(1, text, "text_only", now)], [], DrillId: drill.Id, StepIndex: stepIndex);
             s.TrainingAttempts.Add(attempt.Id, attempt);
             s.TrainingOperations.Add(requestId, new(SubmitKind, attempt.Id, fingerprint));
+            // Revision card keyed by the generated question, carrying its origin so every consumer can label it (and context
+            // selection excludes it). Baseline mirrors the authored rule; all copies are removed together by generated purge.
+            var cardId = question.Question.Id;
+            if (!s.Learning.TryGetValue(cardId, out var card))
+            {
+                card = new(cardId, drill.Generated.Topic, step.Prompt, step.Reference, 0, 5, now, now, GeneratedQuestionId: cardId);
+                s.Learning.Add(cardId, card);
+            }
+            Guard.Require(card.GeneratedQuestionId == cardId, 409, "Practice card conflicts with existing content.");
+            if (s.TrainingBaselines.TryAdd(cardId, card))
+                s.TrainingBaselineReviews[cardId] = s.Reviews.Values.Where(x => x.Event.LearningItemId == cardId).Select(x => x.RequestId).ToHashSet();
             var answered = drill with { AttemptIds = [.. drill.AttemptIds, attempt.Id], Revision = checked(drill.Revision + 1) };
             var next = PracticeOutlines.NextEntry(drill.Generated.Topic, AnsweredByEntry(s, unit, context.SessionId, drill.Generated.Topic));
             var quota = unit.SessionCountSince(now.AddHours(-1)) < HourlyLimit;
